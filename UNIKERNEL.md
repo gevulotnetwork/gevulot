@@ -11,6 +11,37 @@ into an image file that is then run to produce a proof.
 disk volumes and execute instancies. It supports local execution under QEMU/KVM
 hypervisors, but also various cloud providers.
 
+## Running Prover in a Unikernel
+
+Running prover in a unikernel is mostly quite simple:
+
+- [Ensure that Ops is installed](https://docs.ops.city/ops/getting_started#installing-ops)
+- Build Linux x86_64 binary.
+- If the application loads dynamic libraries during runtime (not listed in ELF headers), then bundle these under `lib64` directory in unikernel image.
+- [Prepare execution manifest](https://docs.ops.city/ops/configuration)
+- [Google Cloud: Build the unikernel image](https://docs.ops.city/ops/google_cloud#create-image)
+- [Build auxiliary disk volume, if needed](https://docs.ops.city/ops/volumes)
+- Locally: `ops run <binary> -c config.json [--mounts volume:/directory]`
+- [GCP: Create instance from the image](https://docs.ops.city/ops/google_cloud#create-instance)
+
+### Debugging
+
+When there are problems with the unikernel execution, for example if the cloud instance stops almost immediately after start, the most common problem comes from dynamic libraries that are loaded during the runtime via `dlopen(3)`.
+Finding those files can be done using `strace` when running the program natively on Linux:
+```
+$ strace -o strace.log -f -e trace=file <binary> <params>
+```
+
+...and then looking at `openat(2)` calls for libraries that **are not** present in `ldd <binary>` output.
+
+Another way of debugging unikernel execution is to export [trace log](https://docs.ops.city/ops/debugging#tracing) from `ops run`:
+```
+$ ops run <binary> [-c myconfig.json] [--mounts myvolume:/mnt] --trace &> trace.log
+```
+
+That will produce Nanos' trace log into `trace.log` for further analysis.
+
+
 ## Examples
 
 Following examples expect that the computer & operating system supports virtualization and has related packages installed. Also basic tooling, such as `jq` and `curl` are expected to be installed, as is the [Ops command](https://ops.city/).
