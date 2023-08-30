@@ -1,5 +1,10 @@
 # Gevulot
-Gevulot is a permissionless and programmable layer one blockchain for deploying zero-knowledge provers and verifiers as on-chain programs.
+
+Gevulot is a permissionless and programmable layer one blockchain for deploying zero-knowledge provers and verifiers as on-chain programs. It allows users to deploy and use entire proof systems on-chain, with minimal computational overhead as compared to single prover architectures. The vision of Gevulot is to make the creation of e.g. validity rollups as easy as deploying smart contracts.
+
+For a more in-depth look at the network design see [overview](https://github.com/gevulotnetwork/gevulot/blob/main/gevulot-overview.md).
+
+The current status of the project is pre-alpha.
 
 
 ## License
