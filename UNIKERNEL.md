@@ -4,11 +4,11 @@ Gevulot provers are running in a [Nanos unikernel](https://nanovms.com/). Each p
 
 ## Tooling
 
-[Ops](https://ops.city/) provides functionality to prepare unikernel images, disk volumes and execute instancies. It supports local execution under QEMU/KVM hypervisors, but also various cloud providers.
+[Ops](https://ops.city/) provides functionality to prepare unikernel images, disk volumes and execute instances. It supports local execution under QEMU/KVM hypervisors and various cloud providers.
 
-## Running Prover in a Unikernel
+## Running a Prover in a Unikernel
 
-Running prover in a unikernel is mostly quite simple:
+Running a prover in a unikernel is  quite simple:
 
 - [Ensure that Ops is installed](https://docs.ops.city/ops/getting_started#installing-ops)
 - Build Linux x86_64 binary.
@@ -39,13 +39,13 @@ That will produce Nanos' trace log into `trace.log` for further analysis.
 
 ## Examples
 
-Following examples expect that the computer & operating system supports virtualization and has related packages installed. Also basic tooling, such as `jq` and `curl` are expected to be installed, as is the [Ops command](https://ops.city/).
+The following examples assume that the computer & operating system supports virtualization and has related packages installed. Also basic tooling, such as `jq` and `curl` are expected to be installed, as is the [Ops command](https://ops.city/).
 
 Due to some feature requirements, these examples use nightly build of Nanos.
 
 ### rust-fil-proofs / benchy
 
-Filecoin Proving Subsystem provides benchmarking tool to compute various proofs.
+Filecoin Proving Subsystem provides a convenient benchmarking tool to compute various proofs.
 This is a good test prover for the platform.
 
 #### Prepare Unikernel Image
@@ -133,14 +133,14 @@ $ ops volume create tmp -n -s 40g -d tmp
 
 #### Run the unikernel locally
 
-*When running single instances of unikernel locally, one can omit image building phase and directly run it:*
+*When running single instances of the unikernel locally, one can omit the image building phase and directly run it:*
 ```
 $ ops run benchy -n -c local.json --mounts tmp:/tmp
 ```
 
 #### Run the unikernel in Google Cloud
 
-When running unikernels in the Google Cloud, the images must be built ahead of time, instances scheduled separated for running them and volumes mounted once the instance is running.
+When running unikernels in Google Cloud, the images must be built ahead of time, instances scheduled separately for running them and volumes mounted once the instance is running.
 
 *Prepare `gcloud.json` configuration:*
 ```
