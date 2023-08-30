@@ -194,3 +194,27 @@ $ ops attach volume <instance ID> tmp -t gcp -c gcloud.json
 ```
 $ ops instance logs <instance ID> -t gcp -c gcloud.json
 ```
+
+Please note that by default the instance will stop immediately after program completion, so when running in cloud you may want to put some sleep in the end of execution to keep the console logs available:
+```
+diff --git a/fil-proofs-tooling/src/bin/benchy/main.rs b/fil-proofs-tooling/src/bin/benchy/main.rs
+index a3c03b7d..25385b31 100644
+--- a/fil-proofs-tooling/src/bin/benchy/main.rs
++++ b/fil-proofs-tooling/src/bin/benchy/main.rs
+@@ -3,6 +3,7 @@
+ 
+ use std::io::{stdin, stdout};
+ use std::str::FromStr;
++use std::{thread, time};
+ 
+ use anyhow::Result;
+ use byte_unit::Byte;
+@@ -322,5 +323,7 @@ fn main() -> Result<()> {
+         _ => unreachable!(),
+     }
+ 
++    thread::sleep(time::Duration::from_secs(240));
++
+     Ok(())
+ }
+```
