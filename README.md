@@ -2,7 +2,7 @@
 Gevulot is a permissionless and programmable layer one blockchain for deploying zero-knowledge provers and verifiers as on-chain programs.
 
 
-##License
+## License
 
 This library is licensed under either of the following licenses, at your discretion.
 
