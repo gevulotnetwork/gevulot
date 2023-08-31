@@ -62,6 +62,7 @@ $ cargo build --release
 $ mkdir deployment
 $ cp target/release/benchy deployment
 $ cp rust-fil-proofs.config.toml.sample deployment/rust-fil-proofs.config.toml
+$ cd deployment
 ```
 
 *Edit `rust-fil-proofs.config.toml` file locations to use base path `/tmp` instead of `/var/tmp`. It should look like following:*
@@ -183,17 +184,24 @@ $ ops instance create benchy -t gcp -c gcloud.json
 
 ```
 
-Capture the created `instance ID` from the output of previous command.
+Capture the created `instance ID` from the output of previous command. It's `benchy-<timestamp>`, like: `benchy-1693468118`.
 
 *Attach `tmp` volume to running instance:*
 ```
-$ ops attach volume <instance ID> tmp -t gcp -c gcloud.json
+$ ops volume attach <instance ID> tmp -t gcp -c gcloud.json
 ```
 
 *Inspect console logs from a running instance:*
 ```
 $ ops instance logs <instance ID> -t gcp -c gcloud.json
 ```
+
+*Finally, to delete the instance & volume:*
+```
+$ ops instance delete <instance ID> -t gcp -c gcloud.json
+$ ops volume delete tmp -t gcp -c gcloud.json
+```
+
 
 Please note that by default the instance will stop immediately after program completion, so when running in cloud you may want to put some sleep in the end of execution to keep the console logs available:
 ```
