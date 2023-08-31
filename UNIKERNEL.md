@@ -39,7 +39,7 @@ That will produce Nanos' trace log into `trace.log` for further analysis.
 
 ## Examples
 
-Following examples expect that the computer & operating system supports virtualization and has related packages installed. Also basic tooling, such as `jq` and `curl` are expected to be installed, as is the [Ops command](https://ops.city/).
+Following examples expect that the computer & operating system supports virtualization and has related packages installed. Also Rust (with Cargo) and basic tooling, such as `jq` and `curl` are expected to be installed, as is the [Ops command](https://ops.city/).
 
 Due to some feature requirements, these examples use nightly build of Nanos.
 
