@@ -1,0 +1,11 @@
+/target
+Cargo.lock
+deployments/*.json
+*.txt
+.DS_Store
+circom/*.r1cs
+circom/*.sym
+circom/*_js
+.vscode
+proof.json
+rust-fil-proofs/target
