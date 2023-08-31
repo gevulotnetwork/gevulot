@@ -8,7 +8,7 @@ The current status of the project is pre-alpha.
 
 ## Unikernel Setup
 
-Gevulot provers are running in a [Nanos unikernel](https://nanovms.com/). Each prover must be a single binary that performs the proof computation. The binary is packaged with an execution manifest and required dynamic libraries into an image file that is then run to produce a proof.
+Gevulot provers run in a [Nanos unikernel](https://nanovms.com/). Each prover must be a single binary that performs the proof computation. The binary is packaged with an execution manifest and required dynamic libraries into an image file that is then run to produce a proof.
 
 ### Tooling
 
