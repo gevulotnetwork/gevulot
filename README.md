@@ -45,11 +45,65 @@ $ ops run <binary> [-c myconfig.json] [--mounts myvolume:/mnt] --trace &> trace.
 That will produce Nanos' trace log into `trace.log` for further analysis.
 
 
-### Examples
+### Running Gevulot multi-prover in a Unikernel
 
-The following examples assume that the computer & operating system supports virtualization and has related packages installed. Also basic tooling, such as `jq` and `curl` are expected to be installed, as is the [Ops command](https://ops.city/).
+#### Compile `gevulot-prover`
 
-Due to some feature requirements, these examples use nightly build of Nanos.
+```
+$ cd prover
+$ cargo build --release
+`
+
+#### Generate ED25519 Groth16 Proof & Verify it
+
+First, due to large size of R1CS constraints & witnesses, the proof input data must be uncompressed:
+```
+$ unzip -d test-data test-data/ed25519.zip
+```
+
+Then, create working volume:
+```
+$ ops volume create deployments -n -s 2g -d deployments
+```
+
+...and finally generate the proof & verify it:
+```
+$ # First the proof:
+$ ops run target/release/prover -n -c scripts/ed25519-groth-proof.json --mounts deployments:/deployments
+$
+$ # Then verification:
+$ ops run target/release/prover -n -c scripts/ed25519-groth-verify.json --mounts deployments:/deployments
+```
+
+To cleanup:
+```
+$ ops volume delete deployments
+```
+
+#### Generate Sudoku Marlin Proof & Verify it
+
+First, [setup Circom & generate test circuit.](prover/circom/README.md)
+
+Then, create working volume:
+```
+$ ops volume create deployments -n -s 2g -d deployments
+```
+
+...and finally generate the proof & verify it:
+```
+$ # First the proof:
+$ ops run target/release/prover -n -c scripts/sudoku-marlin-proof.json --mounts deployments:/deployments
+$
+$ # Then verification:
+$ ops run target/release/prover -n -c scripts/sudoku-marlin-verify.json --mounts deployments:/deployments
+```
+
+To cleanup:
+```
+$ ops volume delete deployments
+```
+
+### Wrapping a generic prover in a unikernel
 
 #### rust-fil-proofs / benchy
 
