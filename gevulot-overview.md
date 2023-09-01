@@ -21,10 +21,13 @@ Gevulot uses the [Nanos](https://nanos.org/) unikernel running in a [KVM](https:
 3. Language support 
 4. Efficient orchestration
 5. Fast boot times
+6. TCP/IP
 
 ### Fees
 
 A cycle in Gevulot is a fixed amount of blocks and functions as an objective measure of a programs running time. A user pays fees based on the amount of cycles he wants the nodes to run the prover program. If the user does not pay for enough cycles, the program will not complete and the nodes will return a fail. If the user pays for excessive cycles, the nodes will return the output as soon as the program completes due to the competitive dynamics described in the Network section and the user will only pay for the cycles it took for the fastest prover to complete the proof.
+
+Note: We are exploring the possibility of having continuously running programs, which output periodic proofs.
 
 ## Network
 
