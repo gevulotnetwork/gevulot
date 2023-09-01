@@ -52,7 +52,7 @@ That will produce Nanos' trace log into `trace.log` for further analysis.
 ```
 $ cd prover
 $ cargo build --release
-`
+```
 
 #### Generate ED25519 Groth16 Proof & Verify it
 
