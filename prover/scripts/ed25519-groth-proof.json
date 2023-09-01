@@ -1,0 +1,16 @@
+{
+  "RebootOnExit": true,
+  "RunConfig": {
+    "CPUs": 4,
+    "Memory": "8g"
+  },
+  "Dirs":["test-data"],
+  "Env":{
+    "BELLMAN_NO_GPU": "1",
+    "RUST_BACKTRACE": "1",
+    "RUST_LOG": "trace"
+  },
+  "Args":["prove", "-a", "groth16", "-c", "/test-data/ed25519.r1cs", "-p", "/deployments/ed25519.proof", "-w", "/test-data/ed25519.wtns"],
+  "Program":"target/release/prover"
+}
+
