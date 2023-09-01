@@ -47,7 +47,7 @@ That will produce Nanos' trace log into `trace.log` for further analysis.
 
 ### Running Gevulot multi-prover in a Unikernel
 
-#### Compile `gevulot-prover`
+#### Compile `prover`
 
 ```
 $ cd prover
