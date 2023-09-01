@@ -38,18 +38,25 @@ fn main() {
     match arg_conf.action {
         GevulotAction::Deploy => {
             println!("do deploy");
-            let program_id = on_deploy(arg_conf.circuit_file.expect("No program id passed in"));
+            let program_id = on_deploy(arg_conf.circuit_file.expect("No circuit file passed in"));
             println!("deploy returned: {:?}", program_id);
         }
         GevulotAction::Prove => {
+            let program_id = match arg_conf.id {
+                Some(program_id) => program_id,
+                None => on_deploy(
+                    arg_conf
+                        .circuit_file
+                        .expect("No program id nor circuit file passed in"),
+                )
+                .expect("circuit deployment failed"),
+            };
             println!("do prove");
             _ = on_prove(
                 arg_conf
                     .algorithm
                     .expect("No algorithm passed in for the prover."),
-                &arg_conf
-                    .id
-                    .expect("No program id passed in for the prover."),
+                &program_id,
                 &arg_conf.witness_file,
                 &arg_conf
                     .proof_file
