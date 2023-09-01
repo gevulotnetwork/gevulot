@@ -51,7 +51,7 @@ fn main() {
                     .id
                     .expect("No program id passed in for the prover."),
                 &arg_conf.witness_file,
-                &arg_conf
+                arg_conf
                     .proof_file
                     .expect("No proof file has been passed in for the prover."),
             );
