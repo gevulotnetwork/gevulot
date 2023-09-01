@@ -1,0 +1,16 @@
+{
+  "RebootOnExit": true,
+  "RunConfig": {
+    "CPUs": 4,
+    "Memory": "8g"
+  },
+  "Dirs":["circom"],
+  "Env":{
+    "BELLMAN_NO_GPU": "1",
+    "RUST_BACKTRACE": "1",
+    "RUST_LOG": "trace"
+  },
+  "Args":["verify", "-a", "marlin", "-p", "/deployments/sudoku.proof", "-u", "/circom/sudoku_inputs.json"],
+  "Program":"target/release/prover"
+}
+
