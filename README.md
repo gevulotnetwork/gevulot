@@ -298,4 +298,4 @@ This library is licensed under either of the following licenses, at your discret
 
 [MIT License](https://github.com/arkworks-rs/marlin/blob/master/LICENSE-MIT)
 
-Unless you explicitly state otherwise, any contribution that you submit to this library shall be dual licensed as above (as defined in the Apache v2 License), without any additional terms or conditions.
+Any contribution that you submit to this library shall be dual licensed as above (as defined in the Apache v2 License), without any additional terms or conditions.
