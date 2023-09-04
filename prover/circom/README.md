@@ -4,7 +4,7 @@ The circom program file used here is from this repository:
 
 https://github.com/nalinbhardwaj/snarky-sudoku
 
-The library of circuits found in the `demo/circom/circuits` fold were taken from the circomlib repo.
+The library of circuits found in the `prover/circom/circuits` fold were taken from the circomlib repo.
 
 https://github.com/iden3/circomlib
 
@@ -13,6 +13,21 @@ There is a readme file there documentating the various circuits.
 
 [CircomLib circuit cibrary readme](circuits/README.md)
 
+## Install `circom` and `snarkjs`
+
+You must have `circom` and `snarkjs`  installed on your system.
+
+1. circom: https://docs.circom.io/getting-started/installation/
+```
+git clone https://github.com/iden3/circom.git
+cd circom
+cargo build --release
+cargo install --path circom
+```
+2. snarkjs
+```
+sudo npm install -g snarkjs
+```
 
 ## The test circuit
 
@@ -20,7 +35,7 @@ The file is `sudoku.circom`.  This program checks a given solution against a sud
 
 
 ### Compilation
-To compile the script to `r1cs`, `wasm`, and `sym` files, run this command from the `demo/circom` directory.
+To compile the script to `r1cs`, `wasm`, and `sym` files, run this command from the `prover/circom` directory.
 
 ```
 circom sudoku.circom --r1cs --wasm --sym
