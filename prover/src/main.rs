@@ -58,7 +58,7 @@ fn main() {
                     .expect("No algorithm passed in for the prover."),
                 &program_id,
                 &arg_conf.witness_file,
-                &arg_conf
+                arg_conf
                     .proof_file
                     .expect("No proof file has been passed in for the prover."),
             );
