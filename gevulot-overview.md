@@ -21,7 +21,6 @@ Gevulot uses the [Nanos](https://nanos.org/) unikernel running in a [KVM](https:
 3. Language support 
 4. Efficient orchestration
 5. Fast boot times
-6. TCP/IP
 
 ### Fees
 
