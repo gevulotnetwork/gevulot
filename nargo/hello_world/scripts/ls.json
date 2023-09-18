@@ -1,0 +1,10 @@
+{
+  "Files": ["Nargo.toml", "Prover.toml", "Verifier.toml"],
+  "Dirs": ["src", "lib"],
+  "Args": ["proofs"],
+  "Mounts": {
+    "proofs": "/proofs",
+    "backend": "/root/.nargo/backends/backends/acvm-backend-barretenberg/"
+  }
+}
+

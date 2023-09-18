@@ -1,0 +1,13 @@
+{
+  "Files": ["Nargo.toml", "Prover.toml", "Verifier.toml"],
+  "Dirs": ["src", "lib64"],
+  "Args": ["/lib64"],
+  "ManifestPassthrough": {
+    "Cwd": "/hello_world"
+  },
+  "Mounts": {
+    "proofs": "/proofs",
+    "backend": "/root/.nargo/backends/backends/acvm-backend-barretenberg/"
+  }
+}
+

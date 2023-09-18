@@ -1,0 +1,11 @@
+{
+  "Files": ["Nargo.toml", "Prover.toml", "Verifier.toml"],
+  "RebootOnExit": true,
+  "Dirs": ["src", "lib", "etc", "proc"],
+  "Args": ["verify", "p"],
+  "Mounts": {
+    "proofs": "/proofs",
+    "backend": "/root/.nargo/backends/acvm-backend-barretenberg/"
+  }
+}
+
