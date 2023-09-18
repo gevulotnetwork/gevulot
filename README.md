@@ -289,6 +289,73 @@ index a3c03b7d..25385b31 100644
  }
 ```
 
+#### `nargo`
+
+The `nargo` tool is the package manager for Aztec's Noir platform, and includes proving/verifying functionality. It can easily be run inside of a Gevulot unikernel.
+
+The following is a proof of concept and more work will be needed to streamline this process and make it more ergonomic.
+
+##### Running the unikernel locally
+
+1. Follow the instructions above to make sure all the prerequisites are installed correctly
+2. Install the  [`nargo` binary](https://noir-lang.org/getting_started/nargo_installation/#option-2-binaries).
+3. Create or open your Noir project in a folder called `hello_world`. Here we will use the "Hello World"
+example from the [documentation](https://noir-lang.org/getting_started/hello_world)
+4. Run this locally:
+
+```
+mkdir proofs
+```
+
+5. Create the ops volumes needed.
+
+```bash
+$ ops volume create proofs -s 1g -d proof 
+$ ops volume create backend -s 1g ~/.nargo/backends/acvm-backe
+```
+
+6. Run this locally
+```
+nargo check
+```
+
+This will create the `Prover.toml` and `Verifier.toml` file
+
+7. Create Nanos manifest and save it to `scripts/prove.json`:
+
+```json
+{
+  "Files": ["Nargo.toml", "Prover.toml", "Verifier.toml"],
+  "RebootOnExit": true,
+  "Dirs": ["src", "lib", "etc", "proc"],
+  "Args": ["prove", "p"],
+  "Mounts": {
+    "proofs": "/proofs",
+    "backend": "/root/.nargo/backends/acvm-backend-barretenberg/"
+  }
+```
+
+8. Create Nanos manifest and save it to `scripts/verify.json`:
+
+```json
+{
+  "Files": ["Nargo.toml", "Prover.toml", "Verifier.toml"],
+  "RebootOnExit": true,
+  "Dirs": ["src", "lib", "etc", "proc"],
+  "Args": ["verify", "p"],
+  "Mounts": {
+    "proofs": "/proofs",
+    "backend": "/root/.nargo/backends/acvm-backend-barretenberg/"
+  }
+```
+
+9. From the `hello_world` root folder run:
+
+```
+ops run `which nargo` -c ./scripts/prove.json
+ops run `which nargo` -c ./scripts/verify.json
+```
+
 
 ## License
 
