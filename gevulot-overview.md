@@ -85,12 +85,10 @@ Transaction types in Gevulot:
 The full lifecycle of running a prover program:
 
 1. ```Run``` transaction is sent to network, which specifies program ID, inputs, amount of provers and max cycles per prover.
-2. Receiving node sends the transaction directly to prover node(s) to whom the workload has been allocated
-3. Receiving node also adds the transaction to the global mempool for inclusion in the next block
-4. Prover nodes complete workload and send the workload directly back to the receiving node
-5. Prover node also adds the proof to the global mempool for verification
-6. Validator nodes verify the proof and vote on its correctness
-7. Once 2/3 of validator nodes have verified, the leader includes the proof in the next block
+2. Receiving node puts the transaction into the mempool for prover allocation and for inclusion in the next block.
+3. Prover nodes complete workload and put the proof back into the mempool for verification
+4. Validator nodes verify the proof and vote on its correctness
+5. Once 2/3 of validator nodes have verified, the leader includes the proof in the next block
 
 ## Usecases
 
