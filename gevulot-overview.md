@@ -24,7 +24,7 @@ Gevulot uses the [Nanos](https://nanos.org/) unikernel running in a [KVM](https:
 
 ### Fees
 
-Gevulot incorporates a fixed fee per "cycle". A cycle in Gevulot is equal to one block and functions as an objective measure of a programs running time. In running a Gevulot program, the user decides how many cycles they want the prover program to run for and how many provers should do so simultaneously. The maximum fee for the user then is:
+Gevulot incorporates two types of fees. One is a standard small fee per transaction, the other a fixed fee per "cycle". A cycle in Gevulot is equal to one block and functions as an objective measure of a programs running time. In running a Gevulot program, the user decides how many cycles they want the prover program to run for and how many provers should do so simultaneously. The maximum fee for the user then is:
 
 ```
 Prover Amount * Cycle Amount
@@ -36,7 +36,7 @@ Note: We are exploring the possibility of having continuously running programs, 
 
 ## Network
 
-The Gevulot network can be seen as having two distinct node types which together converge on network state: validators and provers. On a high level provers complete proving workloads and validators verify and order proofs into blocks.
+The Gevulot network can be seen as having two distinct node types which together converge on network state: validators and provers. On a high level provers complete proving workloads and validators process transactions, verify proofs and order these into blocks.
 
 Note: We anticipate more node types in the future, such as non-validating full nodes, which just verify proofs and re-execute replicated state transitions.
 
@@ -67,6 +67,28 @@ The user pays for a set amount of cycles per prover and the chosen provers run t
 #### Prover Incentives
 
 There is a prover reward paid by the network, which is paid to provers who complete the workload in the given cycle time. It is tiered based on speed, wherein the first node to return an output receives the majority of the reward, the second a smaller portion and the third a smaller portion still. All nodes who complete the workload in the given cycle time receive at least some portion of the reward, in addition to their portion of the fees paid by the user. If the program does not complete, the fees are burned. 
+
+### Transactions
+
+Transaction types in Gevulot:
+
+| Type | Description |
+|------|-------------|
+| Transfer | Transfer funds from one address to another |
+| Stake | Stake funds to a prover or validator node |
+| Unstake | Unstake funds from a prover or validator node |
+| Deploy | Deploy a prover and/or verifier program |
+| Run | Run a prover program |
+
+#### Running a Program
+
+The full lifecycle of running a prover program:
+
+1. ```Run``` transaction is sent to network, which specifies program ID, inputs, amount of provers and max cycles per prover.
+2. Receiving node puts the transaction into the mempool for prover allocation and for inclusion in the next block.
+3. Prover nodes complete workload and put the proof back into the mempool for verification
+4. Validator nodes verify the proof and vote on its correctness
+5. Once 2/3 of validator nodes have verified, the leader includes the proof in the next block
 
 ## Usecases
 
