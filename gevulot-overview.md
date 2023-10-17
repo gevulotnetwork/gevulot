@@ -48,7 +48,7 @@ Validators are responsible for running verifier programs and coming to consensus
 
 #### Verification
 
-All proofs are verified by 2/3 of network validators before they are included in a block by the leader.  The verification threshold here simply constitutes finality from the network's perspective, but any honest node can have a deterministic guarantee of finality by simply verifying the proof.
+All proofs are verified by 2/3 of network validators before they are included in a block by the leader.  The verification threshold here simply constitutes finality from the network's perspective, but anyone can verify the proof for immediate use outside of the network.
 
 #### Validator Incentives
 
