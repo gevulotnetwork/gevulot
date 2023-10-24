@@ -34,6 +34,8 @@ If the user does not pay for enough cycles, the program will not complete and th
 
 Note: We are exploring the possibility of having continuously running programs, which output periodic proofs.
 
+Note: We are exploring using Bullshark consensus where one cycle would equal one round in consensus instead of one block. The round length would be extended slightly to ensure constant round length even when network speeds fluctuate.
+
 ## Network
 
 The Gevulot network can be seen as having two distinct node types which together converge on network state: validators and provers. On a high level provers complete proving workloads and validators process transactions, verify proofs and order these into blocks.
@@ -89,11 +91,15 @@ Transaction types in Gevulot:
 | Run | Run a proving workload |
 | Cancel | Cancel a proving workload |
 
+#### Deploying a Program
+
+Deployments in Gevulot are immutable and permanent by default. Deployment transactions need to contain a pointer to the program binary (URL) and a hash commitment so the downloaded program can be verified. When a program is deployed, it becomes usable at the next epoch.
+
 #### Running a Program
 
 The full lifecycle of running a prover program:
 
-1. ```Run``` transaction is sent to network, which specifies program ID, inputs, amount of provers and max cycles per prover.
+1. ```Run``` transaction is sent to network, which specifies program ID, input pointer + hash commitment, amount of provers and max cycles per prover.
 2. Receiving node puts the transaction into the mempool for prover allocation and for inclusion in the next block.
 3. Prover nodes complete workload and put the proof back into the mempool for verification
 4. Validator nodes verify the proof and vote on its correctness
