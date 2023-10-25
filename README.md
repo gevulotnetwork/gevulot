@@ -136,7 +136,7 @@ docker cp -L ${container_id}:/bin/cpu_air_verifier .
 ```
 ops volume create deployments -n -s 2g -d deployments
 ```
-4. Run the Starkware prover with 8 GPU threads
+4. Run the Starkware prover with 8 CPU threads
 ```
 ops run cpu_air_prover -n -c starkware/fibo-prover.json --mounts deployments:/deployments --smp 8
 ```
