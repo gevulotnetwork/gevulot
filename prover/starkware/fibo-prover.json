@@ -1,0 +1,19 @@
+{
+    "RebootOnExit": true,
+    "RunConfig": {
+      "CPUs": 1,
+      "Memory": "2g"
+    },
+    "Env":{
+      "GLOG_logtostderr": "1"
+    },
+    "Dirs":["starkware"],
+    "Args": [
+    "--out_file=/deployments/fibo_proof.json",
+    "--private_input_file=/starkware/fibonacci_private_input.json",
+    "--public_input_file=/starkware/fibonacci_public_input.json",
+    "--prover_config_file=/starkware/cpu_air_prover_config.json",
+    "--parameter_file=/starkware/cpu_air_params.json" ],
+    "Program":"cpu_air_prover"
+  }
+  

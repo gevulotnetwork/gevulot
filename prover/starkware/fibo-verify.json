@@ -1,0 +1,15 @@
+{
+    "RebootOnExit": true,
+    "RunConfig": {
+      "CPUs": 1,
+      "Memory": "2g"
+    },
+    "Env":{
+      "GLOG_logtostderr": "1"
+    },
+    "Dirs":["starkware"],
+    "Args": [
+    "--in_file=/deployments/fibo_proof.json"],
+    "Program":"cpu_air_verifier"
+  }
+  
