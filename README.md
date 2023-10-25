@@ -119,7 +119,7 @@ These lines should be commented out:  https://github.com/starkware-libs/stone-pr
   int policy = sched_getscheduler(0);
   ASSERT_RELEASE(policy == SCHED_BATCH, "the scheduling policy was not set properly.")
 ```
-2. Build the docker image, along with the standalone prover and verifier.  WHile the repository's readme explains everything thoroughly, here is a summary:
+2. Build the docker image, along with the standalone prover and verifier.  While the repository's readme explains everything thoroughly, here is a summary:
 
 ```
 docker build --tag prover .
@@ -132,7 +132,7 @@ docker cp -L ${container_id}:/bin/cpu_air_verifier .
 
 1. Copy the two executables -- `cpu_air_prover` and `cpu_air_prover` -- from the root level of `stone-prover` into the gevulot `/prover` folder.
 2. In the terminal, go to the `gevulot/prover` folder.
-3. Create an ops volume, pointing to the `deployments` folder (run from the prover folder)
+3. Create an ops volume, pointing to the `deployments` folder.
 ```
 ops volume create deployments -n -s 2g -d deployments
 ```
@@ -175,10 +175,6 @@ en1: assigned 10.0.2.15
 I1025 10:08:09.364480     2 task_manager.cc:33] TaskManager::TaskManager : n_threads 1.
 I1025 10:08:09.370080     2 cpu_air_verifier_main.cc:39] Proof verified successfully.
 ```
-
-
-ops run cpu_air_verifier -n -c starkware/fibo-verify.json --mounts deployments:/deployments
-
 
 ## Wrapping a generic prover in a unikernel
 
