@@ -45,16 +45,16 @@ $ ops run <binary> [-c myconfig.json] [--mounts myvolume:/mnt] --trace &> trace.
 That will produce Nanos' trace log into `trace.log` for further analysis.
 
 
-### Running Gevulot multi-prover in a Unikernel
+## Running Gevulot multi-prover in a Unikernel
 
-#### Compile `prover`
+### Compile `prover`
 
 ```
 $ cd prover
 $ cargo build --release
 ```
 
-#### Generate ED25519 Groth16 Proof & Verify it
+### Generate ED25519 Groth16 Proof & Verify it
 
 First, due to large size of R1CS constraints & witnesses, the proof input data must be uncompressed:
 ```
@@ -80,7 +80,7 @@ To cleanup:
 $ ops volume delete deployments
 ```
 
-#### Generate Sudoku Marlin Proof & Verify it
+### Generate Sudoku Marlin Proof & Verify it
 
 First, [setup Circom & generate test circuit.](prover/circom/README.md)
 
@@ -103,14 +103,87 @@ To cleanup:
 $ ops volume delete deployments
 ```
 
-### Wrapping a generic prover in a unikernel
 
-#### rust-fil-proofs / benchy
+## Running the Starkware Stone prover in a Unikernel
+
+### Build
+
+1. After forking the [stone-prover repository](https://github.com/starkware-libs/stone-prover), you will have to comment out six lines of code in one file.  That particular code uses syscalls unsupported by Nanos (`schded_getscheduler` and `sched_setscheduler`)
+These lines should be commented out:  https://github.com/starkware-libs/stone-prover/blob/00b274b55c82077184be4c0758f7bed18950eaba/src/starkware/utils/task_manager.cc#L67-#L72
+
+```
+  struct sched_param params {};
+  int ret = sched_setscheduler(0, SCHED_BATCH, &params);
+  ASSERT_RELEASE(ret == 0, "Filed to set scheduling policy.");
+
+  int policy = sched_getscheduler(0);
+  ASSERT_RELEASE(policy == SCHED_BATCH, "the scheduling policy was not set properly.")
+```
+2. Build the docker image, along with the standalone prover and verifier.  While the repository's readme explains everything thoroughly, here is a summary:
+
+```
+docker build --tag prover .
+container_id=$(docker create prover)
+docker cp -L ${container_id}:/bin/cpu_air_prover .
+docker cp -L ${container_id}:/bin/cpu_air_verifier .
+```
+
+### Running the prover and verifier locally
+
+1. Copy the two executables -- `cpu_air_prover` and `cpu_air_prover` -- from the root level of `stone-prover` into the gevulot `/prover` folder.
+2. In the terminal, go to the `gevulot/prover` folder.
+3. Create an ops volume, pointing to the `deployments` folder.
+```
+ops volume create deployments -n -s 2g -d deployments
+```
+4. Run the Starkware prover with 8 CPU threads
+```
+ops run cpu_air_prover -n -c starkware/fibo-prover.json --mounts deployments:/deployments --smp 8
+```
+
+You'll see some verbose output similar to this:
+
+```
+running local instance
+booting /home/ader/.ops/images/cpu_air_prover ...
+en1: assigned 10.0.2.15
+I1025 10:02:59.046082     2 profiling.cc:58] Prover started
+I1025 10:02:59.061094     2 memory_cell.inl:121] Filled 766 vacant slots in memory: 0 holes and 766 spares.
+I1025 10:02:59.220237     2 stark.cc:423] Trace cells count:
+Log number of rows: 13
+Number of first trace columns: 23
+Number of interaction columns: 2
+Total trace cells: 204800
+en1: assigned FE80::4CFB:E9FF:FE89:7145
+I1025 10:03:02.006559     2 prover_main_helper_impl.cc:147] Byte count: 63016
+Hash count: 843
+Commitment count: 5
+Field element count: 1126
+Data count: 1
+I1025 10:03:02.009160     2 profiling.cc:85] Prover finished in 2.96277 sec
+```
+5. Run the Starkware verifier
+```
+ops run cpu_air_verifier -n -c gevulot/fibo-verify.json --mounts deployments:/deployments
+
+```
+response:
+```
+running local instance
+booting /home/ader/.ops/images/cpu_air_verifier ...
+en1: assigned 10.0.2.15
+I1025 10:08:09.364480     2 task_manager.cc:33] TaskManager::TaskManager : n_threads 1.
+I1025 10:08:09.370080     2 cpu_air_verifier_main.cc:39] Proof verified successfully.
+```
+
+## Wrapping a generic prover in a unikernel
+
+### rust-fil-proofs / benchy
 
 Filecoin Proving Subsystem provides a convenient benchmarking tool to compute various proofs.
 This is a good test prover for the platform.
 
-##### Prepare Unikernel Image
+#### Prepare Unikernel Image
 
 **NOTE:** Following scripts use `2KiB` sector-size for proof construction. Also `8MiB`, `512MiB`, `32GiB` and `64GiB` are supported, when volume sizes are adjusted accordingly.
 
@@ -194,14 +267,14 @@ Following one is for local QEMU/KVM use. Save it to `local.json`:
 $ ops volume create tmp -n -s 40g -d tmp
 ```
 
-##### Run the unikernel locally
+#### Run the unikernel locally
 
 *When running single instances of the unikernel locally, one can omit the image building phase and directly run it:*
 ```
 $ ops run benchy -n -c local.json --mounts tmp:/tmp
 ```
 
-##### Run the unikernel in Google Cloud
+#### Run the unikernel in Google Cloud
 
 When running unikernels in Google Cloud, the images must be built ahead of time, instances scheduled separately for running them and volumes mounted once the instance is running.
 
