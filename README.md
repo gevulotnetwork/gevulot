@@ -367,8 +367,8 @@ index a3c03b7d..25385b31 100644
 
 This library is licensed under either of the following licenses, at your discretion.
 
-[Apache License Version 2.0](https://github.com/arkworks-rs/marlin/blob/master/LICENSE-APACHE)
+[Apache License Version 2.0](LICENSE-APACHE)
 
-[MIT License](https://github.com/arkworks-rs/marlin/blob/master/LICENSE-MIT)
+[MIT License](LICENSE-MIT)
 
 Any contribution that you submit to this library shall be dual licensed as above (as defined in the Apache v2 License), without any additional terms or conditions.
