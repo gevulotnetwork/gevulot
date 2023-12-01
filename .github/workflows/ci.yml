@@ -1,0 +1,35 @@
+name: basics
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  cargo:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        checks: [
+          fmt --all --check,
+          check --all-targets --all-features,
+          clippy --all-targets --all-features -- -D warnings,
+          test --all-targets --all-features
+        ]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: Swatinem/rust-cache@v2
+      - name: Default on nightly Rust
+        run: rustup default nightly
+      - name: Install additional components
+        run: |
+          rustup component add rustfmt
+          rustup component add clippy
+      - name: ${{ matrix.checks }}
+        run: cargo ${{ matrix.checks }}
+

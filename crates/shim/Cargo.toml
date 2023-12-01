@@ -1,0 +1,19 @@
+[package]
+name = "gevulot-shim"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+anyhow = "1"
+prost = "0.11"
+tokio = { version = "1.0", features = ["fs", "macros", "rt-multi-thread"] }
+tokio-stream = "0.1"
+tokio-vsock = { version = "0.4.0", features = ["tonic-conn"] }
+tonic = "0.8.3"
+tower = "0.4.0"
+vsock = "0.3.0"
+uuid = { version = "1.4.1", features = [ "v4", "fast-rng", "macro-diagnostics" ] }
+
+[build-dependencies]
+tonic-build = "0.8"

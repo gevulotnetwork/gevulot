@@ -1,4 +1,4 @@
 /target
-Cargo.lock
 *.txt
 .DS_Store
+.idea

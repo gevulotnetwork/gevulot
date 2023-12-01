@@ -1,0 +1,73 @@
+syntax = "proto3";
+
+package vm_service;
+
+service VMService {
+  rpc GetTask (TaskRequest) returns (TaskResponse) {}
+  rpc GetFile (FileRequest) returns (stream FileResponse) {}
+
+  rpc SubmitResult(TaskResultRequest) returns (TaskResultResponse) {}
+}
+
+message TaskRequest {}
+
+message Task {
+  string id = 1;
+  string name = 2;
+  repeated string args = 3;
+  repeated string files = 4;
+}
+
+enum TaskError {
+  Unavailable = 0;
+  Failed = 1;
+}
+
+message TaskResponse {
+  oneof result {
+    Task task = 1;
+    TaskError error = 2;
+  }
+}
+
+message FileRequest {
+  string task_id = 1;
+  string path = 2;
+}
+
+message File {
+  string path = 1;
+  bytes data = 2;
+}
+
+message FileChunk {
+  bytes data = 1;
+}
+
+enum FileError {
+  NotFound = 0;
+}
+
+message FileResponse {
+  oneof result {
+    FileChunk chunk = 1;
+    FileError error = 2;
+  }
+}
+
+message TaskResult {
+  string id = 1;
+  bytes data = 2;
+  repeated File files = 3;
+}
+
+message TaskResultRequest {
+  oneof result {
+    TaskResult task = 1;
+    TaskError error = 2;
+  }
+}
+
+message TaskResultResponse {
+  bool continue = 1;
+}
