@@ -16,6 +16,7 @@ ark-serialize = { version = "^0.3.0", default-features = false, features = [
     "derive",
 ] }
 clap = { version = "4.0.29", features = ["derive"] }
+gevulot-shim = { path = "../crates/shim" }
 gev-core = { path = "gev-core" }
 thiserror = "1.0.44"
 ark-marlin = { path = "marlin" }

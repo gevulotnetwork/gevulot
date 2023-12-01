@@ -1,9 +1,11 @@
 mod gev_rust;
 use gev_rust::{on_deploy, on_prove, on_verify};
 
+use anyhow::Result;
 use clap::Parser;
 use gev_core::{GevulotAction, GevulotAlg};
-use std::path::PathBuf;
+use gevulot_shim::{Task, TaskResult};
+use std::{env, path::PathBuf};
 
 #[derive(Parser, Debug)]
 #[clap(author = "Gevulot Team", version, about, long_about = None)]
@@ -32,8 +34,18 @@ pub struct ArgConfiguration {
     pub user_inputs_file: Option<PathBuf>,
 }
 
-fn main() {
-    let arg_conf = ArgConfiguration::parse();
+fn main() -> Result<()> {
+    gevulot_shim::run(run_task)
+}
+
+fn run_task(task: &Task) -> Result<TaskResult> {
+    println!("prover: task.args: {:?}", &task.args);
+    let mut program_args = vec![env::args().collect::<Vec<_>>()[0].clone()];
+    program_args.append(&mut task.args.clone());
+    println!("prover: program_args: {:?}", &program_args);
+    let arg_conf = ArgConfiguration::parse_from(&program_args);
+
+    println!("prover: parsed arg_conf.action: {:#?}", &arg_conf.action);
 
     match arg_conf.action {
         GevulotAction::Deploy => {
@@ -73,4 +85,7 @@ fn main() {
             );
         }
     }
+
+    // TODO: Submit proof result back
+    task.result(vec![], vec![])
 }

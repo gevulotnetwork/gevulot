@@ -1,4 +1,7 @@
 [workspace]
+exclude = [
+  "prover"
+]
 members = [
   "crates/node",
   "crates/shim",
