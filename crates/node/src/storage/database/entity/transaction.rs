@@ -2,6 +2,7 @@ use crate::types::{self, transaction, Hash, Signature};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, sqlx::Type)]
+#[sqlx(type_name = "transaction_kind", rename_all = "lowercase")]
 pub enum Kind {
     #[default]
     Empty,
@@ -25,8 +26,8 @@ pub struct Transaction {
     pub propagated: bool,
 }
 
-impl From<types::Transaction> for Transaction {
-    fn from(value: types::Transaction) -> Self {
+impl From<&types::Transaction> for Transaction {
+    fn from(value: &types::Transaction) -> Self {
         let kind = match value.payload {
             transaction::Payload::Empty => Kind::Empty,
             transaction::Payload::Transfer { .. } => Kind::Transfer,

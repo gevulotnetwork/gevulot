@@ -4,15 +4,16 @@ use libsecp256k1::PublicKey;
 use num_bigint::BigInt;
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct ProgramMetadata {
-    name: String,
-    image_file_name: String,
-    image_url: String,
-    image_checksum: String,
+    pub name: String,
+    pub hash: Hash,
+    pub image_file_name: String,
+    pub image_file_url: String,
+    pub image_file_checksum: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub enum ProgramData {
     Input {
         file_name: String,
@@ -25,19 +26,19 @@ pub enum ProgramData {
     },
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct WorkflowStep {
-    program: Hash,
-    args: Vec<String>,
-    inputs: Vec<ProgramData>,
+    pub program: Hash,
+    pub args: Vec<String>,
+    pub inputs: Vec<ProgramData>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct Workflow {
-    steps: Vec<WorkflowStep>,
+    pub steps: Vec<WorkflowStep>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub enum Payload {
     #[default]
     Empty,
@@ -76,7 +77,7 @@ pub enum Payload {
     },
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct Transaction {
     pub hash: Hash,
     pub payload: Payload,

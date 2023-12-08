@@ -10,8 +10,13 @@
       },
       {
         "ordinal": 1,
-        "name": "complete",
-        "type_info": "Bool"
+        "name": "created",
+        "type_info": "Timestamp"
+      },
+      {
+        "ordinal": 2,
+        "name": "completed",
+        "type_info": "Timestamp"
       }
     ],
     "parameters": {
@@ -20,6 +25,7 @@
       ]
     },
     "nullable": [
+      false,
       false,
       true
     ]

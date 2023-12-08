@@ -71,10 +71,12 @@ async fn programs(state: web::Data<AppState>) -> Result<impl Responder> {
 
 #[post("/programs")]
 async fn deploy_program(state: web::Data<AppState>, program: web::Json<Program>) -> HttpResponse {
+    /*
     let program = program.into_inner();
     if state.database.add_program(&program).await.is_ok() {
         return HttpResponse::Accepted().finish();
     }
+    */
 
     HttpResponse::InternalServerError().body("failed to deploy program")
 }

@@ -7,5 +7,5 @@ CREATE TABLE assets (
     completed TIMESTAMP,
     CONSTRAINT fk_transaction
         FOREIGN KEY (tx)
-            REFERENCES transactions (hash) ON DELETE CASCADE
+            REFERENCES transaction (hash) ON DELETE CASCADE
 );
