@@ -31,10 +31,10 @@ impl Database {
         Ok(())
     }
 
-    pub async fn find_program(&self, hash: &Hash) -> Result<Option<Program>> {
+    pub async fn find_program(&self, hash: impl AsRef<Hash>) -> Result<Option<Program>> {
         // non-macro query_as used because of sqlx limitations with enums.
         let program = sqlx::query_as::<_, Program>("SELECT * FROM program WHERE hash = $1")
-            .bind(hash.to_string())
+            .bind(hash.as_ref())
             .fetch_optional(&self.pool)
             .await?;
 
@@ -44,11 +44,11 @@ impl Database {
     pub async fn get_program(
         &self,
         db_conn: &mut sqlx::PgConnection,
-        hash: &Hash,
+        hash: impl AsRef<Hash>,
     ) -> Result<Program> {
         // non-macro query_as used because of sqlx limitations with enums.
         let program = sqlx::query_as::<_, Program>("SELECT * FROM program WHERE hash = $1")
-            .bind(hash.to_string())
+            .bind(hash.as_ref())
             .fetch_one(db_conn)
             .await?;
 
@@ -183,12 +183,15 @@ impl Database {
     // transaction related operations. They are implemented naively on purpose
     // for now to maintain initial flexibility in development. Later on, these
     // queries here are easy low hanging fruits for optimizations.
-    pub async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<types::Transaction>> {
+    pub async fn find_transaction(
+        &self,
+        tx_hash: impl AsRef<Hash>,
+    ) -> Result<Option<types::Transaction>> {
         let mut db_tx = self.pool.begin().await?;
 
         let entity =
             sqlx::query_as::<_, entity::Transaction>("SELECT * FROM transaction WHERE hash = $1")
-                .bind(&tx_hash)
+                .bind(tx_hash.as_ref())
                 .fetch_optional(&mut *db_tx)
                 .await?;
 
@@ -199,12 +202,12 @@ impl Database {
                     let deploy = sqlx::query_as::<_, entity::payload::Deploy>(
                         "SELECT * FROM deploy WHERE tx = $1",
                     )
-                    .bind(&tx_hash.to_string())
+                    .bind(tx_hash.as_ref())
                     .fetch_one(&mut *db_tx)
                     .await?;
 
-                    let prover = self.get_program(&mut db_tx, &deploy.prover).await?;
-                    let verifier = self.get_program(&mut db_tx, &deploy.verifier).await?;
+                    let prover = self.get_program(&mut db_tx, deploy.prover).await?;
+                    let verifier = self.get_program(&mut db_tx, deploy.verifier).await?;
 
                     types::transaction::Payload::Deploy {
                         name: deploy.name,
@@ -216,21 +219,21 @@ impl Database {
                     let steps = sqlx::query_as::<_, entity::payload::WorkflowStep>(
                         "SELECT * FROM workflow_step WHERE tx = $1",
                     )
-                    .bind(&tx_hash.to_string())
+                    .bind(tx_hash.as_ref())
                     .fetch_all(&mut *db_tx)
                     .await?;
 
                     let program_inputs = sqlx::query_as::<_, entity::payload::ProgramInputData>(
                         "SELECT * FROM program_input_data AS pid JOIN workflow_step AS ws ON pid.workflow_step_id = ws.id WHERE ws.tx = $1",
                     )
-                    .bind(&tx_hash.to_string())
+                    .bind(tx_hash.as_ref())
                     .fetch_all(&mut *db_tx)
                     .await?;
 
                     let program_outputs = sqlx::query_as::<_, entity::payload::ProgramOutputData>(
                         "SELECT * FROM program_output_data AS pid JOIN workflow_step AS ws ON pod.workflow_step_id = ws.id WHERE ws.tx = $1",
                     )
-                    .bind(&tx_hash.to_string())
+                    .bind(&tx_hash.as_ref())
                     .fetch_all(&mut *db_tx)
                     .await?;
 
@@ -290,6 +293,24 @@ impl Database {
         } else {
             Ok(None)
         }
+    }
+
+    pub async fn get_transactions(&self) -> Result<Vec<types::Transaction>> {
+        let mut db_tx = self.pool.begin().await?;
+        let refs: Vec<Hash> = sqlx::query("SELECT hash FROM transaction")
+            .map(|row: sqlx::postgres::PgRow| row.get(0))
+            .fetch_all(&mut *db_tx)
+            .await?;
+
+        let mut txs = Vec::with_capacity(refs.len());
+        for tx_hash in refs {
+            let tx = self.find_transaction(tx_hash).await?;
+            if tx.is_some() {
+                txs.push(tx.unwrap());
+            }
+        }
+
+        Ok(txs)
     }
 
     pub async fn add_transaction(&self, tx: &types::Transaction) -> Result<()> {

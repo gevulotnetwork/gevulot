@@ -5,6 +5,12 @@ use std::fmt;
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct Hash([u8; 32]);
 
+impl AsRef<Hash> for Hash {
+    fn as_ref(&self) -> &Hash {
+        self
+    }
+}
+
 impl fmt::Display for Hash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", hex::encode(self))

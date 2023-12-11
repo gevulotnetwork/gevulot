@@ -2,44 +2,41 @@ use async_trait::async_trait;
 use eyre::Result;
 use std::collections::VecDeque;
 use std::sync::Arc;
-use uuid::Uuid;
 
-pub trait Identifiable {
-    fn id(&self) -> Uuid;
-}
+use crate::types::{Hash, Transaction};
 
 #[async_trait]
-pub trait Storage<T: Identifiable>: Send + Sync {
-    async fn get(&self, id: Uuid) -> Result<Option<T>>;
-    async fn set(&self, obj: &T) -> Result<()>;
-    async fn fill_deque(&self, deque: &mut VecDeque<T>) -> Result<()>;
+pub trait Storage: Send + Sync {
+    async fn get(&self, hash: &Hash) -> Result<Option<Transaction>>;
+    async fn set(&self, tx: &Transaction) -> Result<()>;
+    async fn fill_deque(&self, deque: &mut VecDeque<Transaction>) -> Result<()>;
 }
 
 #[derive(Clone)]
-pub struct Mempool<T: Identifiable> {
-    storage: Arc<dyn Storage<T>>,
-    deque: VecDeque<T>,
+pub struct Mempool {
+    storage: Arc<dyn Storage>,
+    deque: VecDeque<Transaction>,
 }
 
-impl<T: Identifiable> Mempool<T> {
-    pub async fn new(storage: Arc<dyn Storage<T>>) -> Result<Self> {
+impl Mempool {
+    pub async fn new(storage: Arc<dyn Storage>) -> Result<Self> {
         let mut deque = VecDeque::new();
         storage.fill_deque(&mut deque).await?;
         Ok(Self { storage, deque })
     }
 
-    pub fn next(&mut self) -> Option<T> {
+    pub fn next(&mut self) -> Option<Transaction> {
         // TODO(tuommaki): Should storage reflect the POP in state?
         self.deque.pop_front()
     }
 
-    pub fn peek(&self) -> Option<&T> {
+    pub fn peek(&self) -> Option<&Transaction> {
         self.deque.front()
     }
 
-    pub async fn add(&mut self, obj: T) -> Result<()> {
-        self.storage.set(&obj).await?;
-        self.deque.push_back(obj);
+    pub async fn add(&mut self, tx: Transaction) -> Result<()> {
+        self.storage.set(&tx).await?;
+        self.deque.push_back(tx);
         Ok(())
     }
 

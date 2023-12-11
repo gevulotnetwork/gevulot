@@ -13,6 +13,7 @@ clap = { version = "4", features = ["derive", "env", "string"] }
 console-subscriber = "0.2"
 eyre = "0.6.8"
 hex = "0.4"
+jsonrpsee = { version = "0.20", features = [ "client", "server" ] }
 libsecp256k1 = "0.7"
 num-bigint = { version = "0.4", features = [ "serde" ] }
 num-traits = "0.2"

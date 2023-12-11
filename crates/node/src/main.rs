@@ -13,14 +13,14 @@ use eyre::Result;
 use tokio::sync::RwLock;
 use tonic::transport::Server;
 use tracing_subscriber::{filter::LevelFilter, fmt::format::FmtSpan, EnvFilter};
-use types::Task;
-use uuid::Uuid;
+use types::{Hash, Transaction};
 
 mod asset_manager;
 mod config;
 mod mempool;
 mod networking;
 mod rest_api;
+mod rpc;
 mod scheduler;
 mod storage;
 mod types;
@@ -55,25 +55,19 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-impl mempool::Identifiable for Task {
-    fn id(&self) -> Uuid {
-        self.id
-    }
-}
-
 #[async_trait]
-impl mempool::Storage<Task> for storage::Database {
-    async fn get(&self, id: Uuid) -> Result<Option<Task>> {
-        self.find_task(id).await
+impl mempool::Storage for storage::Database {
+    async fn get(&self, hash: &Hash) -> Result<Option<Transaction>> {
+        self.find_transaction(hash).await
     }
 
-    async fn set(&self, obj: &Task) -> Result<()> {
-        self.add_task(obj).await?;
+    async fn set(&self, tx: &Transaction) -> Result<()> {
+        self.add_transaction(tx).await?;
         Ok(())
     }
 
-    async fn fill_deque(&self, deque: &mut std::collections::VecDeque<Task>) -> Result<()> {
-        for t in self.get_tasks().await? {
+    async fn fill_deque(&self, deque: &mut std::collections::VecDeque<Transaction>) -> Result<()> {
+        for t in self.get_transactions().await? {
             deque.push_back(t);
         }
 
@@ -125,6 +119,15 @@ async fn run(config: Arc<Config>) -> Result<()> {
         let scheduler = scheduler.clone();
         async move { scheduler.run().await }
     });
+
+    // Start JSON-RPC server.
+    let rpc_server = rpc::RpcServer::run(
+        config.clone(),
+        database.clone(),
+        mempool.clone(),
+        asset_mgr.clone(),
+    )
+    .await?;
 
     {
         let app_data = web::Data::new(rest_api::AppState {

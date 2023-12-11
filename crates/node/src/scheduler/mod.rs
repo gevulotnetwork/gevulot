@@ -37,7 +37,7 @@ struct RunningTask {
 }
 
 pub struct Scheduler {
-    mempool: Arc<RwLock<Mempool<Task>>>,
+    mempool: Arc<RwLock<Mempool>>,
     program_manager: Mutex<ProgramManager>,
 
     pending_programs: Arc<Mutex<VecDeque<Hash>>>,
@@ -48,7 +48,7 @@ pub struct Scheduler {
 }
 
 impl Scheduler {
-    pub fn new(mempool: Arc<RwLock<Mempool<Task>>>, program_manager: ProgramManager) -> Self {
+    pub fn new(mempool: Arc<RwLock<Mempool>>, program_manager: ProgramManager) -> Self {
         Self {
             mempool,
             program_manager: Mutex::new(program_manager),
@@ -140,7 +140,8 @@ impl Scheduler {
     }
 
     async fn pick_task(&self) -> Option<Task> {
-        self.mempool.write().await.next()
+        let _tx = self.mempool.write().await.next();
+        None
     }
 
     async fn reschedule(&self, task: &Task) -> Result<()> {

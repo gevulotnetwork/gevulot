@@ -1,5 +1,5 @@
 use clap::Parser;
-use std::path::PathBuf;
+use std::{net::SocketAddr, path::PathBuf};
 
 #[derive(Parser)]
 #[command(author, version, about = "Gevulot node")]
@@ -19,6 +19,14 @@ pub struct Config {
         default_value = "postgres://gevulot:gevulot@localhost/gevulot"
     )]
     pub db_url: String,
+
+    #[arg(
+        long,
+        long_help = "JSON-RPC listen address",
+        env = "GEVULOT_JSON_RPC_LISTEN_ADDR",
+        default_value = "127.0.0.1:9944"
+    )]
+    pub json_rpc_listen_addr: SocketAddr,
 
     #[arg(
         long,

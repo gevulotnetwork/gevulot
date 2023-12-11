@@ -14,7 +14,7 @@ pub struct AppState {
     pub asset_manager: Arc<AssetManager>,
     pub database: Arc<Database>,
     pub file_storage: Arc<FileStorage>,
-    pub mempool: Arc<RwLock<Mempool<Task>>>,
+    pub mempool: Arc<RwLock<Mempool>>,
 }
 
 #[get("/")]
@@ -53,9 +53,11 @@ async fn add_task(state: web::Data<AppState>, task: web::Json<Task>) -> HttpResp
         }
     }
 
+    /*
     if state.mempool.write().await.add(task).await.is_ok() {
         return HttpResponse::Accepted().finish();
     }
+        */
 
     HttpResponse::InternalServerError().body("failed to add task")
 }
