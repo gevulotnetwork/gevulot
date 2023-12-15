@@ -1,9 +1,16 @@
+use libsecp256k1::Message;
 use serde::{de, Deserialize, Serialize};
 use sqlx::{self, Decode, Encode, Postgres, Type};
 use std::fmt;
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct Hash([u8; 32]);
+
+impl Hash {
+    pub fn to_vec(&self) -> Vec<u8> {
+        self.0.to_vec()
+    }
+}
 
 impl AsRef<Hash> for Hash {
     fn as_ref(&self) -> &Hash {
@@ -37,6 +44,31 @@ impl From<&str> for Hash {
 impl From<String> for Hash {
     fn from(value: String) -> Self {
         Self::from(value.as_str())
+    }
+}
+
+impl From<&[u8]> for Hash {
+    fn from(value: &[u8]) -> Self {
+        Self {
+            0: value.try_into().expect("copy"),
+        }
+    }
+}
+
+impl From<Hash> for Message {
+    fn from(value: Hash) -> Self {
+        // Split [u8; 32] into 8 * [u8; 4]
+        let mut chunks = value.0.array_chunks::<4>();
+        Message(libsecp256k1::curve::Scalar([
+            u32::from_be_bytes(*chunks.next().unwrap()),
+            u32::from_be_bytes(*chunks.next().unwrap()),
+            u32::from_be_bytes(*chunks.next().unwrap()),
+            u32::from_be_bytes(*chunks.next().unwrap()),
+            u32::from_be_bytes(*chunks.next().unwrap()),
+            u32::from_be_bytes(*chunks.next().unwrap()),
+            u32::from_be_bytes(*chunks.next().unwrap()),
+            u32::from_be_bytes(*chunks.next().unwrap()),
+        ]))
     }
 }
 

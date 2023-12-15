@@ -3,13 +3,14 @@
 
 use asset_manager::AssetManager;
 use config::Config;
-use std::sync::{Arc, Mutex};
-use tokio::sync::Mutex as TMutex;
+use gevulot_node::types;
 
 use actix_web::{web, App, HttpServer};
 use async_trait::async_trait;
 use clap::Parser;
 use eyre::Result;
+use std::sync::{Arc, Mutex};
+use tokio::sync::Mutex as TMutex;
 use tokio::sync::RwLock;
 use tonic::transport::Server;
 use tracing_subscriber::{filter::LevelFilter, fmt::format::FmtSpan, EnvFilter};
@@ -20,10 +21,9 @@ mod config;
 mod mempool;
 mod networking;
 mod rest_api;
-mod rpc;
+mod rpc_server;
 mod scheduler;
 mod storage;
-mod types;
 mod vmm;
 
 use mempool::Mempool;
@@ -121,7 +121,7 @@ async fn run(config: Arc<Config>) -> Result<()> {
     });
 
     // Start JSON-RPC server.
-    let rpc_server = rpc::RpcServer::run(
+    let rpc_server = rpc_server::RpcServer::run(
         config.clone(),
         database.clone(),
         mempool.clone(),

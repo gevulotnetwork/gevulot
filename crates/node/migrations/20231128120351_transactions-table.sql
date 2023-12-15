@@ -27,7 +27,7 @@ CREATE TABLE deploy (
 ); 
 
 CREATE TABLE workflow_step (
-    id SERIAL UNIQUE,
+    id BIGSERIAL UNIQUE,
     tx VARCHAR(64) NOT NULL,
     sequence INTEGER NOT NULL,
     program VARCHAR(64) NOT NULL,

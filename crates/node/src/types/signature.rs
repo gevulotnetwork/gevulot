@@ -56,7 +56,7 @@ impl TryFrom<&str> for Signature {
         let bs = hex::decode(value).map_err(|e| SignatureError::ParseError(e.to_string()))?;
         let bs: [u8; 64] = bs
             .try_into()
-            .map_err(|e| SignatureError::ParseError("byte array length".to_string()))?;
+            .map_err(|_| SignatureError::ParseError("byte array length".to_string()))?;
         let sig = libsecp256k1::Signature::parse_standard(&bs)
             .map_err(|e| SignatureError::ParseError(e.to_string()))?;
         Ok(From::<libsecp256k1::Signature>::from(sig))
@@ -110,6 +110,7 @@ impl Type<Postgres> for Signature {
     }
 }
 
+#[allow(dead_code)]
 pub fn deserialize_hash_from_json<'de, D>(deserializer: D) -> Result<Signature, D::Error>
 where
     D: de::Deserializer<'de>,

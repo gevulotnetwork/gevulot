@@ -5,7 +5,22 @@ use super::{
     transaction,
 };
 
-use crate::vmm;
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ResourceRequest {
+    pub mem: u64,
+    pub cpus: u64,
+    pub gpus: u64,
+}
+
+impl Default for ResourceRequest {
+    fn default() -> Self {
+        Self {
+            mem: 8192,
+            cpus: 8,
+            gpus: 0,
+        }
+    }
+}
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, sqlx::FromRow)]
 pub struct Program {
@@ -16,7 +31,7 @@ pub struct Program {
     pub image_file_url: String,
     pub image_file_checksum: String,
     #[sqlx(skip)]
-    pub limits: vmm::ResourceRequest,
+    pub limits: ResourceRequest,
 }
 
 impl From<transaction::ProgramMetadata> for Program {

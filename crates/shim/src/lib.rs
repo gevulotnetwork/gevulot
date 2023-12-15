@@ -1,6 +1,5 @@
 use std::{path::Path, thread::sleep, time::Duration};
 
-use anyhow::Result;
 use grpc::vm_service_client::VmServiceClient;
 use tokio::runtime::Runtime;
 use tokio::{io::AsyncWriteExt, sync::Mutex};
@@ -14,6 +13,7 @@ mod grpc {
     tonic::include_proto!("vm_service");
 }
 
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub type TaskId = String;
 
 #[derive(Debug)]

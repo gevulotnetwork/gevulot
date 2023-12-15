@@ -5,8 +5,9 @@ use tokio::sync::Mutex as TMutex;
 
 use crate::scheduler::resource_manager::{ResourceAllocation, ResourceManager};
 use crate::storage::Database;
+use crate::types::program::ResourceRequest;
 use crate::types::Hash;
-use crate::vmm::{Provider, ResourceRequest, VMHandle, VMId};
+use crate::vmm::{Provider, VMHandle, VMId};
 
 #[allow(clippy::enum_variant_names)]
 #[derive(Error, Debug)]

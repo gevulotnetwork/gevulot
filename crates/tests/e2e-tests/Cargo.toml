@@ -1,0 +1,16 @@
+[package]
+name = "gevulot-e2e-tests"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.71"
+blake3 = { version = "1.5", features = [ "mmap" ] }
+clap = { version = "4.0.29", features = ["derive"] }
+gevulot-node = { path = "../../node" }
+libsecp256k1 = "0.7"
+rand = { version = "0.8", features = [ "std_rng" ] }
+tokio = { version = "1", features = [ "full" ] }

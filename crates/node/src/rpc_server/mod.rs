@@ -1,13 +1,13 @@
-use std::{
-    net::SocketAddr,
-    sync::{Arc, Mutex},
-};
+use std::{net::SocketAddr, sync::Arc};
 
 use eyre::Result;
+use gevulot_node::types::{
+    rpc::{RpcError, RpcResponse},
+    Hash, TransactionTree,
+};
 use jsonrpsee::{
     server::{RpcModule, Server, ServerHandle},
-    types::{Params, ResponsePayload},
-    IntoResponse,
+    types::Params,
 };
 use tokio::sync::RwLock;
 
@@ -17,10 +17,15 @@ use crate::{
 };
 
 struct Context {
-    req_count: Mutex<u64>,
     database: Arc<Database>,
     mempool: Arc<RwLock<Mempool>>,
     asset_manager: Arc<AssetManager>,
+}
+
+impl std::fmt::Debug for Context {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "RPC Context")
+    }
 }
 
 pub struct RpcServer {
@@ -37,7 +42,6 @@ impl RpcServer {
     ) -> Result<Self> {
         let server = Server::builder().build(cfg.json_rpc_listen_addr).await?;
         let mut module = RpcModule::new(Context {
-            req_count: Mutex::new(0),
             database,
             mempool,
             asset_manager,
@@ -64,12 +68,8 @@ impl RpcServer {
     }
 }
 
-async fn send_transaction(
-    params: Params<'static>,
-    ctx: Arc<Context>,
-) -> ResponsePayload<'static, <u64 as IntoResponse>::Output> {
-    let mut c = ctx.req_count.lock().unwrap();
-    *c += 1;
+#[tracing::instrument(level = "info")]
+async fn send_transaction(params: Params<'static>, ctx: Arc<Context>) -> RpcResponse<()> {
     tracing::info!("JSON-RPC: send_transaction()");
 
     dbg!(&params);
@@ -79,33 +79,48 @@ async fn send_transaction(
         Ok(tx) => tx,
         Err(e) => {
             tracing::error!("failed to parse transaction: {}", e);
-            return c.into_response();
+            return RpcResponse::Err(RpcError::InvalidRequest(e.to_string()));
         }
     };
 
-    dbg!(tx);
+    dbg!(&tx);
 
-    c.into_response()
+    let res = ctx.database.add_transaction(&tx).await;
+    if res.is_err() {
+        dbg!(res.err());
+        return RpcResponse::Err(RpcError::InvalidRequest(
+            "failed to persist transaction".to_string(),
+        ));
+    }
+
+    RpcResponse::Ok(())
 }
 
-async fn get_transaction(
-    params: Params<'static>,
-    ctx: Arc<Context>,
-) -> ResponsePayload<'static, <u64 as IntoResponse>::Output> {
-    let mut c = ctx.req_count.lock().unwrap();
-    *c += 1;
+#[tracing::instrument(level = "info")]
+async fn get_transaction(params: Params<'static>, ctx: Arc<Context>) -> RpcResponse<Transaction> {
+    let tx_hash: Hash = match params.one() {
+        Ok(tx_hash) => tx_hash,
+        Err(e) => {
+            tracing::error!("failed to parse transaction: {}", e);
+            return RpcResponse::Err(RpcError::InvalidRequest(e.to_string()));
+        }
+    };
+
     tracing::info!("JSON-RPC: get_transaction()");
-    c.into_response()
+
+    let resp = match ctx.database.find_transaction(&tx_hash).await {
+        Ok(Some(tx)) => RpcResponse::Ok(tx),
+        Ok(None) => RpcResponse::Err(RpcError::NotFound(tx_hash.to_string())),
+        Err(e) => RpcResponse::Err(RpcError::NotFound(tx_hash.to_string())),
+    };
+
+    resp
 }
 
-async fn get_tx_tree(
-    params: Params<'static>,
-    ctx: Arc<Context>,
-) -> ResponsePayload<'static, <u64 as IntoResponse>::Output> {
-    let mut c = ctx.req_count.lock().unwrap();
-    *c += 1;
+#[tracing::instrument(level = "info")]
+async fn get_tx_tree(params: Params<'static>, ctx: Arc<Context>) -> RpcResponse<TransactionTree> {
     tracing::info!("JSON-RPC: get_tx_tree()");
-    c.into_response()
+    RpcResponse::Err(RpcError::NotFound("TODO".to_string()))
 }
 
 #[cfg(test)]

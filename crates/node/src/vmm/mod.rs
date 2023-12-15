@@ -2,30 +2,12 @@ use std::any::Any;
 use std::path::Path;
 use std::sync::Arc;
 
-use crate::types::Program;
+use crate::types::{program::ResourceRequest, Program};
 use async_trait::async_trait;
 use eyre::Result;
-use serde::{Deserialize, Serialize};
 
 pub mod qemu;
 pub mod vm_server;
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct ResourceRequest {
-    pub mem: u64,
-    pub cpus: u64,
-    pub gpus: u64,
-}
-
-impl Default for ResourceRequest {
-    fn default() -> Self {
-        Self {
-            mem: 8192,
-            cpus: 8,
-            gpus: 0,
-        }
-    }
-}
 
 pub trait VMId: Send + Sync {
     fn as_any(&self) -> &dyn Any;

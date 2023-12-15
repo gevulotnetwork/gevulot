@@ -1,4 +1,4 @@
-use crate::vmm::ResourceRequest;
+use crate::types::program::ResourceRequest;
 use eyre::Result;
 use std::sync::{Arc, Mutex};
 use thiserror::Error;

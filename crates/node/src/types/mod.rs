@@ -1,7 +1,8 @@
 mod account;
 mod deployment;
 mod hash;
-mod program;
+pub mod program;
+pub mod rpc;
 mod signature;
 mod task;
 pub mod transaction;
@@ -13,4 +14,4 @@ pub use program::Program;
 pub use signature::Signature;
 #[allow(unused_imports)]
 pub use task::{File, Task, TaskId, TaskKind, TaskResult, TaskState};
-pub use transaction::Transaction;
+pub use transaction::{Transaction, TransactionTree};

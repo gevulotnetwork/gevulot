@@ -1,0 +1,17 @@
+[package]
+name = "gevulot-e2e-test-programs"
+version = "0.1.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+
+[[bin]]
+name = "prover"
+path = "src/prover.rs"
+
+[[bin]]
+name = "verifier"
+path = "src/verifier.rs"
+
+[dependencies]
+gevulot-shim = { path = "../../shim" }
