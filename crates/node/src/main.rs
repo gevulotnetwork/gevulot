@@ -5,11 +5,12 @@ use asset_manager::AssetManager;
 use config::Config;
 use gevulot_node::types;
 
-use actix_web::{web, App, HttpServer};
 use async_trait::async_trait;
 use clap::Parser;
 use eyre::Result;
 use std::sync::{Arc, Mutex};
+use std::thread::sleep;
+use std::time::Duration;
 use tokio::sync::Mutex as TMutex;
 use tokio::sync::RwLock;
 use tonic::transport::Server;
@@ -20,7 +21,6 @@ mod asset_manager;
 mod config;
 mod mempool;
 mod networking;
-mod rest_api;
 mod rpc_server;
 mod scheduler;
 mod storage;
@@ -129,26 +129,8 @@ async fn run(config: Arc<Config>) -> Result<()> {
     )
     .await?;
 
-    {
-        let app_data = web::Data::new(rest_api::AppState {
-            asset_manager: asset_mgr.clone(),
-            database: database.clone(),
-            file_storage,
-            mempool: mempool.clone(),
-        });
-        HttpServer::new(move || {
-            App::new()
-                .app_data(app_data.clone())
-                .service(rest_api::index)
-                .service(rest_api::tasks)
-                .service(rest_api::add_task)
-                .service(rest_api::programs)
-                .service(rest_api::deploy_program)
-        })
-        .bind(("127.0.0.1", 8080))?
-        .run()
-        .await?;
+    // TODO: Start event loop here.
+    loop {
+        sleep(Duration::from_secs(1));
     }
-
-    Ok(())
 }
