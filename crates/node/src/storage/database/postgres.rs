@@ -231,7 +231,7 @@ impl Database {
                     .await?;
 
                     let program_outputs = sqlx::query_as::<_, entity::payload::ProgramOutputData>(
-                        "SELECT * FROM program_output_data AS pid JOIN workflow_step AS ws ON pod.workflow_step_id = ws.id WHERE ws.tx = $1",
+                        "SELECT * FROM program_output_data AS pod JOIN workflow_step AS ws ON pod.workflow_step_id = ws.id WHERE ws.tx = $1",
                     )
                     .bind(&tx_hash.as_ref())
                     .fetch_all(&mut *db_tx)

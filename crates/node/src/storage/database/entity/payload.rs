@@ -41,7 +41,7 @@ pub struct Deploy {
 pub struct WorkflowStep {
     pub id: Option<i64>,
     pub tx: Hash,
-    pub sequence: i64,
+    pub sequence: i32,
     pub program: Hash,
     pub args: Vec<String>,
 }

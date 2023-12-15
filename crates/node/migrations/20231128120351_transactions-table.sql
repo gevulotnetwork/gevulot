@@ -42,7 +42,7 @@ CREATE TABLE workflow_step (
 ); 
 
 CREATE TABLE program_input_data (
-    workflow_step_id INTEGER NOT NULL,
+    workflow_step_id BIGINT NOT NULL,
     file_name VARCHAR(1024) NOT NULL,
     file_url VARCHAR(4096) NOT NULL,
     checksum VARCHAR(512) NOT NULL,
@@ -53,7 +53,7 @@ CREATE TABLE program_input_data (
 );
 
 CREATE TABLE program_output_data (
-    workflow_step_id INTEGER NOT NULL,
+    workflow_step_id BIGINT NOT NULL,
     file_name VARCHAR(1024) NOT NULL,
     source_program VARCHAR(64) NOT NULL,
     PRIMARY KEY (workflow_step_id, file_name),
