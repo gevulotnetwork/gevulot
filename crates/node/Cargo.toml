@@ -10,6 +10,7 @@ blake3 = "1.5"
 bytes = "1.5"
 clap = { version = "4", features = ["derive", "env", "string"] }
 console-subscriber = "0.2"
+ecies = {version = "0.2", default-features = false, features = ["pure"]}
 eyre = "0.6.8"
 hex = "0.4"
 jsonrpsee = { version = "0.20", features = [ "client", "server" ] }
