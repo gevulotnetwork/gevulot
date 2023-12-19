@@ -5,7 +5,7 @@ use super::hash::{deserialize_hash_from_json, Hash};
 
 pub type TaskId = Uuid;
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, sqlx::Type)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize, sqlx::Type)]
 #[sqlx(type_name = "task_state", rename_all = "lowercase")]
 pub enum TaskState {
     #[default]
@@ -16,7 +16,7 @@ pub enum TaskState {
     Failed,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, sqlx::Type)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize, sqlx::Type)]
 #[sqlx(type_name = "task_kind", rename_all = "lowercase")]
 pub enum TaskKind {
     Proof,
@@ -26,7 +26,7 @@ pub enum TaskKind {
     Nop,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, sqlx::FromRow)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize, sqlx::FromRow)]
 pub struct File {
     #[serde(skip_serializing, skip_deserializing)]
     pub task_id: TaskId,
@@ -34,7 +34,7 @@ pub struct File {
     pub url: String,
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, sqlx::FromRow)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize, sqlx::FromRow)]
 pub struct Task {
     pub id: TaskId,
     pub name: String,

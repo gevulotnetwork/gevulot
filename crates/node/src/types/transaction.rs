@@ -151,14 +151,16 @@ pub enum Payload {
     },
     Proof {
         parent: Hash,
-        proof: String,
+        prover: Hash,
+        proof: Vec<u8>,
     },
     ProofKey {
         parent: Hash,
-        key: String,
+        key: Vec<u8>,
     },
     Verification {
         parent: Hash,
+        verifier: Hash,
         verification: String,
     },
     Cancel {
@@ -192,19 +194,26 @@ impl Payload {
             Payload::Run { workflow } => {
                 workflow.serialize_into(buf);
             }
-            Payload::Proof { parent, proof } => {
+            Payload::Proof {
+                parent,
+                prover,
+                proof,
+            } => {
                 buf.append(&mut parent.to_vec());
-                buf.append(&mut proof.as_bytes().to_vec());
+                buf.append(&mut prover.to_vec());
+                buf.append(proof.clone().as_mut());
             }
             Payload::ProofKey { parent, key } => {
                 buf.append(&mut parent.to_vec());
-                buf.append(&mut key.as_bytes().to_vec());
+                buf.append(key.clone().as_mut());
             }
             Payload::Verification {
                 parent,
+                verifier,
                 verification,
             } => {
                 buf.append(&mut parent.to_vec());
+                buf.append(&mut verifier.to_vec());
                 buf.append(&mut verification.as_bytes().to_vec());
             }
             Payload::Cancel { parent } => {
