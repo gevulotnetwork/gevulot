@@ -36,7 +36,7 @@ impl Default for TransactionTree {
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct ProgramMetadata {
     pub name: String,
-    // XXX: What is this?
+    /// Program hash. Used to identify `Program`.
     pub hash: Hash,
     pub image_file_name: String,
     pub image_file_url: String,

@@ -1,14 +1,23 @@
 use libsecp256k1::Message;
+use rand::Rng;
 use serde::{de, Deserialize, Serialize};
 use sqlx::{self, Decode, Encode, Postgres, Type};
 use std::fmt;
 
+const HASH_SIZE: usize = 32;
+
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Serialize, Deserialize)]
-pub struct Hash([u8; 32]);
+pub struct Hash([u8; HASH_SIZE]);
 
 impl Hash {
     pub fn to_vec(&self) -> Vec<u8> {
         self.0.to_vec()
+    }
+
+    pub fn random<R: Rng>(rng: &mut R) -> Hash {
+        let mut bs = [0u8; HASH_SIZE];
+        rng.fill_bytes(&mut bs);
+        Hash { 0: bs }
     }
 }
 

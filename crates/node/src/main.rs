@@ -25,6 +25,7 @@ mod rpc_server;
 mod scheduler;
 mod storage;
 mod vmm;
+mod workflow;
 
 use mempool::Mempool;
 use storage::Database;
