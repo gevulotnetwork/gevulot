@@ -1,7 +1,9 @@
 use std::error::Error;
 
 use libsecp256k1::{PublicKey, SecretKey};
+use serde::{Deserialize, Serialize};
 
+#[derive(Default, Serialize, Deserialize)]
 pub struct KeyCapsule {
     pub msg: Vec<u8>,
     pub keys: Vec<(Vec<u8>, Vec<u8>)>,
@@ -39,6 +41,22 @@ impl KeyCapsule {
             }
             None => Err(String::from("recipient not present").into()),
         }
+    }
+
+    pub fn as_bytes(&self) -> Vec<u8> {
+        bincode::serialize(self).unwrap()
+    }
+}
+
+impl From<Vec<u8>> for KeyCapsule {
+    fn from(value: Vec<u8>) -> Self {
+        KeyCapsule::from(value.as_slice())
+    }
+}
+
+impl From<&[u8]> for KeyCapsule {
+    fn from(value: &[u8]) -> Self {
+        bincode::deserialize(value).unwrap()
     }
 }
 
@@ -96,5 +114,22 @@ mod tests {
         assert_ne!(msg, capsule.msg);
         assert_eq!(msg, capsule.decrypt(&sk1).unwrap());
         assert!(capsule.decrypt(&sk2).is_err());
+    }
+
+    #[test]
+    fn test_serialization() {
+        let sk1 = SecretKey::random(&mut StdRng::from_entropy());
+        let pk1 = PublicKey::from_secret_key(&sk1);
+        let sk2 = SecretKey::random(&mut StdRng::from_entropy());
+        let pk2 = PublicKey::from_secret_key(&sk2);
+
+        let msg = "Hello, World!".as_bytes();
+        let capsule = KeyCapsule::new(msg, &[pk1, pk2]);
+
+        let bs = capsule.as_bytes();
+        let kc = KeyCapsule::from(bs);
+
+        assert_eq!(capsule.msg, kc.msg);
+        assert_eq!(capsule.keys, kc.keys);
     }
 }
