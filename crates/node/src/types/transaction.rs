@@ -248,3 +248,36 @@ impl Transaction {
         (&hasher.finalize()[0..32]).into()
     }
 }
+
+#[cfg(test)]
+mod tests {
+
+    use rand::{rngs::StdRng, SeedableRng};
+
+    use super::*;
+
+    #[test]
+    fn test_sign_and_verify_tx() {
+        let sk = SecretKey::random(&mut StdRng::from_entropy());
+        let pk = PublicKey::from_secret_key(&sk);
+
+        let mut tx = Transaction::default();
+        tx.sign(&sk);
+        assert!(tx.verify(&pk));
+    }
+
+    #[test]
+    fn test_verify_fails_on_tamper() {
+        let sk = SecretKey::random(&mut StdRng::from_entropy());
+        let pk = PublicKey::from_secret_key(&sk);
+
+        let mut tx = Transaction::default();
+        tx.sign(&sk);
+
+        // Change nonce after signing.
+        tx.nonce += 1;
+
+        // Verify must return false.
+        assert!(!tx.verify(&pk));
+    }
+}
