@@ -4,8 +4,9 @@ exclude = [
 ]
 members = [
   "crates/node",
+  "crates/nodectl",
   "crates/shim",
   "crates/tests/test-programs",
-  "crates/tests/e2e-tests",
+  "crates/tests/e2e-tests", "crates/nodectl",
 ]
 resolver = "2"

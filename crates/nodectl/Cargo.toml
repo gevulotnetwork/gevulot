@@ -1,0 +1,8 @@
+[package]
+name = "nodectl"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+libsecp256k1 = "0.7"
+rand = { version = "0.8", features = [ "std_rng" ] }
