@@ -21,7 +21,7 @@ impl File {
         let file_name = Path::new(&file.name).file_name().unwrap();
         let file_path = PathBuf::new()
             .join(&self.data_dir)
-            .join(file.task_id.to_string())
+            .join(file.tx.to_string())
             .join(file_name);
 
         std::fs::create_dir_all(file_path.parent().unwrap())?;

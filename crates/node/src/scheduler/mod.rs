@@ -1,9 +1,11 @@
 mod program_manager;
 mod resource_manager;
 
+use crate::storage::Database;
 use crate::types::{TaskId, TaskState};
 use crate::vmm::vm_server::grpc;
 use crate::vmm::{vm_server::TaskManager, VMId};
+use crate::workflow::{WorkflowEngine, WorkflowError};
 use async_trait::async_trait;
 pub use program_manager::ProgramManager;
 pub use resource_manager::ResourceManager;
@@ -38,7 +40,9 @@ struct RunningTask {
 
 pub struct Scheduler {
     mempool: Arc<RwLock<Mempool>>,
+    database: Arc<Database>,
     program_manager: Mutex<ProgramManager>,
+    workflow_engine: Arc<WorkflowEngine>,
 
     pending_programs: Arc<Mutex<VecDeque<Hash>>>,
     running_tasks: Arc<Mutex<Vec<RunningTask>>>,
@@ -48,10 +52,17 @@ pub struct Scheduler {
 }
 
 impl Scheduler {
-    pub fn new(mempool: Arc<RwLock<Mempool>>, program_manager: ProgramManager) -> Self {
+    pub fn new(
+        mempool: Arc<RwLock<Mempool>>,
+        database: Arc<Database>,
+        program_manager: ProgramManager,
+        workflow_engine: Arc<WorkflowEngine>,
+    ) -> Self {
         Self {
             mempool,
+            database,
             program_manager: Mutex::new(program_manager),
+            workflow_engine,
 
             pending_programs: Arc::new(Mutex::new(VecDeque::new())),
             running_tasks: Arc::new(Mutex::new(vec![])),
@@ -140,8 +151,41 @@ impl Scheduler {
     }
 
     async fn pick_task(&self) -> Option<Task> {
-        let _tx = self.mempool.write().await.next();
-        None
+        // Acquire write lock.
+        let mut mempool = self.mempool.write().await;
+
+        // Check if next tx is ready for processing?
+        let tx = match mempool.peek() {
+            Some(tx) => {
+                if self.database.has_assets_loaded(&tx.hash).await.unwrap() {
+                    mempool.next().unwrap()
+                } else {
+                    // Assets are still downloading.
+                    // TODO: This can stall the whole processing pipeline!!
+                    // XXX: ....^.........^........^......^.......^........
+                    return None;
+                }
+            }
+            None => return None,
+        };
+
+        match self.workflow_engine.next_task(&tx).await {
+            Ok(res) => res,
+            Err(e) if e.is::<WorkflowError>() => {
+                let err = e.downcast_ref::<WorkflowError>();
+                match err {
+                    Some(WorkflowError::IncompatibleTransaction(_)) => None,
+                    _ => {
+                        tracing::error!("failed to compute next task for tx:{}: {}", tx.hash, e);
+                        None
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::error!("failed to compute next task for tx:{}: {}", tx.hash, e);
+                None
+            }
+        }
     }
 
     async fn reschedule(&self, task: &Task) -> Result<()> {

@@ -16,6 +16,7 @@ use tokio::sync::RwLock;
 use tonic::transport::Server;
 use tracing_subscriber::{filter::LevelFilter, fmt::format::FmtSpan, EnvFilter};
 use types::{Hash, Transaction};
+use workflow::WorkflowEngine;
 
 mod asset_manager;
 mod config;
@@ -76,6 +77,13 @@ impl mempool::Storage for storage::Database {
     }
 }
 
+#[async_trait]
+impl workflow::TransactionStore for storage::Database {
+    async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction>> {
+        self.find_transaction(tx_hash).await
+    }
+}
+
 async fn run(config: Arc<Config>) -> Result<()> {
     let database = Arc::new(Database::new(&config.db_url).await?);
     let file_storage = Arc::new(storage::File::new(&config.data_directory));
@@ -103,7 +111,14 @@ async fn run(config: Arc<Config>) -> Result<()> {
         async move { asset_mgr.run().await }
     });
 
-    let scheduler = Arc::new(scheduler::Scheduler::new(mempool.clone(), program_manager));
+    let workflow_engine = Arc::new(WorkflowEngine::new(database.clone()));
+
+    let scheduler = Arc::new(scheduler::Scheduler::new(
+        mempool.clone(),
+        database.clone(),
+        program_manager,
+        workflow_engine,
+    ));
     let vm_server =
         vmm::vm_server::VMServer::new(scheduler.clone(), provider, file_storage.clone());
 

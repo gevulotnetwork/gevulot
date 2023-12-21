@@ -29,7 +29,7 @@ pub enum TaskKind {
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize, sqlx::FromRow)]
 pub struct File {
     #[serde(skip_serializing, skip_deserializing)]
-    pub task_id: TaskId,
+    pub tx: Hash,
     pub name: String,
     pub url: String,
 }
@@ -37,6 +37,7 @@ pub struct File {
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize, sqlx::FromRow)]
 pub struct Task {
     pub id: TaskId,
+    pub tx: Hash,
     pub name: String,
     pub kind: TaskKind,
     #[serde(deserialize_with = "deserialize_hash_from_json")]

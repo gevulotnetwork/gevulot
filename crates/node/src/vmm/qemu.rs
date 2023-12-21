@@ -282,15 +282,10 @@ impl Provider for Qemu {
         for _ in 1..3 {
             if let Ok(status) = qmp_client.query_status().await {
                 tracing::debug!("VCPU status: {:#?}", status);
-                dump_read(
-                    &mut qemu_vm_handle
-                        .child
-                        .as_mut()
-                        .unwrap()
-                        .stdout
-                        .as_mut()
-                        .unwrap(),
-                );
+                let stdout = qemu_vm_handle.child.as_mut().unwrap().stdout.as_mut();
+                if stdout.is_some() {
+                    dump_read(&mut stdout.unwrap());
+                }
                 /*
                 dump_read(
                     &mut qemu_vm_handle
@@ -304,24 +299,15 @@ impl Provider for Qemu {
                 */
             } else {
                 tracing::error!("VM died");
-                dump_read(
-                    &mut qemu_vm_handle
-                        .child
-                        .as_mut()
-                        .unwrap()
-                        .stdout
-                        .as_mut()
-                        .unwrap(),
-                );
-                dump_read(
-                    &mut qemu_vm_handle
-                        .child
-                        .as_mut()
-                        .unwrap()
-                        .stderr
-                        .as_mut()
-                        .unwrap(),
-                );
+                let stdout = qemu_vm_handle.child.as_mut().unwrap().stdout.as_mut();
+                if stdout.is_some() {
+                    dump_read(&mut stdout.unwrap());
+                }
+
+                let stderr = qemu_vm_handle.child.as_mut().unwrap().stderr.as_mut();
+                if stderr.is_some() {
+                    dump_read(&mut stderr.unwrap());
+                }
 
                 qemu_vm_handle.child.as_mut().unwrap().wait().unwrap();
             }

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use eyre::Result;
 use gevulot_node::types::{
     transaction::{Payload, ProgramData, Workflow, WorkflowStep},
@@ -19,10 +20,14 @@ pub enum WorkflowError {
 
     #[error("workflow step missing: {0}")]
     WorkflowStepMissing(String),
+
+    #[error("transaction not found: {0}")]
+    TransactionNotFound(Hash),
 }
 
-pub trait TransactionStore {
-    fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction>>;
+#[async_trait]
+pub trait TransactionStore: Sync + Send {
+    async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction>>;
 }
 
 pub struct WorkflowEngine {
@@ -34,17 +39,22 @@ impl WorkflowEngine {
         WorkflowEngine { tx_store }
     }
 
-    pub fn next_task(&self, cur_tx: &Transaction, workflow: &Workflow) -> Result<Option<Task>> {
+    pub async fn next_task(&self, cur_tx: &Transaction) -> Result<Option<Task>> {
+        let workflow = self.workflow_for_transaction(&cur_tx.hash).await?;
+
         match &cur_tx.payload {
             Payload::Run { workflow } => {
                 if workflow.steps.len() == 0 {
                     Ok(None)
                 } else {
-                    Ok(Some(self.workflow_step_to_task(&workflow.steps[0])))
+                    Ok(Some(self.workflow_step_to_task(
+                        cur_tx.hash.clone(),
+                        &workflow.steps[0],
+                    )))
                 }
             }
             Payload::ProofKey { parent, key } => {
-                let proof_tx = match self.tx_store.find_transaction(parent) {
+                let proof_tx = match self.tx_store.find_transaction(parent).await {
                     Ok(None) => {
                         return Err(WorkflowError::WorkflowTransactionMissing(format!(
                             "Proof tx, hash {}",
@@ -74,6 +84,7 @@ impl WorkflowEngine {
                                 .into())
                             } else {
                                 Ok(Some(self.workflow_step_to_task(
+                                    proof_tx.hash.clone(),
                                     &workflow.steps[proof_step_idx + 1],
                                 )))
                             }
@@ -95,7 +106,38 @@ impl WorkflowEngine {
         }
     }
 
-    fn workflow_step_to_task(&self, step: &WorkflowStep) -> Task {
+    async fn workflow_for_transaction(&self, tx_hash: &Hash) -> Result<Workflow> {
+        let mut tx_hash = tx_hash.clone();
+
+        // Traverse transaction tree up by tracing parent until
+        // Payload::Run is found.
+        loop {
+            let tx = self.tx_store.find_transaction(&tx_hash).await?;
+
+            if tx.is_none() {
+                return Err(WorkflowError::TransactionNotFound(tx_hash).into());
+            }
+
+            match tx.unwrap().payload {
+                Payload::Run { workflow } => return Ok(workflow),
+                Payload::Proof { parent, .. } => {
+                    tx_hash = parent.clone();
+                    continue;
+                }
+                Payload::ProofKey { parent, .. } => {
+                    tx_hash = parent.clone();
+                    continue;
+                }
+                Payload::Verification { parent, .. } => {
+                    tx_hash = parent.clone();
+                    continue;
+                }
+                _ => return Err(WorkflowError::IncompatibleTransaction(tx_hash.to_string()).into()),
+            }
+        }
+    }
+
+    fn workflow_step_to_task(&self, tx: Hash, step: &WorkflowStep) -> Task {
         let id = Uuid::new_v4();
         let files = step
             .inputs
@@ -106,7 +148,7 @@ impl WorkflowEngine {
                     file_url,
                     ..
                 } => File {
-                    task_id: id,
+                    tx: tx.clone(),
                     name: file_name.clone(),
                     url: file_url.clone(),
                 },
@@ -114,7 +156,7 @@ impl WorkflowEngine {
                     source_program,
                     file_name,
                 } => File {
-                    task_id: id,
+                    tx: tx.clone(),
                     name: file_name.clone(),
                     url: "".to_string(),
                 },
@@ -123,6 +165,7 @@ impl WorkflowEngine {
 
         Task {
             id,
+            tx,
             name: format!("{}-{}", id.to_string(), step.program.to_string()),
             kind: gevulot_node::types::TaskKind::Proof,
             program_id: step.program,
@@ -162,25 +205,25 @@ mod tests {
         }
     }
 
+    #[async_trait]
     impl TransactionStore for TxStore {
-        fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction>> {
+        async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction>> {
             Ok(self.txs.get(tx_hash).map(|e| e.clone()))
         }
     }
 
-    #[test]
-    fn test_next_task_for_empty_workflow_steps() {
+    #[tokio::test]
+    async fn test_next_task_for_empty_workflow_steps() {
         let wfe = WorkflowEngine::new(Arc::new(TxStore::new(&[])));
         let tx = transaction_for_workflow_steps(vec![]);
         if let Payload::Run { workflow } = &tx.payload {
-            let task = wfe.next_task(&tx, &workflow).expect("next_task");
-            assert!(task.is_none());
+            let res = wfe.next_task(&tx).await;
+            assert!(res.is_err());
         }
     }
 
-    #[test]
-    fn test_next_task_for_simple_workflow_steps() {
-        let wfe = WorkflowEngine::new(Arc::new(TxStore::new(&[])));
+    #[tokio::test]
+    async fn test_next_task_for_simple_workflow_steps() {
         let rng = &mut StdRng::from_entropy();
         let prover_hash = Hash::random(rng);
 
@@ -200,16 +243,18 @@ mod tests {
         };
 
         let tx = transaction_for_workflow_steps(vec![proving.clone(), verifying]);
+        let wfe = WorkflowEngine::new(Arc::new(TxStore::new(&[tx.clone()])));
+
         if let Payload::Run { workflow } = &tx.payload {
-            let task = wfe.next_task(&tx, &workflow).expect("next_task").unwrap();
+            let task = wfe.next_task(&tx).await.expect("next_task").unwrap();
             assert_eq!(task.kind, TaskKind::Proof);
             assert_eq!(task.program_id, proving.program);
             assert_eq!(task.args, Vec::<String>::new());
         };
     }
 
-    #[test]
-    fn test_next_task_for_verification() {
+    #[tokio::test]
+    async fn test_next_task_for_verification() {
         let rng = &mut StdRng::from_entropy();
         let prover_hash = Hash::random(rng);
         let verifier_hash = Hash::random(rng);
@@ -241,7 +286,7 @@ mod tests {
         let tx_store = TxStore::new(&[root_tx, proof_tx, proofkey_tx.clone(), verification_tx]);
         let wfe = WorkflowEngine::new(Arc::new(tx_store));
 
-        let task = wfe.next_task(&proofkey_tx, &workflow);
+        let task = wfe.next_task(&proofkey_tx).await;
         assert!(task.is_ok());
     }
 

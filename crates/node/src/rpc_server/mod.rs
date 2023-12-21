@@ -83,13 +83,20 @@ async fn send_transaction(params: Params<'static>, ctx: Arc<Context>) -> RpcResp
         }
     };
 
-    dbg!(&tx);
-
-    let res = ctx.database.add_transaction(&tx).await;
-    if res.is_err() {
-        dbg!(res.err());
+    if let Err(err) = ctx.mempool.write().await.add(tx.clone()).await {
+        tracing::error!("failed to persist transaction: {}", err);
         return RpcResponse::Err(RpcError::InvalidRequest(
             "failed to persist transaction".to_string(),
+        ));
+    }
+
+    if let Err(err) = ctx.asset_manager.handle_transaction(&tx).await {
+        tracing::error!(
+            "failed to enqueue transaction for asset processing: {}",
+            err
+        );
+        return RpcResponse::Err(RpcError::InvalidRequest(
+            "failed to enqueue transaction for asset processing".to_string(),
         ));
     }
 

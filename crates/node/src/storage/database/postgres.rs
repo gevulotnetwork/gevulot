@@ -161,6 +161,17 @@ impl Database {
         Ok(())
     }
 
+    pub async fn has_assets_loaded(&self, tx_hash: &Hash) -> Result<bool> {
+        let res: Option<i32> =
+            sqlx::query("SELECT 1 FROM assets WHERE completed IS NOT NULL AND tx = $1")
+                .bind(tx_hash)
+                .map(|row: sqlx::postgres::PgRow| row.get(0))
+                .fetch_optional(&self.pool)
+                .await?;
+
+        return Ok(res.is_some());
+    }
+
     pub async fn get_incomplete_assets(&self) -> Result<Vec<Hash>> {
         let assets =
             sqlx::query("SELECT tx FROM assets WHERE completed IS NULL ORDER BY created ASC")
@@ -172,7 +183,7 @@ impl Database {
     }
 
     pub async fn mark_asset_complete(&self, tx_hash: &Hash) -> Result<()> {
-        sqlx::query("UPDATE assets SET complete = NOW() WHERE tx = $1")
+        sqlx::query("UPDATE assets SET completed = NOW() WHERE tx = $1")
             .bind(&tx_hash.to_string())
             .execute(&self.pool)
             .await?;

@@ -1,14 +1,18 @@
 use eyre::Result;
+use gevulot_node::types::{
+    self,
+    transaction::{Payload, ProgramData},
+};
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::{io::AsyncWriteExt, time::sleep};
 
 use crate::{
     config::Config,
-    storage::Database,
+    storage::{self, Database},
     types::{
         transaction::{self, Transaction},
-        Program,
+        Hash, Program,
     },
 };
 
@@ -17,6 +21,9 @@ use crate::{
 enum AssetManagerError {
     #[error("program image download")]
     ProgramImageDownload,
+
+    #[error("incompatible transaction payload")]
+    IncompatibleTxPayload(Hash),
 }
 
 /// AssetManager is reponsible for coordinating asset management for a new
@@ -83,28 +90,15 @@ impl AssetManager {
         }
     }
 
-    async fn process_deployment(&self, _tx: &Transaction) -> Result<()> {
-        let prover = Program::default();
-        let verifier = Program::default();
-
-        /*
-        let mut handles = JoinSet::new();
-        handles.spawn(async move { self.process_program(&prover).await });
-        handles.spawn(async move { self.process_program(&verifier).await });
-
-        let mut success = true;
-        while let Some(res) = handles.join_next().await {
-            if res.is_err() {
-                success = false;
-            }
-        }
-
-        if success {
-            Ok(())
-        } else {
-            Err(AssetManagerError::ProgramImageDownload.into())
-        }
-        */
+    async fn process_deployment(&self, tx: &Transaction) -> Result<()> {
+        let (prover, verifier) = match tx.payload.clone() {
+            Payload::Deploy {
+                name: _,
+                prover,
+                verifier,
+            } => (Program::from(prover), Program::from(verifier)),
+            _ => return Err(AssetManagerError::IncompatibleTxPayload(tx.hash.clone()).into()),
+        };
 
         self.process_program(&prover).await?;
         self.process_program(&verifier).await?;
@@ -113,8 +107,10 @@ impl AssetManager {
     }
 
     async fn process_program(&self, program: &Program) -> Result<()> {
+        // TODO: Process and program files are now downloaded in different ways. Combine these.
         let file_path = PathBuf::new()
             .join(self.config.data_directory.clone())
+            .join("images")
             .join(program.hash.to_string())
             .join(program.image_file_name.clone());
 
@@ -123,15 +119,39 @@ impl AssetManager {
     }
 
     async fn process_run(&self, tx: &Transaction) -> Result<()> {
-        /*
-        let file_name = Path::new(&file.name).file_name().unwrap();
-        let file_path = PathBuf::new()
-            .join(&self.data_dir)
-            .join(file.task_id.to_string())
-            .join(file_name);
-        */
+        // TODO: Process and program files are now downloaded in different ways. Combine these.
+        let file_storage = storage::File::new(&self.config.data_directory);
 
-        todo!();
+        let workflow = match tx.payload.clone() {
+            Payload::Run { workflow } => workflow,
+            _ => return Err(AssetManagerError::IncompatibleTxPayload(tx.hash.clone()).into()),
+        };
+
+        // TODO: Ideally the following would happen concurrently for each file...
+        for step in workflow.steps {
+            for input in step.inputs {
+                match input {
+                    ProgramData::Input {
+                        file_name,
+                        file_url,
+                        checksum,
+                    } => {
+                        let f = types::File {
+                            tx: tx.hash.clone(),
+                            name: file_name,
+                            url: file_url,
+                        };
+                        file_storage.download(&f).await?;
+                    }
+                    ProgramData::Output { .. } => {
+                        /* ProgramData::Output asinput means it comes from another
+                        program execution -> skip this branch. */
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// download downloads file from the given `url` and saves it to file in `file_path`.
@@ -163,14 +183,5 @@ impl AssetManager {
         }
 
         Ok(())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-
-    #[test]
-    fn foobar_test() {
-        println!("add test to asset manager");
     }
 }
