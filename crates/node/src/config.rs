@@ -38,6 +38,14 @@ pub struct Config {
 
     #[arg(
         long,
+        long_help = "File where the node key is persisted",
+        env = "GEVULOT_NODE_KEY_FILE",
+        default_value_os_t = PathBuf::from("/var/lib/gevulot/node.key"),
+    )]
+    pub node_key_file: PathBuf,
+
+    #[arg(
+        long,
         long_help = "Provider backend to run tasks",
         env = "GEVULOT_PROVIDER",
         default_value = "qemu"

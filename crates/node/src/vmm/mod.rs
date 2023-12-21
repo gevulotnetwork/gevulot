@@ -9,7 +9,7 @@ use eyre::Result;
 pub mod qemu;
 pub mod vm_server;
 
-pub trait VMId: Send + Sync {
+pub trait VMId: Send + Sync + std::fmt::Display {
     fn as_any(&self) -> &dyn Any;
     fn eq(&self, x: Arc<dyn VMId>) -> bool;
 }

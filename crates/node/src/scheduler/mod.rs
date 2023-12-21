@@ -7,6 +7,9 @@ use crate::vmm::vm_server::grpc;
 use crate::vmm::{vm_server::TaskManager, VMId};
 use crate::workflow::{WorkflowEngine, WorkflowError};
 use async_trait::async_trait;
+use gevulot_node::types::transaction::Payload;
+use gevulot_node::types::{Signature, TaskKind, Transaction};
+use libsecp256k1::SecretKey;
 pub use program_manager::ProgramManager;
 pub use resource_manager::ResourceManager;
 
@@ -32,17 +35,24 @@ use self::program_manager::{ProgramError, ProgramHandle};
 use self::resource_manager::ResourceError;
 
 struct RunningTask {
-    task_id: TaskId,
+    task: Task,
     vm_id: Arc<dyn VMId>,
     task_scheduled: Instant,
     task_started: Instant,
 }
 
+// TODO: I believe `Scheduler` should be rather named `Node` at some point. It
+// has started to become as a kind of central place for node logic
+// coordination.
+//
+// It could use some re-structuring in order to not be so convoluted, but
+// otherwise it seems to be okayish.
 pub struct Scheduler {
     mempool: Arc<RwLock<Mempool>>,
     database: Arc<Database>,
     program_manager: Mutex<ProgramManager>,
     workflow_engine: Arc<WorkflowEngine>,
+    node_key: SecretKey,
 
     pending_programs: Arc<Mutex<VecDeque<Hash>>>,
     running_tasks: Arc<Mutex<Vec<RunningTask>>>,
@@ -57,12 +67,14 @@ impl Scheduler {
         database: Arc<Database>,
         program_manager: ProgramManager,
         workflow_engine: Arc<WorkflowEngine>,
+        node_key: SecretKey,
     ) -> Self {
         Self {
             mempool,
             database,
             program_manager: Mutex::new(program_manager),
             workflow_engine,
+            node_key,
 
             pending_programs: Arc::new(Mutex::new(VecDeque::new())),
             running_tasks: Arc::new(Mutex::new(vec![])),
@@ -97,7 +109,10 @@ impl Scheduler {
             }
 
             let mut task = match self.pick_task().await {
-                Some(t) => t,
+                Some(t) => {
+                    tracing::debug!("task {}/{} scheduled for running", t.id, t.tx);
+                    t
+                }
                 None => {
                     sleep(Duration::from_millis(100)).await;
                     continue;
@@ -157,13 +172,19 @@ impl Scheduler {
         // Check if next tx is ready for processing?
         let tx = match mempool.peek() {
             Some(tx) => {
-                if self.database.has_assets_loaded(&tx.hash).await.unwrap() {
-                    mempool.next().unwrap()
+                if let Payload::Run { .. } = tx.payload {
+                    if self.database.has_assets_loaded(&tx.hash).await.unwrap() {
+                        mempool.next().unwrap()
+                    } else {
+                        // Assets are still downloading.
+                        // TODO: This can stall the whole processing pipeline!!
+                        // XXX: ....^.........^........^......^.......^........
+                        tracing::info!("assets for tx {} still loading", tx.hash);
+                        return None;
+                    }
                 } else {
-                    // Assets are still downloading.
-                    // TODO: This can stall the whole processing pipeline!!
-                    // XXX: ....^.........^........^......^.......^........
-                    return None;
+                    tracing::debug!("scheduling new task from tx {}", tx.hash);
+                    mempool.next().unwrap()
                 }
             }
             None => return None,
@@ -174,7 +195,10 @@ impl Scheduler {
             Err(e) if e.is::<WorkflowError>() => {
                 let err = e.downcast_ref::<WorkflowError>();
                 match err {
-                    Some(WorkflowError::IncompatibleTransaction(_)) => None,
+                    Some(WorkflowError::IncompatibleTransaction(_)) => {
+                        tracing::debug!("{}", e);
+                        None
+                    }
                     _ => {
                         tracing::error!("failed to compute next task for tx:{}: {}", tx.hash, e);
                         None
@@ -197,21 +221,35 @@ impl Scheduler {
             .push_back(task.program_id);
         Ok(())
     }
+
+    async fn terminate_vm(&self, program: Hash, vm_id: Arc<dyn VMId>) {}
 }
 
 #[async_trait]
 impl TaskManager for Scheduler {
     async fn get_task(&self, program: Hash, vm_id: Arc<dyn VMId>) -> Option<grpc::Task> {
+        tracing::debug!(
+            "program {} running in vm_id {} requests for new task",
+            program,
+            vm_id
+        );
+
         if let Some(task_queue) = self.task_queue.lock().await.get(&program) {
             if let Some((task, scheduled)) = task_queue.front() {
+                tracing::debug!(
+                    "task {} found for program {} running in vm_id {}",
+                    task.id,
+                    program,
+                    vm_id
+                );
                 tracing::info!(
                     "task {} started in {}ms",
-                    task.id.to_string(),
+                    task.id,
                     scheduled.elapsed().as_millis()
                 );
 
                 self.running_tasks.lock().await.push(RunningTask {
-                    task_id: task.id,
+                    task: task.clone(),
                     vm_id: vm_id.clone(),
                     task_scheduled: *scheduled,
                     task_started: Instant::now(),
@@ -231,8 +269,8 @@ impl TaskManager for Scheduler {
 
     async fn submit_result(
         &self,
-        _program: Hash,
-        _vm_id: Arc<dyn VMId>,
+        program: Hash,
+        vm_id: Arc<dyn VMId>,
         result: grpc::task_result_request::Result,
     ) -> bool {
         dbg!(&result);
@@ -243,13 +281,74 @@ impl TaskManager for Scheduler {
 
         let task_id = TaskId::parse_str(&result.id).unwrap();
         let mut running_tasks = self.running_tasks.lock().await;
-        if let Some(idx) = running_tasks.iter().position(|e| e.task_id == task_id) {
+        if let Some(idx) = running_tasks.iter().position(|e| e.task.id == task_id) {
             let running_task = running_tasks.swap_remove(idx);
             tracing::info!(
                 "task {} finished in {}sec",
                 task_id.to_string(),
                 running_task.task_started.elapsed().as_secs()
             );
+
+            let mut tx = match running_task.task.kind {
+                TaskKind::Proof => Transaction {
+                    hash: Hash::default(),
+                    payload: Payload::Proof {
+                        parent: running_task.task.tx.clone(),
+                        prover: program.clone(),
+                        proof: result.data,
+                    },
+                    nonce: 1,
+                    signature: Signature::default(),
+                    propagated: false,
+                },
+                TaskKind::Verification => Transaction {
+                    hash: Hash::default(),
+                    payload: Payload::Verification {
+                        parent: running_task.task.tx.clone(),
+                        verifier: program.clone(),
+                        verification: result.data,
+                    },
+                    nonce: 1,
+                    signature: Signature::default(),
+                    propagated: false,
+                },
+                TaskKind::PoW => {
+                    todo!("proof of work tasks not implemented yet");
+                }
+                TaskKind::Nop => {
+                    panic!(
+                        "impossible to receive result from a task ({}/{}) with task.kind == Nop",
+                        running_task.task.id, running_task.task.tx
+                    );
+                }
+            };
+
+            tx.sign(&self.node_key);
+
+            let mut mempool = self.mempool.write().await;
+            if let Err(err) = mempool.add(tx.clone()).await {
+                tracing::error!("failed to add transaction to mempool: {}", err);
+            } else {
+                dbg!(tx);
+                tracing::info!("successfully added new tx to mempool from task result");
+            }
+
+            tracing::debug!("terminating VM {} running program {}", vm_id, program);
+
+            let mut running_vms = self.running_vms.lock().await;
+            let idx = running_vms.iter().position(|e| e.vm_id().eq(vm_id.clone()));
+            if idx.is_some() {
+                let program_handle = running_vms.remove(idx.unwrap());
+                if let Err(err) = self
+                    .program_manager
+                    .lock()
+                    .await
+                    .stop_program(program_handle)
+                    .await
+                {
+                    tracing::error!("failed to stop program {}: {}", program, err);
+                }
+            }
         }
 
         return false;

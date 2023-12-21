@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use eyre::Result;
 use gevulot_node::types::{
     transaction::{Payload, ProgramData, Workflow, WorkflowStep},
-    File, Hash, Task, Transaction,
+    File, Hash, Task, TaskKind, Transaction,
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -44,16 +44,55 @@ impl WorkflowEngine {
 
         match &cur_tx.payload {
             Payload::Run { workflow } => {
+                tracing::debug!("creating next task from Run tx {}", &cur_tx.hash);
+
                 if workflow.steps.len() == 0 {
                     Ok(None)
                 } else {
                     Ok(Some(self.workflow_step_to_task(
                         cur_tx.hash.clone(),
                         &workflow.steps[0],
+                        TaskKind::Proof,
                     )))
                 }
             }
+            Payload::Proof {
+                parent,
+                prover,
+                proof,
+            } => {
+                tracing::debug!("creating next task from Proof tx {}", &cur_tx.hash);
+
+                match workflow
+                    .steps
+                    .iter()
+                    .position(|s| s.program == prover.clone())
+                {
+                    Some(proof_step_idx) => {
+                        if workflow.steps.len() <= proof_step_idx {
+                            Err(WorkflowError::WorkflowStepMissing(format!(
+                                "verifier for proof tx {}",
+                                cur_tx.hash.clone(),
+                            ))
+                            .into())
+                        } else {
+                            Ok(Some(self.workflow_step_to_task(
+                                cur_tx.hash.clone(),
+                                &workflow.steps[proof_step_idx + 1],
+                                TaskKind::Verification,
+                            )))
+                        }
+                    }
+                    None => Err(WorkflowError::WorkflowStepMissing(format!(
+                        "verifier for proof tx {}",
+                        cur_tx.hash
+                    ))
+                    .into()),
+                }
+            }
             Payload::ProofKey { parent, key } => {
+                tracing::debug!("creating next task from ProofKey tx {}", &cur_tx.hash);
+
                 let proof_tx = match self.tx_store.find_transaction(parent).await {
                     Ok(None) => {
                         return Err(WorkflowError::WorkflowTransactionMissing(format!(
@@ -86,6 +125,7 @@ impl WorkflowEngine {
                                 Ok(Some(self.workflow_step_to_task(
                                     proof_tx.hash.clone(),
                                     &workflow.steps[proof_step_idx + 1],
+                                    TaskKind::Verification,
                                 )))
                             }
                         }
@@ -109,6 +149,8 @@ impl WorkflowEngine {
     async fn workflow_for_transaction(&self, tx_hash: &Hash) -> Result<Workflow> {
         let mut tx_hash = tx_hash.clone();
 
+        tracing::debug!("finding workflow for transaction {}", tx_hash);
+
         // Traverse transaction tree up by tracing parent until
         // Payload::Run is found.
         loop {
@@ -119,25 +161,37 @@ impl WorkflowEngine {
             }
 
             match tx.unwrap().payload {
-                Payload::Run { workflow } => return Ok(workflow),
+                Payload::Run { workflow } => {
+                    tracing::debug!("workflow found for transaction {}", tx_hash);
+                    return Ok(workflow);
+                }
                 Payload::Proof { parent, .. } => {
+                    tracing::debug!("finding workflow from parent {} of {}", &parent, tx_hash);
                     tx_hash = parent.clone();
                     continue;
                 }
                 Payload::ProofKey { parent, .. } => {
+                    tracing::debug!("finding workflow from parent {} of {}", &parent, tx_hash);
                     tx_hash = parent.clone();
                     continue;
                 }
                 Payload::Verification { parent, .. } => {
+                    tracing::debug!("finding workflow from parent {} of {}", &parent, tx_hash);
                     tx_hash = parent.clone();
                     continue;
                 }
-                _ => return Err(WorkflowError::IncompatibleTransaction(tx_hash.to_string()).into()),
+                _ => {
+                    tracing::debug!(
+                        "failed to find workflow for transaction {}: incompatible transaction",
+                        &tx_hash
+                    );
+                    return Err(WorkflowError::IncompatibleTransaction(tx_hash.to_string()).into());
+                }
             }
         }
     }
 
-    fn workflow_step_to_task(&self, tx: Hash, step: &WorkflowStep) -> Task {
+    fn workflow_step_to_task(&self, tx: Hash, step: &WorkflowStep, kind: TaskKind) -> Task {
         let id = Uuid::new_v4();
         let files = step
             .inputs
@@ -167,7 +221,7 @@ impl WorkflowEngine {
             id,
             tx,
             name: format!("{}-{}", id.to_string(), step.program.to_string()),
-            kind: gevulot_node::types::TaskKind::Proof,
+            kind,
             program_id: step.program,
             args: step.args.clone(),
             files,
@@ -348,7 +402,7 @@ mod tests {
             payload: Payload::Verification {
                 parent: parent.clone(),
                 verifier: program.clone(),
-                verification: String::from("verification."),
+                verification: b"verification.".to_vec(),
             },
             nonce: 1,
             signature: Signature::default(),

@@ -161,7 +161,7 @@ pub enum Payload {
     Verification {
         parent: Hash,
         verifier: Hash,
-        verification: String,
+        verification: Vec<u8>,
     },
     Cancel {
         parent: Hash,
@@ -214,7 +214,7 @@ impl Payload {
             } => {
                 buf.append(&mut parent.to_vec());
                 buf.append(&mut verifier.to_vec());
-                buf.append(&mut verification.as_bytes().to_vec());
+                buf.append(&mut verification.clone().as_mut());
             }
             Payload::Cancel { parent } => {
                 buf.append(&mut parent.to_vec());

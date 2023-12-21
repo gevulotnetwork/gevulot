@@ -133,7 +133,7 @@ async fn get_tx_tree(params: Params<'static>, ctx: Arc<Context>) -> RpcResponse<
 #[cfg(test)]
 mod tests {
 
-    use std::env::temp_dir;
+    use std::{env::temp_dir, path::PathBuf};
 
     use jsonrpsee::{
         core::{client::ClientT, params::ArrayParams},
@@ -185,6 +185,7 @@ mod tests {
             db_url: "postgres://gevulot:gevulot@localhost/gevulot".to_string(),
             json_rpc_listen_addr: "127.0.0.1:0".parse().unwrap(),
             log_directory: temp_dir(),
+            node_key_file: PathBuf::new().join("node.key"),
             provider: "qemu".to_string(),
             vsock_listen_port: 8080,
         });

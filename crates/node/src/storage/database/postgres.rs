@@ -194,15 +194,12 @@ impl Database {
     // transaction related operations. They are implemented naively on purpose
     // for now to maintain initial flexibility in development. Later on, these
     // queries here are easy low hanging fruits for optimizations.
-    pub async fn find_transaction(
-        &self,
-        tx_hash: impl AsRef<Hash>,
-    ) -> Result<Option<types::Transaction>> {
+    pub async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<types::Transaction>> {
         let mut db_tx = self.pool.begin().await?;
 
         let entity =
             sqlx::query_as::<_, entity::Transaction>("SELECT * FROM transaction WHERE hash = $1")
-                .bind(tx_hash.as_ref())
+                .bind(tx_hash)
                 .fetch_optional(&mut *db_tx)
                 .await?;
 
@@ -213,7 +210,7 @@ impl Database {
                     let deploy = sqlx::query_as::<_, entity::payload::Deploy>(
                         "SELECT * FROM deploy WHERE tx = $1",
                     )
-                    .bind(tx_hash.as_ref())
+                    .bind(tx_hash)
                     .fetch_one(&mut *db_tx)
                     .await?;
 
@@ -230,21 +227,21 @@ impl Database {
                     let steps = sqlx::query_as::<_, entity::payload::WorkflowStep>(
                         "SELECT * FROM workflow_step WHERE tx = $1",
                     )
-                    .bind(tx_hash.as_ref())
+                    .bind(tx_hash)
                     .fetch_all(&mut *db_tx)
                     .await?;
 
                     let program_inputs = sqlx::query_as::<_, entity::payload::ProgramInputData>(
                         "SELECT * FROM program_input_data AS pid JOIN workflow_step AS ws ON pid.workflow_step_id = ws.id WHERE ws.tx = $1",
                     )
-                    .bind(tx_hash.as_ref())
+                    .bind(tx_hash)
                     .fetch_all(&mut *db_tx)
                     .await?;
 
                     let program_outputs = sqlx::query_as::<_, entity::payload::ProgramOutputData>(
                         "SELECT * FROM program_output_data AS pod JOIN workflow_step AS ws ON pod.workflow_step_id = ws.id WHERE ws.tx = $1",
                     )
-                    .bind(&tx_hash.as_ref())
+                    .bind(tx_hash)
                     .fetch_all(&mut *db_tx)
                     .await?;
 
@@ -295,6 +292,46 @@ impl Database {
                         workflow: types::transaction::Workflow { steps },
                     }
                 }
+                entity::transaction::Kind::Proof => {
+                    sqlx::query("SELECT parent, prover, proof FROM proof WHERE tx = $1")
+                        .bind(tx_hash)
+                        .map(
+                            |row: sqlx::postgres::PgRow| types::transaction::Payload::Proof {
+                                parent: row.get(0),
+                                prover: row.get(1),
+                                proof: row.get(2),
+                            },
+                        )
+                        .fetch_one(&mut *db_tx)
+                        .await?
+                }
+                entity::transaction::Kind::ProofKey => {
+                    sqlx::query("SELECT parent, key FROM proof_key WHERE tx = $1")
+                        .bind(tx_hash)
+                        .map(
+                            |row: sqlx::postgres::PgRow| types::transaction::Payload::ProofKey {
+                                parent: row.get(0),
+                                key: row.get(1),
+                            },
+                        )
+                        .fetch_one(&mut *db_tx)
+                        .await?
+                }
+                entity::transaction::Kind::Verification => {
+                    sqlx::query(
+                        "SELECT parent, verifier, verification FROM verification WHERE tx = $1",
+                    )
+                    .bind(tx_hash)
+                    .map(
+                        |row: sqlx::postgres::PgRow| types::transaction::Payload::Verification {
+                            parent: row.get(0),
+                            verifier: row.get(1),
+                            verification: row.get(2),
+                        },
+                    )
+                    .fetch_one(&mut *db_tx)
+                    .await?
+                }
                 _ => types::transaction::Payload::Empty,
             };
 
@@ -315,7 +352,7 @@ impl Database {
 
         let mut txs = Vec::with_capacity(refs.len());
         for tx_hash in refs {
-            let tx = self.find_transaction(tx_hash).await?;
+            let tx = self.find_transaction(&tx_hash).await?;
             if tx.is_some() {
                 txs.push(tx.unwrap());
             }
@@ -339,7 +376,7 @@ impl Database {
         .fetch_one(&mut *db_tx)
         .await?;
 
-        match tx.payload {
+        match &tx.payload {
             types::transaction::Payload::Deploy {
                 ref name,
                 ref prover,
@@ -406,6 +443,46 @@ impl Database {
 
                     step_sequence += 1;
                 }
+            }
+            types::transaction::Payload::Proof {
+                parent,
+                prover,
+                proof,
+            } => {
+                sqlx::query(
+                    "INSERT INTO proof ( tx, parent, prover, proof ) VALUES ( $1, $2, $3, $4 )",
+                )
+                .bind(tx.hash)
+                .bind(parent)
+                .bind(prover)
+                .bind(proof)
+                .execute(&mut *db_tx)
+                .await?;
+            }
+
+            types::transaction::Payload::ProofKey { parent, key } => {
+                sqlx::query("INSERT INTO proof_key ( tx, parent, key ) VALUES ( $1, $2, $3 )")
+                    .bind(tx.hash)
+                    .bind(parent)
+                    .bind(key)
+                    .execute(&mut *db_tx)
+                    .await?;
+            }
+
+            types::transaction::Payload::Verification {
+                parent,
+                verifier,
+                verification,
+            } => {
+                sqlx::query(
+                    "INSERT INTO verification ( tx, parent, verifier, verification ) VALUES ( $1, $2, $3, $4 )",
+                )
+                .bind(tx.hash)
+                .bind(parent)
+                .bind(verifier)
+                .bind(verification)
+                .execute(&mut *db_tx)
+                .await?;
             }
             _ => { /* ignore for now */ }
         }

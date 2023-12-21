@@ -8,6 +8,8 @@ use gevulot_node::types;
 use async_trait::async_trait;
 use clap::Parser;
 use eyre::Result;
+use libsecp256k1::SecretKey;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
 use std::time::Duration;
@@ -64,8 +66,7 @@ impl mempool::Storage for storage::Database {
     }
 
     async fn set(&self, tx: &Transaction) -> Result<()> {
-        self.add_transaction(tx).await?;
-        Ok(())
+        self.add_transaction(tx).await
     }
 
     async fn fill_deque(&self, deque: &mut std::collections::VecDeque<Transaction>) -> Result<()> {
@@ -105,6 +106,8 @@ async fn run(config: Arc<Config>) -> Result<()> {
 
     let asset_mgr = Arc::new(AssetManager::new(config.clone(), database.clone()));
 
+    let node_key = read_node_key(&config.node_key_file)?;
+
     // Launch AssetManager's background processing.
     tokio::spawn({
         let asset_mgr = asset_mgr.clone();
@@ -118,7 +121,9 @@ async fn run(config: Arc<Config>) -> Result<()> {
         database.clone(),
         program_manager,
         workflow_engine,
+        node_key,
     ));
+
     let vm_server =
         vmm::vm_server::VMServer::new(scheduler.clone(), provider, file_storage.clone());
 
@@ -145,8 +150,12 @@ async fn run(config: Arc<Config>) -> Result<()> {
     )
     .await?;
 
-    // TODO: Start event loop here.
     loop {
         sleep(Duration::from_secs(1));
     }
+}
+
+fn read_node_key(node_key_file: &PathBuf) -> Result<SecretKey> {
+    let bs = std::fs::read(node_key_file)?;
+    SecretKey::parse(bs.as_slice().try_into().expect("invalid node key")).map_err(|e| e.into())
 }

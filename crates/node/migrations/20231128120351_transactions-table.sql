@@ -1,4 +1,7 @@
 
+DROP TABLE IF EXISTS verification;
+DROP TABLE IF EXISTS proof_key;
+DROP TABLE IF EXISTS proof;
 DROP TABLE IF EXISTS program_output_data;
 DROP TABLE IF EXISTS program_input_data;
 DROP TABLE IF EXISTS workflow_step;
@@ -23,7 +26,13 @@ CREATE TABLE deploy (
     verifier VARCHAR(64),
     CONSTRAINT fk_transaction
         FOREIGN KEY (tx)
-            REFERENCES transaction (hash) ON DELETE CASCADE
+            REFERENCES transaction (hash) ON DELETE CASCADE,
+    CONSTRAINT fk_prover
+        FOREIGN KEY (prover)
+            REFERENCES program (hash) ON DELETE CASCADE,
+    CONSTRAINT fk_verifier
+        FOREIGN KEY (verifier)
+            REFERENCES program (hash) ON DELETE CASCADE
 ); 
 
 CREATE TABLE workflow_step (
@@ -63,4 +72,45 @@ CREATE TABLE program_output_data (
     CONSTRAINT fk_source_program
         FOREIGN KEY (source_program)
             REFERENCES program (hash) ON DELETE CASCADE
+);
+
+CREATE TABLE proof (
+    tx VARCHAR(64) PRIMARY KEY NOT NULL,
+    parent VARCHAR(64) NOT NULL,
+    prover VARCHAR(64),
+    proof BYTEA NOT NULL,
+    CONSTRAINT fk_transaction1
+        FOREIGN KEY (tx)
+            REFERENCES transaction (hash) ON DELETE CASCADE,
+    CONSTRAINT fk_transaction2
+        FOREIGN KEY (parent)
+            REFERENCES transaction (hash) ON DELETE CASCADE,
+    CONSTRAINT fk_prover
+        FOREIGN KEY (prover)
+            REFERENCES program (hash) ON DELETE CASCADE
+); 
+
+CREATE TABLE verification (
+    tx VARCHAR(64) PRIMARY KEY NOT NULL,
+    parent VARCHAR(64) NOT NULL,
+    verifier VARCHAR(64),
+    verification BYTEA NOT NULL,
+    CONSTRAINT fk_transaction1
+        FOREIGN KEY (tx)
+            REFERENCES transaction (hash) ON DELETE CASCADE,
+    CONSTRAINT fk_transaction2
+        FOREIGN KEY (parent)
+            REFERENCES transaction (hash) ON DELETE CASCADE,
+    CONSTRAINT fk_verifier
+        FOREIGN KEY (verifier)
+            REFERENCES program (hash) ON DELETE CASCADE
+);
+
+CREATE TABLE proof_key (
+    tx VARCHAR(64) PRIMARY KEY NOT NULL,
+    parent VARCHAR(64) NOT NULL,
+    key BYTEA NOT NULL,
+    CONSTRAINT fk_transaction
+        FOREIGN KEY (tx)
+            REFERENCES transaction (hash) ON DELETE CASCADE
 );
