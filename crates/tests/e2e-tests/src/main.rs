@@ -121,7 +121,7 @@ async fn send_proving_task(
         args: vec![],
         inputs: vec![ProgramData::Output {
             source_program: prover_hash.clone(),
-            file_name: "proof.dat".to_string(),
+            file_name: "/workspace/proof.dat".to_string(),
         }],
     };
 

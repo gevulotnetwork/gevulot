@@ -2,7 +2,7 @@ mod program_manager;
 mod resource_manager;
 
 use crate::storage::Database;
-use crate::types::{TaskId, TaskState};
+use crate::types::TaskState;
 use crate::vmm::vm_server::grpc;
 use crate::vmm::{vm_server::TaskManager, VMId};
 use crate::workflow::{WorkflowEngine, WorkflowError};
@@ -256,7 +256,7 @@ impl TaskManager for Scheduler {
                 });
 
                 return Some(grpc::Task {
-                    id: task.id.to_string(),
+                    id: task.tx.to_string(),
                     name: task.name.clone(),
                     args: task.args.clone(),
                     files: task.files.iter().map(|x| x.name.clone()).collect(),
@@ -279,13 +279,16 @@ impl TaskManager for Scheduler {
             todo!("task failed; handle it correctly")
         };
 
-        let task_id = TaskId::parse_str(&result.id).unwrap();
+        let task_id = &result.id;
         let mut running_tasks = self.running_tasks.lock().await;
-        if let Some(idx) = running_tasks.iter().position(|e| e.task.id == task_id) {
+        if let Some(idx) = running_tasks
+            .iter()
+            .position(|e| &e.task.tx.to_string() == task_id)
+        {
             let running_task = running_tasks.swap_remove(idx);
             tracing::info!(
                 "task {} finished in {}sec",
-                task_id.to_string(),
+                task_id,
                 running_task.task_started.elapsed().as_secs()
             );
 

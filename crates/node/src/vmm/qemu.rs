@@ -181,7 +181,7 @@ impl Provider for Qemu {
             // Register 2 hard drives via SCSI
             .args(["-device", "virtio-scsi-pci,bus=pci.2,addr=0x0,id=scsi0"])
             .args(["-device", "scsi-hd,bus=scsi0.0,drive=hd0"])
-            .args(["-device", "scsi-hd,bus=scsi0.0,drive=hd1"])
+            //.args(["-device", "scsi-hd,bus=scsi0.0,drive=hd1"])
             .args(["-vga", "none"])
             // CPUS
             .args(["-smp", &cpus.to_string()])
@@ -203,10 +203,11 @@ impl Provider for Qemu {
                 ),
             ])
             // WORKSPACE FILE
+            /*
             .args([
                 "-drive",
                 &format!("file={},format=raw,if=none,id=hd1", &workspace_file),
-            ])
+            ])*/
             // NETWORKING
             .args([
                 "-device",
@@ -240,33 +241,22 @@ impl Provider for Qemu {
 
         qemu_vm_handle.child = Some(cmd.spawn().expect("failed to start VM"));
 
-        /*
-                NOTES FOR MYSELF:
-
-
-                TRY TO REMOVE SLEEP BELOW.
-                While this method blocks, the VM guest won't proceed with task query
-                so there's time for attaching workspace volume via QMP.
-
-        */
         sleep(Duration::from_millis(300)).await;
         let mut qmp_client = Qmp::new(format!("localhost:{qmp_port}")).await?;
 
-        /*
         // Attach the workspace volume.
         let err_add = qmp_client.blockdev_add("workspace", workspace_file).await;
         if err_add.is_err() {
             tracing::error!("blockdev_add failed: {:?}", err_add);
         }
-        sleep(Duration::from_millis(100)).await;
-        let err_add = qmp_client.device_add("workspace").await;
+        //sleep(Duration::from_millis(100)).await;
+        let err_add = qmp_client.device_add("workspace", 1).await;
         if err_add.is_err() {
             tracing::error!("device_add failed: {:?}", err_add);
         }
-        sleep(Duration::from_millis(100)).await;
+        //sleep(Duration::from_millis(100)).await;
         qmp_client.system_reset().await?;
-        sleep(Duration::from_millis(100)).await;
-        */
+        //sleep(Duration::from_millis(100)).await;
 
         /*
         tokio::spawn({
@@ -279,7 +269,8 @@ impl Provider for Qemu {
 
         //watchdog(&mut qemu_vm_handle);
 
-        for _ in 1..3 {
+        /*
+        for _ in 1..5 {
             if let Ok(status) = qmp_client.query_status().await {
                 tracing::debug!("VCPU status: {:#?}", status);
                 let stdout = qemu_vm_handle.child.as_mut().unwrap().stdout.as_mut();
@@ -314,6 +305,7 @@ impl Provider for Qemu {
 
             sleep(Duration::from_secs(3)).await;
         }
+            */
 
         Ok(VMHandle {
             vm_id: Arc::new(cid),
@@ -408,9 +400,13 @@ impl Qmp {
             .map(|_| ())
     }
 
-    async fn device_add(&mut self, node_name: &str) -> Result<()> {
+    async fn device_add(&mut self, node_name: &str, disk_id: u8) -> Result<()> {
         let mut args = serde_json::map::Map::new();
-        args.insert("drive".to_string(), json!(node_name));
+        args.insert(String::from("drive"), json!(node_name));
+        args.insert(
+            String::from("device_id"),
+            json!(format!("persistent-disk-{disk_id}")),
+        );
         self.stream
             .execute(qmp::device_add {
                 bus: Some("scsi0.0".to_string()),

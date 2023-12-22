@@ -9,5 +9,7 @@ fn main() -> Result<()> {
 fn run_task(task: &Task) -> Result<TaskResult> {
     println!("prover: task.args: {:?}", &task.args);
 
-    task.result(vec![], vec![])
+    std::fs::write("/workspace/proof.dat", b"this is a proof.")?;
+
+    task.result(vec![], vec![String::from("/workspace/proof.dat")])
 }

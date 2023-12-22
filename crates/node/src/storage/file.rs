@@ -17,6 +17,80 @@ impl File {
         }
     }
 
+    pub async fn get_task_file(
+        &self,
+        task_id: &str,
+        path: &str,
+    ) -> Result<tokio::io::BufReader<tokio::fs::File>> {
+        let path = Path::new(path).strip_prefix("/")?;
+        let path = PathBuf::new().join(&self.data_dir).join(task_id).join(path);
+        let fd = tokio::fs::File::open(path).await?;
+        Ok(tokio::io::BufReader::new(fd))
+    }
+
+    pub async fn move_task_file(
+        &self,
+        task_id_src: &str,
+        task_id_dst: &str,
+        path: &str,
+    ) -> Result<()> {
+        let path = Path::new(path).strip_prefix("/")?;
+        let src_file_path = PathBuf::new()
+            .join(&self.data_dir)
+            .join(task_id_src)
+            .join(path);
+        let dst_file_path = PathBuf::new()
+            .join(&self.data_dir)
+            .join(task_id_dst)
+            .join(path);
+
+        tracing::debug!(
+            "moving file from {:#?} to {:#?}",
+            src_file_path,
+            dst_file_path
+        );
+
+        // Ensure any necessary subdirectories exists.
+        if let Some(parent) = dst_file_path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .expect("task file mkdir");
+        }
+
+        tokio::fs::rename(src_file_path, dst_file_path)
+            .await
+            .map_err(|e| e.into())
+    }
+
+    pub async fn save_task_file(&self, task_id: &str, path: &str, data: Vec<u8>) -> Result<()> {
+        let path = Path::new(path).strip_prefix("/")?;
+        let file_path = PathBuf::new().join(&self.data_dir).join(task_id).join(path);
+
+        tracing::debug!(
+            "saving task {} file {:#?} to {:#?}",
+            task_id,
+            path,
+            file_path
+        );
+
+        // Ensure any necessary subdirectories exists.
+        if let Some(parent) = file_path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .expect("task file mkdir");
+        }
+
+        let fd = tokio::fs::File::create(&file_path).await?;
+        let mut fd = tokio::io::BufWriter::new(fd);
+
+        fd.write_all(data.as_slice()).await?;
+        fd.flush().await?;
+
+        tracing::debug!("file {:#?} successfully written", file_path);
+
+        Ok(())
+    }
+
     pub async fn download(&self, file: &types::File) -> Result<()> {
         let file_name = Path::new(&file.name).file_name().unwrap();
         let file_path = PathBuf::new()
@@ -24,7 +98,12 @@ impl File {
             .join(file.tx.to_string())
             .join(file_name);
 
-        std::fs::create_dir_all(file_path.parent().unwrap())?;
+        // Ensure any necessary subdirectories exists.
+        if let Some(parent) = file_path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .expect("download file mkdir");
+        }
 
         let url = reqwest::Url::parse(&file.url)?;
         let mut resp = self.client.get(url.clone()).send().await?;
@@ -51,19 +130,5 @@ impl File {
         }
 
         Ok(())
-    }
-
-    pub async fn get(
-        &self,
-        task_id: &types::TaskId,
-        path: &str,
-    ) -> Result<tokio::io::BufReader<tokio::fs::File>> {
-        let file_name = Path::new(path).file_name().unwrap();
-        let path = PathBuf::new()
-            .join(&self.data_dir)
-            .join(task_id.to_string())
-            .join(file_name);
-        let fd = tokio::fs::File::open(path).await?;
-        Ok(tokio::io::BufReader::new(fd))
     }
 }

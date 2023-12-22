@@ -9,6 +9,8 @@ use gevulot_node::types::{
 use thiserror::Error;
 use uuid::Uuid;
 
+use crate::storage;
+
 #[allow(clippy::enum_variant_names)]
 #[derive(Error, Debug, PartialEq)]
 pub enum WorkflowError {
@@ -32,11 +34,15 @@ pub trait TransactionStore: Sync + Send {
 
 pub struct WorkflowEngine {
     tx_store: Arc<dyn TransactionStore>,
+    file_storage: Arc<storage::File>,
 }
 
 impl WorkflowEngine {
-    pub fn new(tx_store: Arc<dyn TransactionStore>) -> Self {
-        WorkflowEngine { tx_store }
+    pub fn new(tx_store: Arc<dyn TransactionStore>, file_storage: Arc<storage::File>) -> Self {
+        WorkflowEngine {
+            tx_store,
+            file_storage,
+        }
     }
 
     pub async fn next_task(&self, cur_tx: &Transaction) -> Result<Option<Task>> {
@@ -49,11 +55,14 @@ impl WorkflowEngine {
                 if workflow.steps.len() == 0 {
                     Ok(None)
                 } else {
-                    Ok(Some(self.workflow_step_to_task(
-                        cur_tx.hash.clone(),
-                        &workflow.steps[0],
-                        TaskKind::Proof,
-                    )))
+                    Ok(Some(
+                        self.workflow_step_to_task(
+                            cur_tx.hash.clone(),
+                            &workflow.steps[0],
+                            TaskKind::Proof,
+                        )
+                        .await,
+                    ))
                 }
             }
             Payload::Proof {
@@ -76,11 +85,14 @@ impl WorkflowEngine {
                             ))
                             .into())
                         } else {
-                            Ok(Some(self.workflow_step_to_task(
-                                cur_tx.hash.clone(),
-                                &workflow.steps[proof_step_idx + 1],
-                                TaskKind::Verification,
-                            )))
+                            Ok(Some(
+                                self.workflow_step_to_task(
+                                    cur_tx.hash.clone(),
+                                    &workflow.steps[proof_step_idx + 1],
+                                    TaskKind::Verification,
+                                )
+                                .await,
+                            ))
                         }
                     }
                     None => Err(WorkflowError::WorkflowStepMissing(format!(
@@ -122,11 +134,14 @@ impl WorkflowEngine {
                                 ))
                                 .into())
                             } else {
-                                Ok(Some(self.workflow_step_to_task(
-                                    proof_tx.hash.clone(),
-                                    &workflow.steps[proof_step_idx + 1],
-                                    TaskKind::Verification,
-                                )))
+                                Ok(Some(
+                                    self.workflow_step_to_task(
+                                        proof_tx.hash.clone(),
+                                        &workflow.steps[proof_step_idx + 1],
+                                        TaskKind::Verification,
+                                    )
+                                    .await,
+                                ))
                             }
                         }
                         None => Err(WorkflowError::WorkflowStepMissing(format!(
@@ -143,6 +158,64 @@ impl WorkflowEngine {
                 "unsupported payload type".to_string(),
             )
             .into()),
+        }
+    }
+
+    async fn find_parent_tx_for_program(&self, tx_hash: &Hash, program: &Hash) -> Result<Hash> {
+        let mut cur_tx = tx_hash.clone();
+
+        tracing::debug!("finding workflow for transaction {}", tx_hash);
+
+        // Traverse transaction tree up by tracing parent until the right tx is found.
+        loop {
+            let tx = self.tx_store.find_transaction(&cur_tx).await?;
+
+            if tx.is_none() {
+                return Err(WorkflowError::TransactionNotFound(cur_tx).into());
+            }
+
+            match tx.unwrap().payload {
+                Payload::Run { workflow } => {
+                    if workflow.steps.is_empty() {
+                        return Err(WorkflowError::TransactionNotFound(cur_tx).into());
+                    }
+
+                    if workflow.steps.get(0).unwrap().program == *program {
+                        return Ok(cur_tx);
+                    } else {
+                        return Err(WorkflowError::TransactionNotFound(cur_tx).into());
+                    }
+                }
+                Payload::Proof { parent, prover, .. } => {
+                    if &cur_tx != tx_hash && prover == *program {
+                        return Ok(cur_tx);
+                    }
+
+                    cur_tx = parent.clone();
+                    continue;
+                }
+                Payload::ProofKey { parent, .. } => {
+                    cur_tx = parent.clone();
+                    continue;
+                }
+                Payload::Verification {
+                    parent, verifier, ..
+                } => {
+                    if &cur_tx != tx_hash && verifier == *program {
+                        return Ok(cur_tx);
+                    }
+
+                    cur_tx = parent.clone();
+                    continue;
+                }
+                _ => {
+                    tracing::debug!(
+                        "failed to find workflow for transaction {}: incompatible transaction",
+                        cur_tx
+                    );
+                    return Err(WorkflowError::IncompatibleTransaction(cur_tx.to_string()).into());
+                }
+            }
         }
     }
 
@@ -191,8 +264,9 @@ impl WorkflowEngine {
         }
     }
 
-    fn workflow_step_to_task(&self, tx: Hash, step: &WorkflowStep, kind: TaskKind) -> Task {
+    async fn workflow_step_to_task(&self, tx: Hash, step: &WorkflowStep, kind: TaskKind) -> Task {
         let id = Uuid::new_v4();
+        let mut file_transfers = vec![];
         let files = step
             .inputs
             .iter()
@@ -209,13 +283,31 @@ impl WorkflowEngine {
                 ProgramData::Output {
                     source_program,
                     file_name,
-                } => File {
-                    tx: tx.clone(),
-                    name: file_name.clone(),
-                    url: "".to_string(),
-                },
+                } => {
+                    // Make record of file that needs transfer from source tx to current tx's files.
+                    file_transfers.push((source_program.clone(), file_name.clone()));
+
+                    File {
+                        tx: tx.clone(),
+                        name: file_name.clone(),
+                        url: "".to_string(),
+                    }
+                }
             })
             .collect();
+
+        // Process file transfers from source programs.
+        for (source_program, file_name) in file_transfers {
+            let source_tx = self
+                .find_parent_tx_for_program(&tx, &source_program)
+                .await
+                .expect("output file dependency missing");
+
+            self.file_storage
+                .move_task_file(&source_tx.to_string(), &tx.to_string(), &file_name)
+                .await
+                .expect("failed to move output file for next task");
+        }
 
         Task {
             id,
@@ -232,7 +324,7 @@ impl WorkflowEngine {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::{collections::HashMap, env::temp_dir};
 
     use gevulot_node::types::{
         transaction::{Payload, ProgramData, Workflow, WorkflowStep},
@@ -268,7 +360,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_next_task_for_empty_workflow_steps() {
-        let wfe = WorkflowEngine::new(Arc::new(TxStore::new(&[])));
+        let wfe = WorkflowEngine::new(
+            Arc::new(TxStore::new(&[])),
+            Arc::new(storage::File::new(&temp_dir())),
+        );
         let tx = transaction_for_workflow_steps(vec![]);
         if let Payload::Run { workflow } = &tx.payload {
             let res = wfe.next_task(&tx).await;
@@ -297,7 +392,10 @@ mod tests {
         };
 
         let tx = transaction_for_workflow_steps(vec![proving.clone(), verifying]);
-        let wfe = WorkflowEngine::new(Arc::new(TxStore::new(&[tx.clone()])));
+        let wfe = WorkflowEngine::new(
+            Arc::new(TxStore::new(&[tx.clone()])),
+            Arc::new(storage::File::new(&temp_dir())),
+        );
 
         if let Payload::Run { workflow } = &tx.payload {
             let task = wfe.next_task(&tx).await.expect("next_task").unwrap();
@@ -338,7 +436,10 @@ mod tests {
         let proofkey_tx = transaction_for_proofkey(&proof_tx.hash);
         let verification_tx = transaction_for_verification(&proof_tx.hash, &verifier_hash);
         let tx_store = TxStore::new(&[root_tx, proof_tx, proofkey_tx.clone(), verification_tx]);
-        let wfe = WorkflowEngine::new(Arc::new(tx_store));
+        let wfe = WorkflowEngine::new(
+            Arc::new(tx_store),
+            Arc::new(storage::File::new(&temp_dir())),
+        );
 
         let task = wfe.next_task(&proofkey_tx).await;
         assert!(task.is_ok());

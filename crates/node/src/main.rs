@@ -114,7 +114,7 @@ async fn run(config: Arc<Config>) -> Result<()> {
         async move { asset_mgr.run().await }
     });
 
-    let workflow_engine = Arc::new(WorkflowEngine::new(database.clone()));
+    let workflow_engine = Arc::new(WorkflowEngine::new(database.clone(), file_storage.clone()));
 
     let scheduler = Arc::new(scheduler::Scheduler::new(
         mempool.clone(),

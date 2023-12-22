@@ -1,3 +1,6 @@
+use std::fs::File;
+use std::io::{BufRead, BufReader};
+use std::time::Instant;
 use std::{path::Path, thread::sleep, time::Duration};
 
 use grpc::vm_service_client::VmServiceClient;
@@ -12,6 +15,10 @@ use vsock::VMADDR_CID_HOST;
 mod grpc {
     tonic::include_proto!("vm_service");
 }
+
+/// MOUNT_TIMEOUT is maximum amount of time to wait for workspace mount to be
+/// present in /proc/mounts.
+const MOUNT_TIMEOUT: Duration = Duration::from_secs(30);
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub type TaskId = String;
@@ -55,6 +62,22 @@ impl GRPCClient {
             .build()?;
 
         let client = rt.block_on(GRPCClient::connect(port))?;
+
+        println!("waiting for {workspace} mount to be present");
+        let beginning = Instant::now();
+        loop {
+            if beginning.elapsed() > MOUNT_TIMEOUT {
+                panic!("{} mount timeout", workspace);
+            }
+
+            if mount_present(workspace)? {
+                println!("{workspace} mount is now present");
+                break;
+            }
+
+            sleep(Duration::from_secs(1));
+        }
+
         Ok(GRPCClient {
             workspace: workspace.to_string(),
             client: Mutex::new(client),
@@ -192,6 +215,20 @@ impl GRPCClient {
 
         Ok(path)
     }
+}
+
+fn mount_present(mount_point: &str) -> Result<bool> {
+    let file = File::open("/proc/mounts")?;
+    let reader = BufReader::new(file);
+
+    for line in reader.lines() {
+        let line = line.expect("read /proc/mounts");
+        if line.contains(mount_point) {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 /// run function takes `callback` that is invoked with executable `Task` and

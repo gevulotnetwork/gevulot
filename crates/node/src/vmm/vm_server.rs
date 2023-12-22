@@ -10,13 +10,12 @@ use tonic::{Extensions, Request, Response, Status};
 
 use grpc::vm_service_server::VmService;
 use grpc::{FileRequest, Task, TaskRequest, TaskResultResponse};
-use uuid::Uuid;
 
 use crate::storage;
 use crate::types::Hash;
 use crate::vmm::vm_server::grpc::file_response;
 
-use self::grpc::{FileResponse, TaskResponse, TaskResultRequest};
+use self::grpc::{task_result_request, FileResponse, TaskResponse, TaskResultRequest};
 
 use super::VMId;
 
@@ -126,13 +125,10 @@ impl VmService for VMServer {
 
         let req = request.into_inner();
 
-        // TODO: Replace Uuid w/ TaskId
-        let task_id = Uuid::parse_str(&req.task_id).unwrap();
-
         // TODO(tuommaki): Handle following error in better way!
         let mut file = self
             .file_storage
-            .get(&task_id, &req.path)
+            .get_task_file(&req.task_id, &req.path)
             .await
             .expect("failed to read file");
 
@@ -180,9 +176,28 @@ impl VmService for VMServer {
             .find_by_req(request.extensions())
             .unwrap_or_else(|| panic!("unknown VM: {:?}", request.remote_addr()));
 
-        self.task_source
-            .submit_result(program, vm_id, request.into_inner().result.unwrap())
-            .await;
+        let result = request.into_inner().result;
+
+        if let Some(result) = result {
+            if let task_result_request::Result::Task(ref result) = result {
+                // Save resulting files.
+                for file in result.files.clone() {
+                    if let Err(err) = self
+                        .file_storage
+                        .save_task_file(&result.id, &file.path, file.data)
+                        .await
+                    {
+                        tracing::error!(
+                            "failed to save task {} result file {}",
+                            result.id,
+                            file.path
+                        );
+                    }
+                }
+            }
+
+            self.task_source.submit_result(program, vm_id, result).await;
+        }
 
         let reply = grpc::TaskResultResponse { r#continue: false };
         Ok(Response::new(reply))
