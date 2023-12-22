@@ -2,3 +2,6 @@
 *.txt
 .DS_Store
 .idea
+crates/tests/e2e-tests/files
+crates/tests/e2e-tests/prover
+crates/tests/e2e-tests/verifier
