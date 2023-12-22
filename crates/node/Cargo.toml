@@ -14,6 +14,7 @@ console-subscriber = "0.2"
 ecies = {version = "0.2", default-features = false, features = ["pure"]}
 eyre = "0.6.8"
 hex = "0.4"
+home = "0.5"
 jsonrpsee = { version = "0.20", features = [ "client", "server" ] }
 libsecp256k1 = "0.7"
 num-bigint = { version = "0.4", features = [ "serde" ] }

@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
+#![feature(exit_status_error)]
 
 use asset_manager::AssetManager;
 use config::Config;

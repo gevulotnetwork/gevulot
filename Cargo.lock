@@ -1046,6 +1046,7 @@ dependencies = [
  "ecies",
  "eyre",
  "hex",
+ "home",
  "jsonrpsee",
  "libsecp256k1",
  "num-bigint",
