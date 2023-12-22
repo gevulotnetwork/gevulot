@@ -420,10 +420,7 @@ mod tests {
         let verifying = WorkflowStep {
             program: verifier_hash,
             args: vec![],
-            inputs: vec![ProgramData::Output {
-                source_program: prover_hash,
-                file_name: "proof.dat".to_string(),
-            }],
+            inputs: vec![],
         };
 
         let workflow_steps = vec![proving.clone(), verifying];

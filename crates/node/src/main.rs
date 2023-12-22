@@ -24,6 +24,7 @@ use workflow::WorkflowEngine;
 mod asset_manager;
 mod config;
 mod mempool;
+mod nanos;
 mod networking;
 mod rpc_server;
 mod scheduler;

@@ -11,6 +11,7 @@ use gevulot_node::types::transaction::Payload;
 use gevulot_node::types::{Signature, TaskKind, Transaction};
 use libsecp256k1::SecretKey;
 pub use program_manager::ProgramManager;
+use rand::RngCore;
 pub use resource_manager::ResourceManager;
 
 use std::time::Instant;
@@ -292,6 +293,7 @@ impl TaskManager for Scheduler {
                 running_task.task_started.elapsed().as_secs()
             );
 
+            let nonce = rand::thread_rng().next_u64();
             let mut tx = match running_task.task.kind {
                 TaskKind::Proof => Transaction {
                     hash: Hash::default(),
@@ -300,7 +302,7 @@ impl TaskManager for Scheduler {
                         prover: program.clone(),
                         proof: result.data,
                     },
-                    nonce: 1,
+                    nonce,
                     signature: Signature::default(),
                     propagated: false,
                 },
@@ -311,7 +313,7 @@ impl TaskManager for Scheduler {
                         verifier: program.clone(),
                         verification: result.data,
                     },
-                    nonce: 1,
+                    nonce,
                     signature: Signature::default(),
                     propagated: false,
                 },

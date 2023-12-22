@@ -15,8 +15,8 @@ pub struct ResourceRequest {
 impl Default for ResourceRequest {
     fn default() -> Self {
         Self {
-            mem: 8192,
-            cpus: 8,
+            mem: 2048,
+            cpus: 2,
             gpus: 0,
         }
     }

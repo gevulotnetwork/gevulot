@@ -2,7 +2,8 @@ use async_trait::async_trait;
 use qapi::futures::{QapiStream, QmpStreamTokio};
 use qapi::qmp;
 use qapi::qmp::StatusInfo;
-use rand;
+use rand::distributions::Alphanumeric;
+use rand::{self, Rng};
 use serde_json::json;
 use std::any::Any;
 use std::collections::HashMap;
@@ -20,6 +21,7 @@ use tonic::Extensions;
 use vsock::get_local_cid;
 
 use crate::config::Config;
+use crate::nanos;
 use crate::types::{Hash, Program};
 use crate::vmm::ResourceRequest;
 use eyre::Result;
@@ -50,6 +52,7 @@ pub struct QEMUVMHandle {
     child: Option<Child>,
     cid: u32,
     program_id: Hash,
+    workspace_volume_label: String,
     //qmp: Arc<Mutex<Qmp>>,
 }
 
@@ -137,8 +140,18 @@ impl Provider for Qemu {
             .join(IMAGES_DIR)
             .join(program.hash.to_string())
             .join(program.image_file_name);
-        let workspace_file =
-            "/home/tuommaki/.ops/volumes/workspace:c0aa64ba-005a-b591-39e2-e3168555089f.raw";
+
+        let workspace_volume_label: String = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(16)
+            .map(char::from)
+            .collect::<String>()
+            .to_lowercase();
+
+        // XXX: This isn't async and will call out to `ops` for now.
+        let workspace_file = nanos::volume::create(&workspace_volume_label, "2g")?.into_os_string();
+        let workspace_file = workspace_file.to_str().expect("workspace volume path");
+
         let cpus = req.cpus;
         let mem_req = req.mem;
         let cid = self.allocate_cid();
@@ -153,6 +166,7 @@ impl Provider for Qemu {
             child: None,
             cid,
             program_id,
+            workspace_volume_label,
             //qmp: Arc::new(Mutex::new(qmp)),
         };
 
@@ -321,8 +335,14 @@ impl Provider for Qemu {
                 .unwrap()
                 .kill()
                 .expect("failed to kill VM");
+
+            // GC ephemeral workspace volume.
+            // XXX: This isn't async and will call out to `ops`.
+            nanos::volume::delete(&qemu_vm_handle.workspace_volume_label)?;
+
             let cid = qemu_vm_handle.cid;
             self.release_cid(cid);
+
             Ok(())
         } else {
             todo!("create error type for VM NOT FOUND");

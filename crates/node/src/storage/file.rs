@@ -22,7 +22,10 @@ impl File {
         task_id: &str,
         path: &str,
     ) -> Result<tokio::io::BufReader<tokio::fs::File>> {
-        let path = Path::new(path).strip_prefix("/")?;
+        let mut path = Path::new(path);
+        if path.is_absolute() {
+            path = path.strip_prefix("/")?;
+        }
         let path = PathBuf::new().join(&self.data_dir).join(task_id).join(path);
         let fd = tokio::fs::File::open(path).await?;
         Ok(tokio::io::BufReader::new(fd))
@@ -34,7 +37,11 @@ impl File {
         task_id_dst: &str,
         path: &str,
     ) -> Result<()> {
-        let path = Path::new(path).strip_prefix("/")?;
+        let mut path = Path::new(path);
+        if path.is_absolute() {
+            path = path.strip_prefix("/")?;
+        }
+
         let src_file_path = PathBuf::new()
             .join(&self.data_dir)
             .join(task_id_src)
@@ -63,7 +70,11 @@ impl File {
     }
 
     pub async fn save_task_file(&self, task_id: &str, path: &str, data: Vec<u8>) -> Result<()> {
-        let path = Path::new(path).strip_prefix("/")?;
+        let mut path = Path::new(path);
+        if path.is_absolute() {
+            path = path.strip_prefix("/")?;
+        }
+
         let file_path = PathBuf::new().join(&self.data_dir).join(task_id).join(path);
 
         tracing::debug!(

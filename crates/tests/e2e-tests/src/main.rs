@@ -54,9 +54,11 @@ async fn main() -> Result<()> {
     .await
     .expect("deploy");
 
-    send_proving_task(&client, &key, &prover_hash, &verifier_hash)
-        .await
-        .expect("send proving task");
+    for nonce in 1..32 {
+        send_proving_task(&client, &key, nonce, &prover_hash, &verifier_hash)
+            .await
+            .expect("send proving task");
+    }
 
     sleep(Duration::from_secs(10)).await;
 
@@ -107,18 +109,19 @@ async fn deploy_programs(
 async fn send_proving_task(
     client: &RpcClient,
     key: &SecretKey,
+    nonce: u64,
     prover_hash: &Hash,
     verifier_hash: &Hash,
 ) -> Result<Hash> {
     let proving_step = WorkflowStep {
         program: prover_hash.clone(),
-        args: vec![],
+        args: vec!["--nonce".to_string(), nonce.to_string()],
         inputs: vec![],
     };
 
     let verifying_step = WorkflowStep {
         program: verifier_hash.clone(),
-        args: vec![],
+        args: vec!["--nonce".to_string(), nonce.to_string()],
         inputs: vec![ProgramData::Output {
             source_program: prover_hash.clone(),
             file_name: "/workspace/proof.dat".to_string(),
@@ -131,7 +134,7 @@ async fn send_proving_task(
                 steps: vec![proving_step, verifying_step],
             },
         },
-        nonce: 42,
+        nonce,
         ..Default::default()
     };
 
