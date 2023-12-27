@@ -46,6 +46,30 @@ pub struct Config {
 
     #[arg(
         long,
+        long_help = "",
+        env = "GEVULOT_P2P_DISCOVERY_ADDR",
+        default_value = "bootstrap.p2p.devnet.gevulot.com"
+    )]
+    pub p2p_discovery_addrs: Vec<String>,
+
+    #[arg(
+        long,
+        long_help = "P2P listen address",
+        env = "GEVULOT_P2P_LISTEN_ADDR",
+        default_value = "127.0.0.1:9999"
+    )]
+    pub p2p_listen_addr: SocketAddr,
+
+    #[arg(
+        long,
+        long_help = "P2P PSK passphrase",
+        env = "GEVULOT_PSK_PASSPHRASE",
+        default_value = "Pack my box with five dozen liquor jugs."
+    )]
+    pub p2p_psk_passphrase: String,
+
+    #[arg(
+        long,
         long_help = "Provider backend to run tasks",
         env = "GEVULOT_PROVIDER",
         default_value = "qemu"

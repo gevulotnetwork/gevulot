@@ -53,6 +53,7 @@ impl RpcServer {
 
         let local_addr = server.local_addr().unwrap();
         let server_handle = server.start(module);
+        tracing::info!("listening for json-rpc at {}", local_addr);
         Ok(RpcServer {
             local_addr,
             server_handle,
@@ -186,12 +187,15 @@ mod tests {
             json_rpc_listen_addr: "127.0.0.1:0".parse().unwrap(),
             log_directory: temp_dir(),
             node_key_file: PathBuf::new().join("node.key"),
+            p2p_discovery_addrs: vec![],
+            p2p_listen_addr: "127.0.0.1:9999".parse().unwrap(),
+            p2p_psk_passphrase: "secret.".to_string(),
             provider: "qemu".to_string(),
             vsock_listen_port: 8080,
         });
 
         let db = Arc::new(Database::new(&cfg.db_url).await.unwrap());
-        let mempool = Arc::new(RwLock::new(Mempool::new(db.clone()).await.unwrap()));
+        let mempool = Arc::new(RwLock::new(Mempool::new(db.clone(), None).await.unwrap()));
         let asset_manager = Arc::new(AssetManager::new(cfg.clone(), db.clone()));
 
         RpcServer::run(cfg.clone(), db.clone(), mempool, asset_manager)

@@ -10,6 +10,8 @@ use async_trait::async_trait;
 use clap::Parser;
 use eyre::Result;
 use libsecp256k1::SecretKey;
+use pea2pea::Pea2Pea;
+use std::net::ToSocketAddrs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::thread::sleep;
@@ -87,10 +89,54 @@ impl workflow::TransactionStore for storage::Database {
     }
 }
 
+struct AuthenticatingTxHandler {
+    mempool: Arc<RwLock<Mempool>>,
+    database: Arc<Database>,
+}
+
+impl AuthenticatingTxHandler {
+    pub fn new(mempool: Arc<RwLock<Mempool>>, database: Arc<Database>) -> Self {
+        Self { mempool, database }
+    }
+}
+
+#[async_trait::async_trait]
+impl networking::p2p::TxHandler for AuthenticatingTxHandler {
+    async fn recv_tx(&self, tx: Transaction) -> Result<()> {
+        // TODO: Authenticate tx by signature.
+
+        // The transaction was received from P2P network so we can consider it
+        // propagated at this point.
+        let mut tx = tx;
+        tx.propagated = true;
+
+        // Submit the tx to mempool.
+        self.mempool.write().await.add(tx).await
+    }
+}
+
 async fn run(config: Arc<Config>) -> Result<()> {
     let database = Arc::new(Database::new(&config.db_url).await?);
     let file_storage = Arc::new(storage::File::new(&config.data_directory));
-    let mempool = Arc::new(RwLock::new(Mempool::new(database.clone()).await?));
+
+    let p2p = Arc::new(
+        networking::P2P::new(
+            "mempool-pubsub",
+            config.p2p_listen_addr,
+            &config.p2p_psk_passphrase,
+        )
+        .await,
+    );
+
+    let mempool = Arc::new(RwLock::new(
+        Mempool::new(database.clone(), Some(p2p.clone())).await?,
+    ));
+
+    p2p.register_tx_handler(Arc::new(AuthenticatingTxHandler::new(
+        mempool.clone(),
+        database.clone(),
+    )))
+    .await;
 
     // TODO(tuommaki): read total available resources from config / acquire system stats.
     let resource_manager = Arc::new(Mutex::new(scheduler::ResourceManager::new(16384, 8, 0)));
@@ -143,6 +189,24 @@ async fn run(config: Arc<Config>) -> Result<()> {
         async move { scheduler.run().await }
     });
 
+    let p2p_addr = p2p.node().start_listening().await?;
+    tracing::info!("listening for p2p at {}", p2p_addr);
+
+    for addr in config.p2p_discovery_addrs.clone() {
+        tracing::info!("connecting to p2p peer {}", addr);
+        match addr.to_socket_addrs() {
+            Ok(socket_iter) => {
+                for peer in socket_iter {
+                    p2p.node().connect(peer).await?;
+                    break;
+                }
+            }
+            Err(err) => {
+                tracing::error!("failed to resolve {}: {}", addr, err);
+            }
+        }
+    }
+
     // Start JSON-RPC server.
     let rpc_server = rpc_server::RpcServer::run(
         config.clone(),
@@ -152,6 +216,7 @@ async fn run(config: Arc<Config>) -> Result<()> {
     )
     .await?;
 
+    tracing::info!("gevulot node started");
     loop {
         sleep(Duration::from_secs(1));
     }
