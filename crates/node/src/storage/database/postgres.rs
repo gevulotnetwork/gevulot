@@ -18,15 +18,14 @@ impl Database {
     }
 
     pub async fn add_program(&self, db_conn: &mut sqlx::PgConnection, p: &Program) -> Result<()> {
-        sqlx::query!(
-            "INSERT INTO program ( hash, name, image_file_name, image_file_url, image_file_checksum ) VALUES ( $1, $2, $3, $4, $5 ) RETURNING *",
-            p.hash.to_string(),
-            p.name,
-            p.image_file_name,
-            p.image_file_url,
-            p.image_file_checksum,
-        )
-        .fetch_one(db_conn)
+        sqlx::query(
+            "INSERT INTO program ( hash, name, image_file_name, image_file_url, image_file_checksum ) VALUES ( $1, $2, $3, $4, $5 ) ON CONFLICT (hash) DO NOTHING RETURNING *")
+            .bind(p.hash)
+            .bind(&p.name)
+            .bind(&p.image_file_name)
+            .bind(&p.image_file_url)
+            .bind(&p.image_file_checksum)
+        .execute(db_conn)
         .await?;
         Ok(())
     }
@@ -367,13 +366,13 @@ impl Database {
         let mut db_tx = self.pool.begin().await?;
 
         sqlx::query(
-            "INSERT INTO transaction ( hash, kind, nonce, signature, propagated ) VALUES ( $1, $2, $3, $4, $5 ) RETURNING *")
+            "INSERT INTO transaction ( hash, kind, nonce, signature, propagated ) VALUES ( $1, $2, $3, $4, $5 ) ON CONFLICT (hash) DO UPDATE SET propagated = $5")
             .bind(entity.hash)
             .bind(entity.kind)
             .bind(entity.nonce)
             .bind(entity.signature)
             .bind(entity.propagated)
-        .fetch_one(&mut *db_tx)
+        .execute(&mut *db_tx)
         .await?;
 
         match &tx.payload {
@@ -388,19 +387,19 @@ impl Database {
                     .await?;
 
                 sqlx::query(
-                    "INSERT INTO deploy ( tx, name, prover, verifier ) VALUES ( $1, $2, $3, $4 ) RETURNING *")
+                    "INSERT INTO deploy ( tx, name, prover, verifier ) VALUES ( $1, $2, $3, $4 ) ON CONFLICT (tx) DO NOTHING")
                     .bind(tx.hash)
                     .bind(name)
                     .bind(prover.hash)
                     .bind(verifier.hash)
-                .fetch_one(&mut *db_tx)
+                .execute(&mut *db_tx)
                 .await?;
             }
             types::transaction::Payload::Run { ref workflow } => {
                 let mut step_sequence = 1;
                 for step in &workflow.steps {
                     let result = sqlx::query(
-                        "INSERT INTO workflow_step ( tx, sequence, program, args ) VALUES ( $1, $2, $3, $4 ) RETURNING id")
+                        "WITH ws AS (INSERT INTO workflow_step ( tx, sequence, program, args ) VALUES ( $1, $2, $3, $4 ) ON CONFLICT (tx, sequence) DO NOTHING RETURNING id) SELECT * FROM ws UNION SELECT id FROM workflow_step WHERE tx = $1 AND sequence = $2")
                         .bind(tx.hash)
                         .bind(step_sequence)
                         .bind(step.program)
@@ -418,12 +417,12 @@ impl Database {
                                 checksum,
                             } => {
                                 sqlx::query(
-                                    "INSERT INTO program_input_data ( workflow_step_id, file_name, file_url, checksum ) VALUES ( $1, $2, $3, $4 ) RETURNING *")
+                                    "INSERT INTO program_input_data ( workflow_step_id, file_name, file_url, checksum ) VALUES ( $1, $2, $3, $4 ) ON CONFLICT (workflow_step_id) DO NOTHING")
                                     .bind(step_id)
                                     .bind(file_name)
                                     .bind(file_url)
                                     .bind(checksum)
-                                .fetch_one(&mut *db_tx)
+                                .execute(&mut *db_tx)
                                 .await?;
                             }
                             ProgramData::Output {
@@ -431,11 +430,11 @@ impl Database {
                                 source_program,
                             } => {
                                 sqlx::query(
-                                    "INSERT INTO program_output_data ( workflow_step_id, file_name, source_program ) VALUES ( $1, $2, $3 ) RETURNING *")
+                                    "INSERT INTO program_output_data ( workflow_step_id, file_name, source_program ) VALUES ( $1, $2, $3 ) ON CONFLICT (workflow_step_id, file_name) DO NOTHING")
                                     .bind(step_id)
                                     .bind(file_name)
                                     .bind(source_program)
-                                .fetch_one(&mut *db_tx)
+                                .execute(&mut *db_tx)
                                 .await?;
                             }
                         }
@@ -450,7 +449,7 @@ impl Database {
                 proof,
             } => {
                 sqlx::query(
-                    "INSERT INTO proof ( tx, parent, prover, proof ) VALUES ( $1, $2, $3, $4 )",
+                    "INSERT INTO proof ( tx, parent, prover, proof ) VALUES ( $1, $2, $3, $4 ) ON CONFLICT (tx) DO NOTHING",
                 )
                 .bind(tx.hash)
                 .bind(parent)
@@ -461,7 +460,7 @@ impl Database {
             }
 
             types::transaction::Payload::ProofKey { parent, key } => {
-                sqlx::query("INSERT INTO proof_key ( tx, parent, key ) VALUES ( $1, $2, $3 )")
+                sqlx::query("INSERT INTO proof_key ( tx, parent, key ) VALUES ( $1, $2, $3 ) ON CONFLICT (tx) DO NOTHING")
                     .bind(tx.hash)
                     .bind(parent)
                     .bind(key)
@@ -475,7 +474,7 @@ impl Database {
                 verification,
             } => {
                 sqlx::query(
-                    "INSERT INTO verification ( tx, parent, verifier, verification ) VALUES ( $1, $2, $3, $4 )",
+                    "INSERT INTO verification ( tx, parent, verifier, verification ) VALUES ( $1, $2, $3, $4 ) ON CONFLICT (tx) DO NOTHING",
                 )
                 .bind(tx.hash)
                 .bind(parent)
