@@ -1,8 +1,8 @@
-use clap::Parser;
 use std::{net::SocketAddr, path::PathBuf};
 
-#[derive(Parser)]
-#[command(author, version, about = "Gevulot node")]
+use clap::{Args, Parser, Subcommand, ValueEnum};
+
+#[derive(Debug, Args)]
 pub struct Config {
     #[arg(
         long,
@@ -83,4 +83,77 @@ pub struct Config {
         default_value_t = 8080
     )]
     pub vsock_listen_port: u32,
+}
+
+#[derive(Debug, Args)]
+pub struct NodeKeyOptions {
+    #[arg(
+        long,
+        long_help = "Node key filename",
+        default_value_os_t = PathBuf::from("/var/lib/gevulot/node.key"),
+    )]
+    pub node_key_file: PathBuf,
+}
+
+#[derive(Clone, Debug, ValueEnum)]
+pub enum ACLTarget {
+    All,
+    Txs,
+    P2p,
+}
+
+#[derive(Debug, Args)]
+pub struct PeerACLOptions {
+    target: ACLTarget,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum PeerCommand {
+    Whitelist {
+        #[command(flatten)]
+        whitelist: PeerACLOptions,
+    },
+
+    Deny {
+        #[command(flatten)]
+        deny: PeerACLOptions,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum GenerateCommand {
+    NodeKey {
+        #[command(flatten)]
+        options: NodeKeyOptions,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub enum Command {
+    /// Generate objects.
+    Generate {
+        #[command(subcommand)]
+        target: GenerateCommand,
+    },
+
+    /// Peer related commands.
+    Peer {
+        peer: String,
+
+        #[command(subcommand)]
+        op: PeerCommand,
+    },
+
+    /// Run the node.
+    Run {
+        #[command(flatten)]
+        config: Config,
+    },
+}
+
+#[derive(Debug, Parser)]
+#[command(author, version, about = "Gevulot node")]
+pub struct Cli {
+    #[command(subcommand)]
+    pub subcommand: Command,
 }

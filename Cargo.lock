@@ -2009,14 +2009,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nodectl"
-version = "0.1.0"
-dependencies = [
- "libsecp256k1",
- "rand",
-]
-
-[[package]]
 name = "nom"
 version = "7.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"

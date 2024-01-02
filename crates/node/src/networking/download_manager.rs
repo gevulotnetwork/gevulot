@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::{config::Config, storage};
+use crate::{cli::Config, storage};
 
 pub struct DownloadManager {
     database: Arc<storage::Database>,

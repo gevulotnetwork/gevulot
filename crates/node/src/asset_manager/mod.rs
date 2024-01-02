@@ -1,14 +1,15 @@
+use std::{path::PathBuf, sync::Arc, time::Duration};
+
 use eyre::Result;
 use gevulot_node::types::{
     self,
     transaction::{Payload, ProgramData},
 };
-use std::{path::PathBuf, sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::{io::AsyncWriteExt, time::sleep};
 
 use crate::{
-    config::Config,
+    cli::Config,
     storage::{self, Database},
     types::{
         transaction::{self, Transaction},

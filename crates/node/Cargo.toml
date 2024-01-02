@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
+[[bin]]
+name = "gevulot"
+path = "src/main.rs"
+
 [dependencies]
 async-trait = "0.1.74"
 bincode = "1.3"

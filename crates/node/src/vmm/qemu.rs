@@ -1,33 +1,39 @@
+use std::{
+    any::Any,
+    collections::HashMap,
+    fs::File,
+    io::Read,
+    path::Path,
+    process::{Child, Command, Stdio},
+    sync::Arc,
+    time::Duration,
+};
+
 use async_trait::async_trait;
-use qapi::futures::{QapiStream, QmpStreamTokio};
-use qapi::qmp;
-use qapi::qmp::StatusInfo;
-use rand::distributions::Alphanumeric;
-use rand::{self, Rng};
+use eyre::Result;
+use qapi::{
+    futures::{QapiStream, QmpStreamTokio},
+    qmp,
+    qmp::StatusInfo,
+};
+use rand::{self, distributions::Alphanumeric, Rng};
 use serde_json::json;
-use std::any::Any;
-use std::collections::HashMap;
-use std::fs::File;
-use std::io::Read;
-use std::path::Path;
-use std::process::{Child, Command, Stdio};
-use std::sync::Arc;
-use std::time::Duration;
-use tokio::io::{ReadHalf, WriteHalf};
-use tokio::net::{TcpStream, ToSocketAddrs};
-use tokio::time::sleep;
+use tokio::{
+    io::{ReadHalf, WriteHalf},
+    net::{TcpStream, ToSocketAddrs},
+    time::sleep,
+};
 use tokio_vsock::{Incoming, VsockConnectInfo, VsockListener};
 use tonic::Extensions;
 use vsock::get_local_cid;
 
-use crate::config::Config;
-use crate::nanos;
-use crate::types::{Hash, Program};
-use crate::vmm::ResourceRequest;
-use eyre::Result;
-
-use super::vm_server::ProgramRegistry;
-use super::{Provider, VMHandle, VMId};
+use super::{vm_server::ProgramRegistry, Provider, VMHandle, VMId};
+use crate::{
+    cli::Config,
+    nanos,
+    types::{Hash, Program},
+    vmm::ResourceRequest,
+};
 
 const IMAGES_DIR: &str = "images";
 

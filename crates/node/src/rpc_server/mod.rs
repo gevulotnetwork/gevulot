@@ -12,7 +12,7 @@ use jsonrpsee::{
 use tokio::sync::RwLock;
 
 use crate::{
-    asset_manager::AssetManager, config::Config, mempool::Mempool, storage::Database,
+    asset_manager::AssetManager, cli::Config, mempool::Mempool, storage::Database,
     types::Transaction,
 };
 

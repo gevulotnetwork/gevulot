@@ -2,29 +2,32 @@
 #![allow(unused_variables)]
 #![feature(exit_status_error)]
 
-use asset_manager::AssetManager;
-use config::Config;
-use gevulot_node::types;
+use std::{
+    io::{ErrorKind, Write},
+    net::ToSocketAddrs,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    thread::sleep,
+    time::Duration,
+};
 
+use asset_manager::AssetManager;
 use async_trait::async_trait;
 use clap::Parser;
+use cli::{Cli, Command, Config, GenerateCommand, NodeKeyOptions, PeerCommand};
 use eyre::Result;
+use gevulot_node::types;
 use libsecp256k1::SecretKey;
 use pea2pea::Pea2Pea;
-use std::net::ToSocketAddrs;
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
-use std::thread::sleep;
-use std::time::Duration;
-use tokio::sync::Mutex as TMutex;
-use tokio::sync::RwLock;
+use rand::{rngs::StdRng, SeedableRng};
+use tokio::sync::{Mutex as TMutex, RwLock};
 use tonic::transport::Server;
 use tracing_subscriber::{filter::LevelFilter, fmt::format::FmtSpan, EnvFilter};
 use types::{Hash, Transaction};
 use workflow::WorkflowEngine;
 
 mod asset_manager;
-mod config;
+mod cli;
 mod mempool;
 mod nanos;
 mod networking;
@@ -57,9 +60,48 @@ fn start_logger(default_level: LevelFilter) {
 async fn main() -> Result<()> {
     start_logger(LevelFilter::INFO);
 
-    let config = Arc::new(Config::parse());
-    run(config).await?;
+    let cli = Cli::parse();
 
+    match cli.subcommand {
+        Command::Generate { target } => match target {
+            GenerateCommand::NodeKey { options } => generate_node_key(options),
+        },
+        Command::Peer { peer, op } => match op {
+            PeerCommand::Whitelist { whitelist } => {
+                todo!("implement peer whitelisting");
+            }
+            PeerCommand::Deny { deny } => {
+                todo!("implement peer denying");
+            }
+        },
+        Command::Run { config } => run(Arc::new(config)).await,
+    }
+}
+
+fn generate_node_key(opts: NodeKeyOptions) -> Result<()> {
+    let key = SecretKey::random(&mut StdRng::from_entropy());
+    let mut fd = match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(&opts.node_key_file)
+    {
+        Ok(fd) => fd,
+        Err(err) => match err.kind() {
+            ErrorKind::NotFound => {
+                eprintln!("directory for {:#?} doesn't exist", &opts.node_key_file);
+                std::process::exit(1);
+            }
+            ErrorKind::AlreadyExists => {
+                eprintln!("file {:#?} already exists", &opts.node_key_file);
+                std::process::exit(1);
+            }
+            _ => return Err(err.into()),
+        },
+    };
+
+    fd.write_all(&key.serialize()[..])?;
+    fd.flush()?;
     Ok(())
 }
 
