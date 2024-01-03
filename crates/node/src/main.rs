@@ -265,6 +265,19 @@ async fn run(config: Arc<Config>) -> Result<()> {
 }
 
 fn read_node_key(node_key_file: &PathBuf) -> Result<SecretKey> {
-    let bs = std::fs::read(node_key_file)?;
+    let bs = match std::fs::read(node_key_file) {
+        Ok(key_data) => key_data,
+        Err(err) => match err.kind() {
+            std::io::ErrorKind::NotFound => {
+                eprintln!(
+                    "\nerror: node key not found.\n\nplease create node-key with:\n\t{} generate node-key\n",
+                    std::env::current_exe().unwrap().to_str().unwrap()
+                );
+                std::process::exit(1);
+            }
+            _ => return Err(err.into()),
+        },
+    };
+
     SecretKey::parse(bs.as_slice().try_into().expect("invalid node key")).map_err(|e| e.into())
 }
