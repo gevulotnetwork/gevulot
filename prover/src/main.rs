@@ -1,11 +1,12 @@
 mod gev_rust;
 use gev_rust::{on_deploy, on_prove, on_verify};
 
-use anyhow::Result;
 use clap::Parser;
 use gev_core::{GevulotAction, GevulotAlg};
 use gevulot_shim::{Task, TaskResult};
 use std::{env, path::PathBuf};
+
+type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
 #[derive(Parser, Debug)]
 #[clap(author = "Gevulot Team", version, about, long_about = None)]
