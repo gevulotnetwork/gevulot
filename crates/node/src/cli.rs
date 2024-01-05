@@ -83,6 +83,25 @@ pub struct Config {
         default_value_t = 8080
     )]
     pub vsock_listen_port: u32,
+
+    #[arg(
+        long,
+        long_help = "Number of CPUs available",
+        env = "GEVULOT_CPUS",
+        default_value_t = 8
+    )]
+    pub num_cpus: u64,
+
+    #[arg(
+        long,
+        long_help = "Amount of memory available (in GBs)",
+        env = "GEVULOT_MEM_GB",
+        default_value_t = 8
+    )]
+    pub mem_gb: u64,
+
+    #[arg(long, long_help = "GPU PCI devices", env = "GEVULOT_GPU_DEVICES")]
+    pub gpu_devices: Option<String>,
 }
 
 #[derive(Debug, Args)]

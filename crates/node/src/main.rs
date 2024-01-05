@@ -181,7 +181,12 @@ async fn run(config: Arc<Config>) -> Result<()> {
     .await;
 
     // TODO(tuommaki): read total available resources from config / acquire system stats.
-    let resource_manager = Arc::new(Mutex::new(scheduler::ResourceManager::new(16384, 8, 0)));
+    let num_gpus = if config.gpu_devices.is_some() { 1 } else { 0 };
+    let resource_manager = Arc::new(Mutex::new(scheduler::ResourceManager::new(
+        config.mem_gb * 1024 * 1024 * 1024,
+        config.num_cpus,
+        num_gpus,
+    )));
 
     // TODO(tuommaki): Handle provider from config.
     let qemu_provider = vmm::qemu::Qemu::new(config.clone());

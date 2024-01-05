@@ -241,6 +241,13 @@ impl Provider for Qemu {
             // QMP
             .args(["-qmp", &format!("tcp:localhost:{qmp_port},server")]);
 
+        // TODO: When GPU argument handling is refactored, this should be fixed as well.
+        if self.config.gpu_devices.is_some() {
+            cmd.args(parse_gpu_devices_into_qemu_params(
+                self.config.gpu_devices.as_ref().unwrap(),
+            ));
+        }
+
         // Setup stdout & stderr log to VM execution.
         {
             let log_dir_path = Path::new(&self.config.log_directory).join(program.hash.to_string());
@@ -483,4 +490,21 @@ fn dump_read(mut read: impl Read) {
     let mut buffer = String::new();
     read.read_to_string(&mut buffer).unwrap();
     tracing::info!(buffer);
+}
+
+//
+// TODO: This is totally wrong place to put CLI argument parsing, but done
+//       this way to save some time.
+//
+// The GPU arguments should be completely refactored. Possibly even removed
+// and replaced with automatic detection (by filtering PCI devices that are
+// bound with vfio_pci driver).
+fn parse_gpu_devices_into_qemu_params(arg: &str) -> Vec<String> {
+    let devices: Vec<&str> = arg.split(',').collect();
+    let mut params = vec![];
+    for device in devices {
+        params.push("-device".to_string());
+        params.push(format!("vfio-pci,rombar=0,host={}", device));
+    }
+    params
 }
