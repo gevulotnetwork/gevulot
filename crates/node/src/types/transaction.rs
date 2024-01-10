@@ -214,7 +214,7 @@ impl Payload {
             } => {
                 buf.append(&mut parent.to_vec());
                 buf.append(&mut verifier.to_vec());
-                buf.append(&mut verification.clone().as_mut());
+                buf.append(verification.clone().as_mut());
             }
             Payload::Cancel { parent } => {
                 buf.append(&mut parent.to_vec());

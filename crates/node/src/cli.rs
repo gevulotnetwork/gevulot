@@ -147,6 +147,7 @@ pub enum GenerateCommand {
     },
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Generate objects.

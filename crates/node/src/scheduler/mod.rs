@@ -298,8 +298,8 @@ impl TaskManager for Scheduler {
                 TaskKind::Proof => Transaction {
                     hash: Hash::default(),
                     payload: Payload::Proof {
-                        parent: running_task.task.tx.clone(),
-                        prover: program.clone(),
+                        parent: running_task.task.tx,
+                        prover: program,
                         proof: result.data,
                     },
                     nonce,
@@ -309,8 +309,8 @@ impl TaskManager for Scheduler {
                 TaskKind::Verification => Transaction {
                     hash: Hash::default(),
                     payload: Payload::Verification {
-                        parent: running_task.task.tx.clone(),
-                        verifier: program.clone(),
+                        parent: running_task.task.tx,
+                        verifier: program,
                         verification: result.data,
                     },
                     nonce,
