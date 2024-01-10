@@ -66,8 +66,15 @@ impl From<&[u8]> for Hash {
 
 impl From<Hash> for Message {
     fn from(value: Hash) -> Self {
-        // Split [u8; 32] into 8 * [u8; 4]
-        let mut chunks = value.0.array_chunks::<4>();
+        let chunk_sz = HASH_SIZE/8;
+        let mut offset = 0;
+        let mut chunks = vec![];
+        for _ in 0..value.0.len()/chunk_sz {
+            chunks.push(<&[u8] as TryInto<[u8; 4]>>::try_into(&value.0[offset..offset+chunk_sz]).unwrap().clone());
+            offset += chunk_sz;
+        }
+
+        let mut chunks = chunks.iter_mut();
         Message(libsecp256k1::curve::Scalar([
             u32::from_be_bytes(*chunks.next().unwrap()),
             u32::from_be_bytes(*chunks.next().unwrap()),
