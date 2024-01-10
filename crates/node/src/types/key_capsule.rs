@@ -35,7 +35,7 @@ impl KeyCapsule {
 
         match self.keys.iter().find(|(recipient, _)| recipient == pk) {
             Some((_, key)) => {
-                let key = ecies::decrypt(sk, &key)?;
+                let key = ecies::decrypt(sk, key)?;
                 let msg = ecies::decrypt(&key, self.msg.as_slice())?;
                 Ok(msg.to_vec())
             }

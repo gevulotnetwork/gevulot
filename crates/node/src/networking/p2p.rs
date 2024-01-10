@@ -161,7 +161,7 @@ mod tests {
     struct Sink(Arc<Sender<Transaction>>);
     impl Sink {
         fn new(tx: Arc<Sender<Transaction>>) -> Self {
-            Self { 0: tx }
+            Self(tx)
         }
     }
 

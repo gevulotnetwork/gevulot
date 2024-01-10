@@ -116,13 +116,11 @@ async fn get_transaction(params: Params<'static>, ctx: Arc<Context>) -> RpcRespo
 
     tracing::info!("JSON-RPC: get_transaction()");
 
-    let resp = match ctx.database.find_transaction(&tx_hash).await {
+    match ctx.database.find_transaction(&tx_hash).await {
         Ok(Some(tx)) => RpcResponse::Ok(tx),
         Ok(None) => RpcResponse::Err(RpcError::NotFound(tx_hash.to_string())),
         Err(e) => RpcResponse::Err(RpcError::NotFound(tx_hash.to_string())),
-    };
-
-    resp
+    }
 }
 
 #[tracing::instrument(level = "info")]
