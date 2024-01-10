@@ -21,8 +21,11 @@ pub struct TaskResult {
     files: Vec<String>,
 }
 
+/// # Safety
+/// This function is safe as long as passed parameters `data` and `len` together
+///  are valid ((NULL, 0) are also valid).
 #[no_mangle]
-pub extern "C" fn new_task_result(data: *mut u8, len: usize) -> *mut TaskResult {
+pub unsafe extern "C" fn new_task_result(data: *mut u8, len: usize) -> *mut TaskResult {
     // SAFETY: 1. This is safe as long as passed `data` and `len` arguments are valid.
     unsafe {
         let data = if data.is_null() {
@@ -39,8 +42,10 @@ pub extern "C" fn new_task_result(data: *mut u8, len: usize) -> *mut TaskResult 
     }
 }
 
+/// # Safety
+/// This function is save as long as passed parameters are valid.
 #[no_mangle]
-pub extern "C" fn add_file_to_result(result: *mut TaskResult, file_name: *const c_char) {
+pub unsafe extern "C" fn add_file_to_result(result: *mut TaskResult, file_name: *const c_char) {
     // SAFETY: Following is only safe if the passed `file_name` is:
     // 1. valid pointer
     // 2. null terminated.
