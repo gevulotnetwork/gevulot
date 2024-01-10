@@ -168,7 +168,7 @@ impl Database {
                 .fetch_optional(&self.pool)
                 .await?;
 
-        return Ok(res.is_some());
+        Ok(res.is_some())
     }
 
     pub async fn get_incomplete_assets(&self) -> Result<Vec<Hash>> {
@@ -352,8 +352,8 @@ impl Database {
         let mut txs = Vec::with_capacity(refs.len());
         for tx_hash in refs {
             let tx = self.find_transaction(&tx_hash).await?;
-            if tx.is_some() {
-                txs.push(tx.unwrap());
+            if let Some(tx) = tx {
+                txs.push(tx);
             }
         }
 
@@ -494,11 +494,11 @@ impl Database {
         let mut db_tx = self.pool.begin().await?;
 
         sqlx::query("DELETE FROM program USING deploy WHERE (program.hash = deploy.prover OR program.hash = deploy.verifier) AND deploy.tx = $1")
-            .bind(&tx_hash)
+            .bind(tx_hash)
             .execute(&mut *db_tx)
             .await?;
         sqlx::query("DELETE FROM transaction WHERE hash = $1")
-            .bind(&tx_hash)
+            .bind(tx_hash)
             .execute(&mut *db_tx)
             .await?;
 

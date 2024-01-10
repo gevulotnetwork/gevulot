@@ -23,6 +23,7 @@ jobs:
         ]
     steps:
       - uses: actions/checkout@v4
+      - uses: arduino/setup-protoc@v2
       - uses: Swatinem/rust-cache@v2
       - name: Default on nightly Rust
         run: rustup default nightly

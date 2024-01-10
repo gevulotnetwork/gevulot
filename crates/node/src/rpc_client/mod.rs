@@ -24,7 +24,7 @@ impl RpcClient {
         tx_hash: &Hash,
     ) -> Result<Option<Transaction>, Box<dyn Error>> {
         let mut params = ArrayParams::new();
-        params.insert(&tx_hash).expect("rpc params");
+        params.insert(tx_hash).expect("rpc params");
 
         let resp = self
             .client
@@ -40,7 +40,7 @@ impl RpcClient {
 
     pub async fn send_transaction(&self, tx: &Transaction) -> Result<(), Box<dyn Error>> {
         let mut params = ArrayParams::new();
-        params.insert(&tx).expect("rpc params");
+        params.insert(tx).expect("rpc params");
 
         let resp = self
             .client
@@ -57,7 +57,7 @@ impl RpcClient {
 
     pub async fn get_tx_tree(&self, tx_hash: &Hash) -> Result<TransactionTree, Box<dyn Error>> {
         let mut params = ArrayParams::new();
-        params.insert(&tx_hash).expect("rpc params");
+        params.insert(tx_hash).expect("rpc params");
 
         let resp = self
             .client

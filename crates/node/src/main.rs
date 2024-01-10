@@ -241,8 +241,8 @@ async fn run(config: Arc<Config>) -> Result<()> {
     for addr in config.p2p_discovery_addrs.clone() {
         tracing::info!("connecting to p2p peer {}", addr);
         match addr.to_socket_addrs() {
-            Ok(socket_iter) => {
-                for peer in socket_iter {
+            Ok(mut socket_iter) => {
+                if let Some(peer) = socket_iter.next() {
                     p2p.node().connect(peer).await?;
                     break;
                 }
