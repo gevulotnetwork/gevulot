@@ -17,7 +17,7 @@ impl Hash {
     pub fn random<R: Rng>(rng: &mut R) -> Hash {
         let mut bs = [0u8; HASH_SIZE];
         rng.fill_bytes(&mut bs);
-        Hash { 0: bs }
+        Hash(bs)
     }
 }
 
@@ -58,9 +58,7 @@ impl From<String> for Hash {
 
 impl From<&[u8]> for Hash {
     fn from(value: &[u8]) -> Self {
-        Self {
-            0: value.try_into().expect("copy"),
-        }
+        Self(value.try_into().expect("copy"))
     }
 }
 

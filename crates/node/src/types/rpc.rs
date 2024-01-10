@@ -23,7 +23,7 @@ pub enum RpcResponse<T: Clone> {
 impl<T: Clone> RpcResponse<T> {
     pub fn unwrap(&self) -> T {
         if let RpcResponse::Ok(v) = self {
-            return v.clone();
+            v.clone()
         } else {
             // TODO: Consider better debug print here?
             panic!("unwrap");
