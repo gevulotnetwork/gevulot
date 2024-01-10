@@ -9,7 +9,7 @@ use hyper_util::rt::TokioIo;
 use sha3::{Digest, Sha3_256};
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 use tokio::fs::File;
 use tokio::net::TcpListener;
@@ -36,13 +36,13 @@ impl FileServer {
         server
     }
 
-    pub async fn register_file(&self, file: &PathBuf) -> String {
+    pub async fn register_file(&self, file: &Path) -> String {
         let file_name = file.to_string_lossy().to_string();
         let mut file_map = self.file_map.write().await;
         let mut hasher = Sha3_256::new();
         hasher.update(file_name.as_bytes());
         let digest = hex::encode(hasher.finalize());
-        let url = format!("http://{}/{}", self.listen_addr.to_string(), digest);
+        let url = format!("http://{}/{}", self.listen_addr, digest);
         file_map.insert(digest, file_name);
         url
     }

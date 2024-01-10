@@ -98,7 +98,7 @@ impl AssetManager {
                 prover,
                 verifier,
             } => (Program::from(prover), Program::from(verifier)),
-            _ => return Err(AssetManagerError::IncompatibleTxPayload(tx.hash.clone()).into()),
+            _ => return Err(AssetManagerError::IncompatibleTxPayload(tx.hash).into()),
         };
 
         self.process_program(&prover).await?;
@@ -125,7 +125,7 @@ impl AssetManager {
 
         let workflow = match tx.payload.clone() {
             Payload::Run { workflow } => workflow,
-            _ => return Err(AssetManagerError::IncompatibleTxPayload(tx.hash.clone()).into()),
+            _ => return Err(AssetManagerError::IncompatibleTxPayload(tx.hash).into()),
         };
 
         // TODO: Ideally the following would happen concurrently for each file...
@@ -138,7 +138,7 @@ impl AssetManager {
                         checksum,
                     } => {
                         let f = types::File {
-                            tx: tx.hash.clone(),
+                            tx: tx.hash,
                             name: file_name,
                             url: file_url,
                         };

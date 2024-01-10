@@ -52,12 +52,12 @@ impl WorkflowEngine {
             Payload::Run { workflow } => {
                 tracing::debug!("creating next task from Run tx {}", &cur_tx.hash);
 
-                if workflow.steps.len() == 0 {
+                if workflow.steps.is_empty() {
                     Ok(None)
                 } else {
                     Ok(Some(
                         self.workflow_step_to_task(
-                            cur_tx.hash.clone(),
+                            cur_tx.hash,
                             &workflow.steps[0],
                             TaskKind::Proof,
                         )
@@ -72,11 +72,7 @@ impl WorkflowEngine {
             } => {
                 tracing::debug!("creating next task from Proof tx {}", &cur_tx.hash);
 
-                match workflow
-                    .steps
-                    .iter()
-                    .position(|s| s.program == prover.clone())
-                {
+                match workflow.steps.iter().position(|s| s.program == *prover) {
                     Some(proof_step_idx) => {
                         if workflow.steps.len() <= proof_step_idx {
                             Err(WorkflowError::WorkflowStepMissing(format!(
@@ -87,7 +83,7 @@ impl WorkflowEngine {
                         } else {
                             Ok(Some(
                                 self.workflow_step_to_task(
-                                    cur_tx.hash.clone(),
+                                    cur_tx.hash,
                                     &workflow.steps[proof_step_idx + 1],
                                     TaskKind::Verification,
                                 )
@@ -109,12 +105,12 @@ impl WorkflowEngine {
                     Ok(None) => {
                         return Err(WorkflowError::WorkflowTransactionMissing(format!(
                             "Proof tx, hash {}",
-                            parent.to_string()
+                            parent
                         ))
                         .into());
                     }
                     Ok(Some(tx)) => tx,
-                    Err(err) => return Err(err.into()),
+                    Err(err) => return Err(err),
                 };
 
                 // TODO: Rewrite this spaghetti!
@@ -136,7 +132,7 @@ impl WorkflowEngine {
                             } else {
                                 Ok(Some(
                                     self.workflow_step_to_task(
-                                        proof_tx.hash.clone(),
+                                        proof_tx.hash,
                                         &workflow.steps[proof_step_idx + 1],
                                         TaskKind::Verification,
                                     )
@@ -162,7 +158,7 @@ impl WorkflowEngine {
     }
 
     async fn find_parent_tx_for_program(&self, tx_hash: &Hash, program: &Hash) -> Result<Hash> {
-        let mut cur_tx = tx_hash.clone();
+        let mut cur_tx = *tx_hash;
 
         tracing::debug!("finding workflow for transaction {}", tx_hash);
 
@@ -180,7 +176,7 @@ impl WorkflowEngine {
                         return Err(WorkflowError::TransactionNotFound(cur_tx).into());
                     }
 
-                    if workflow.steps.get(0).unwrap().program == *program {
+                    if workflow.steps.first().unwrap().program == *program {
                         return Ok(cur_tx);
                     } else {
                         return Err(WorkflowError::TransactionNotFound(cur_tx).into());
@@ -191,11 +187,11 @@ impl WorkflowEngine {
                         return Ok(cur_tx);
                     }
 
-                    cur_tx = parent.clone();
+                    cur_tx = parent;
                     continue;
                 }
                 Payload::ProofKey { parent, .. } => {
-                    cur_tx = parent.clone();
+                    cur_tx = parent;
                     continue;
                 }
                 Payload::Verification {
@@ -205,7 +201,7 @@ impl WorkflowEngine {
                         return Ok(cur_tx);
                     }
 
-                    cur_tx = parent.clone();
+                    cur_tx = parent;
                     continue;
                 }
                 _ => {
@@ -220,7 +216,7 @@ impl WorkflowEngine {
     }
 
     async fn workflow_for_transaction(&self, tx_hash: &Hash) -> Result<Workflow> {
-        let mut tx_hash = tx_hash.clone();
+        let mut tx_hash = *tx_hash;
 
         tracing::debug!("finding workflow for transaction {}", tx_hash);
 
@@ -240,17 +236,17 @@ impl WorkflowEngine {
                 }
                 Payload::Proof { parent, .. } => {
                     tracing::debug!("finding workflow from parent {} of {}", &parent, tx_hash);
-                    tx_hash = parent.clone();
+                    tx_hash = parent;
                     continue;
                 }
                 Payload::ProofKey { parent, .. } => {
                     tracing::debug!("finding workflow from parent {} of {}", &parent, tx_hash);
-                    tx_hash = parent.clone();
+                    tx_hash = parent;
                     continue;
                 }
                 Payload::Verification { parent, .. } => {
                     tracing::debug!("finding workflow from parent {} of {}", &parent, tx_hash);
-                    tx_hash = parent.clone();
+                    tx_hash = parent;
                     continue;
                 }
                 _ => {
@@ -281,7 +277,7 @@ impl WorkflowEngine {
                     file_url,
                     ..
                 } => File {
-                    tx: tx.clone(),
+                    tx,
                     name: file_name.clone(),
                     url: file_url.clone(),
                 },
@@ -290,10 +286,10 @@ impl WorkflowEngine {
                     file_name,
                 } => {
                     // Make record of file that needs transfer from source tx to current tx's files.
-                    file_transfers.push((source_program.clone(), file_name.clone()));
+                    file_transfers.push((*source_program, file_name.clone()));
 
                     File {
-                        tx: tx.clone(),
+                        tx,
                         name: file_name.clone(),
                         url: "".to_string(),
                     }
@@ -316,7 +312,7 @@ impl WorkflowEngine {
         Ok(Task {
             id,
             tx,
-            name: format!("{}-{}", id.to_string(), step.program.to_string()),
+            name: format!("{}-{}", id, step.program),
             kind,
             program_id: step.program,
             args: step.args.clone(),
@@ -358,7 +354,7 @@ mod tests {
     #[async_trait]
     impl TransactionStore for TxStore {
         async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction>> {
-            Ok(self.txs.get(tx_hash).map(|e| e.clone()))
+            Ok(self.txs.get(tx_hash).cloned())
         }
     }
 
@@ -467,8 +463,8 @@ mod tests {
         let mut tx = Transaction {
             hash: Hash::default(),
             payload: Payload::Proof {
-                parent: parent.clone(),
-                prover: program.clone(),
+                parent: *parent,
+                prover: *program,
                 proof: "proof.".into(),
             },
             nonce: 1,
@@ -485,7 +481,7 @@ mod tests {
         let mut tx = Transaction {
             hash: Hash::default(),
             payload: Payload::ProofKey {
-                parent: parent.clone(),
+                parent: *parent,
                 key: "key.".into(),
             },
             nonce: 1,
@@ -502,8 +498,8 @@ mod tests {
         let mut tx = Transaction {
             hash: Hash::default(),
             payload: Payload::Verification {
-                parent: parent.clone(),
-                verifier: program.clone(),
+                parent: *parent,
+                verifier: *program,
                 verification: b"verification.".to_vec(),
             },
             nonce: 1,

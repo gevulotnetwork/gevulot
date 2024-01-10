@@ -70,8 +70,8 @@ async fn deploy_programs(
     file_server: Arc<FileServer>,
     key: &SecretKey,
     deployment_name: &str,
-    prover_img: &PathBuf,
-    verifier_img: &PathBuf,
+    prover_img: &Path,
+    verifier_img: &Path,
 ) -> Result<(Hash, Hash, Hash)> {
     let prover =
         from_img_file_to_metadata(prover_img, &file_server.register_file(prover_img).await);
@@ -114,16 +114,16 @@ async fn send_proving_task(
     verifier_hash: &Hash,
 ) -> Result<Hash> {
     let proving_step = WorkflowStep {
-        program: prover_hash.clone(),
+        program: *prover_hash,
         args: vec!["--nonce".to_string(), nonce.to_string()],
         inputs: vec![],
     };
 
     let verifying_step = WorkflowStep {
-        program: verifier_hash.clone(),
+        program: *verifier_hash,
         args: vec!["--nonce".to_string(), nonce.to_string()],
         inputs: vec![ProgramData::Output {
-            source_program: prover_hash.clone(),
+            source_program: *prover_hash,
             file_name: "/workspace/proof.dat".to_string(),
         }],
     };
