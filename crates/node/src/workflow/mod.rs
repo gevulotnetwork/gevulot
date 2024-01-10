@@ -61,7 +61,7 @@ impl WorkflowEngine {
                             &workflow.steps[0],
                             TaskKind::Proof,
                         )
-                        .await,
+                        .await?,
                     ))
                 }
             }
@@ -91,7 +91,7 @@ impl WorkflowEngine {
                                     &workflow.steps[proof_step_idx + 1],
                                     TaskKind::Verification,
                                 )
-                                .await,
+                                .await?,
                             ))
                         }
                     }
@@ -140,7 +140,7 @@ impl WorkflowEngine {
                                         &workflow.steps[proof_step_idx + 1],
                                         TaskKind::Verification,
                                     )
-                                    .await,
+                                    .await?,
                                 ))
                             }
                         }
@@ -264,7 +264,12 @@ impl WorkflowEngine {
         }
     }
 
-    async fn workflow_step_to_task(&self, tx: Hash, step: &WorkflowStep, kind: TaskKind) -> Task {
+    async fn workflow_step_to_task(
+        &self,
+        tx: Hash,
+        step: &WorkflowStep,
+        kind: TaskKind,
+    ) -> Result<Task> {
         let id = Uuid::new_v4();
         let mut file_transfers = vec![];
         let files = step
@@ -305,11 +310,10 @@ impl WorkflowEngine {
 
             self.file_storage
                 .move_task_file(&source_tx.to_string(), &tx.to_string(), &file_name)
-                .await
-                .expect("failed to move output file for next task");
+                .await?;
         }
 
-        Task {
+        Ok(Task {
             id,
             tx,
             name: format!("{}-{}", id.to_string(), step.program.to_string()),
@@ -318,7 +322,7 @@ impl WorkflowEngine {
             args: step.args.clone(),
             files,
             ..Default::default()
-        }
+        })
     }
 }
 
