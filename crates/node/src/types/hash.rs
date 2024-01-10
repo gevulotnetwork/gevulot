@@ -69,9 +69,7 @@ impl From<Hash> for Message {
         let mut chunks = vec![];
         for _ in 0..value.0.len() / chunk_sz {
             chunks.push(
-                <&[u8] as TryInto<[u8; 4]>>::try_into(&value.0[offset..offset + chunk_sz])
-                    .unwrap()
-                    .clone(),
+                <&[u8] as TryInto<[u8; 4]>>::try_into(&value.0[offset..offset + chunk_sz]).unwrap(),
             );
             offset += chunk_sz;
         }
