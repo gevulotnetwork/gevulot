@@ -64,6 +64,9 @@ impl From<&[u8]> for Hash {
 
 impl From<Hash> for Message {
     fn from(value: Hash) -> Self {
+        // This function requires changes if HASH_SIZE changes. Add guard for it.
+        const _: [(); 0 - { HASH_SIZE != 32 } as usize] = [];
+
         let x = &value.0;
         Message(libsecp256k1::curve::Scalar([
             u32::from_be_bytes([x[0], x[1], x[2], x[3]]),
