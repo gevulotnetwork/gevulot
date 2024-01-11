@@ -64,26 +64,16 @@ impl From<&[u8]> for Hash {
 
 impl From<Hash> for Message {
     fn from(value: Hash) -> Self {
-        let chunk_sz = HASH_SIZE / 8;
-        let mut offset = 0;
-        let mut chunks = vec![];
-        for _ in 0..value.0.len() / chunk_sz {
-            chunks.push(
-                <&[u8] as TryInto<[u8; 4]>>::try_into(&value.0[offset..offset + chunk_sz]).unwrap(),
-            );
-            offset += chunk_sz;
-        }
-
-        let mut chunks = chunks.iter_mut();
+        let x = &value.0;
         Message(libsecp256k1::curve::Scalar([
-            u32::from_be_bytes(*chunks.next().unwrap()),
-            u32::from_be_bytes(*chunks.next().unwrap()),
-            u32::from_be_bytes(*chunks.next().unwrap()),
-            u32::from_be_bytes(*chunks.next().unwrap()),
-            u32::from_be_bytes(*chunks.next().unwrap()),
-            u32::from_be_bytes(*chunks.next().unwrap()),
-            u32::from_be_bytes(*chunks.next().unwrap()),
-            u32::from_be_bytes(*chunks.next().unwrap()),
+            u32::from_be_bytes([x[0], x[1], x[2], x[3]]),
+            u32::from_be_bytes([x[4], x[5], x[6], x[7]]),
+            u32::from_be_bytes([x[8], x[9], x[10], x[11]]),
+            u32::from_be_bytes([x[12], x[13], x[14], x[15]]),
+            u32::from_be_bytes([x[16], x[17], x[18], x[19]]),
+            u32::from_be_bytes([x[20], x[21], x[22], x[23]]),
+            u32::from_be_bytes([x[24], x[25], x[26], x[27]]),
+            u32::from_be_bytes([x[28], x[29], x[30], x[31]]),
         ]))
     }
 }
