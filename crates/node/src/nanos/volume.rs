@@ -22,8 +22,10 @@ pub fn create(label: &str, size: &str) -> Result<PathBuf> {
         .arg(size)
         .output()?;
 
-    if let Err(err) = output.status.exit_ok() {
-        return Err(NanosVolumeError::OpsError(err.to_string()).into());
+    if !output.status.success() {
+        return Err(
+            NanosVolumeError::OpsError(String::from("failed to run 'ops volume create'")).into(),
+        );
     }
 
     let volume_file = parse_output(&String::from_utf8(output.stderr)?)?;
@@ -41,8 +43,10 @@ pub fn delete(label: &str) -> Result<()> {
         .arg(label)
         .output()?;
 
-    if let Err(err) = output.status.exit_ok() {
-        return Err(NanosVolumeError::OpsError(err.to_string()).into());
+    if !output.status.success() {
+        return Err(
+            NanosVolumeError::OpsError(String::from("failed to run 'ops volume delete'")).into(),
+        );
     }
 
     Ok(())

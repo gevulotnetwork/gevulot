@@ -1,6 +1,5 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
-#![feature(exit_status_error)]
 
 use std::{
     io::{ErrorKind, Write},
