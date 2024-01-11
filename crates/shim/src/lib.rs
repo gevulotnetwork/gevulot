@@ -25,7 +25,7 @@ pub type TaskId = String;
 
 #[derive(Debug)]
 pub struct Task {
-    id: TaskId,
+    pub id: TaskId,
     pub args: Vec<String>,
     pub files: Vec<String>,
 }
@@ -233,7 +233,7 @@ fn mount_present(mount_point: &str) -> Result<bool> {
 
 /// run function takes `callback` that is invoked with executable `Task` and
 /// which is expected to return `TaskResult`.
-pub fn run(callback: fn(&Task) -> Result<TaskResult>) -> Result<()> {
+pub fn run(callback: impl Fn(&Task) -> Result<TaskResult>) -> Result<()> {
     let mut client = GRPCClient::new(8080, "/workspace")?;
 
     loop {
