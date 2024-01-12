@@ -1,9 +1,14 @@
+use std::time::Duration;
+
 use eyre::Result;
-use sqlx::{self, Row};
+use sqlx::{self, postgres::PgPoolOptions, Row};
 use uuid::Uuid;
 
 use super::entity::{self};
 use crate::types::{self, transaction::ProgramData, File, Hash, Program, Task};
+
+const MAX_DB_CONNS: u32 = 64;
+const DB_CONNECT_TIMEOUT: Duration = Duration::from_millis(750);
 
 #[derive(Clone)]
 pub struct Database {
@@ -13,7 +18,11 @@ pub struct Database {
 // TODO: Split this into domain specific components.
 impl Database {
     pub async fn new(db_url: &str) -> Result<Database> {
-        let pool = sqlx::PgPool::connect(db_url).await?;
+        let pool = PgPoolOptions::new()
+            .max_connections(MAX_DB_CONNS)
+            .acquire_timeout(DB_CONNECT_TIMEOUT)
+            .connect(db_url)
+            .await?;
         Ok(Database { pool })
     }
 
