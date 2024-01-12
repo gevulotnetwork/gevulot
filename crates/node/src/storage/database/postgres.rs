@@ -554,6 +554,7 @@ mod tests {
             nonce: 64,
             signature: Signature::default(),
             propagated: false,
+            rec_id: 0,
         };
 
         database

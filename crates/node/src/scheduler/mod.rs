@@ -305,6 +305,7 @@ impl TaskManager for Scheduler {
                     nonce,
                     signature: Signature::default(),
                     propagated: false,
+                    rec_id: 0,
                 },
                 TaskKind::Verification => Transaction {
                     hash: Hash::default(),
@@ -316,6 +317,7 @@ impl TaskManager for Scheduler {
                     nonce,
                     signature: Signature::default(),
                     propagated: false,
+                    rec_id: 0,
                 },
                 TaskKind::PoW => {
                     todo!("proof of work tasks not implemented yet");

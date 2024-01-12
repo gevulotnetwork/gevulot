@@ -1,11 +1,13 @@
-use std::sync::Arc;
+use std::{collections::HashSet, sync::Arc};
 
 use super::hash::Hash;
 use super::signature::Signature;
-use libsecp256k1::{sign, verify, Message, PublicKey, SecretKey};
+use eyre::Result;
+use libsecp256k1::{recover, sign, verify, Message, PublicKey, RecoveryId, SecretKey};
 use num_bigint::BigInt;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
+use thiserror::Error;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub enum TransactionTree {
@@ -223,12 +225,20 @@ impl Payload {
     }
 }
 
+#[allow(clippy::enum_variant_names)]
+#[derive(Error, Debug)]
+pub enum TransactionError {
+    #[error("validation: {0}")]
+    Validation(String),
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct Transaction {
     pub hash: Hash,
     pub payload: Payload,
     pub nonce: u64,
     pub signature: Signature,
+    pub rec_id: u8,
     #[serde(skip_serializing, skip_deserializing)]
     pub propagated: bool,
 }
@@ -238,13 +248,27 @@ impl Transaction {
         // Refresh transaction hash before signing.
         self.hash = self.compute_hash();
         let msg: Message = self.hash.into();
-        let (sig, _) = sign(&msg, key);
+        let (sig, rec_id) = sign(&msg, key);
         self.signature = sig.into();
+        self.rec_id = rec_id.serialize();
     }
 
     pub fn verify(&self, pub_key: &PublicKey) -> bool {
         let hash = self.compute_hash();
         let msg: Message = hash.into();
+
+        if let Ok(recovered_pub_key) = recover(
+            &msg,
+            &self.signature.into(),
+            &RecoveryId::parse(self.rec_id).expect("recovery_id"),
+        ) {
+            if pub_key != &recovered_pub_key {
+                return false;
+            }
+        } else {
+            return false;
+        }
+
         verify(&msg, &self.signature.into(), pub_key)
     }
 
@@ -255,6 +279,42 @@ impl Transaction {
         hasher.update(buf);
         hasher.update(self.nonce.to_be_bytes());
         (&hasher.finalize()[0..32]).into()
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        if let Payload::Run { ref workflow } = self.payload {
+            let mut programs = HashSet::new();
+            for step in &workflow.steps {
+                if !programs.insert(step.program) {
+                    return Err(TransactionError::Validation(format!(
+                        "multiple programs in workflow: {}",
+                        &step.program
+                    ))
+                    .into());
+                }
+            }
+        }
+
+        let hash = self.compute_hash();
+        let msg: Message = hash.into();
+        if let Ok(recovered_pub_key) = recover(
+            &msg,
+            &self.signature.into(),
+            &RecoveryId::parse(self.rec_id).expect("recovery_id"),
+        ) {
+            if !verify(&msg, &self.signature.into(), &recovered_pub_key) {
+                return Err(TransactionError::Validation(String::from(
+                    "signature verification failed",
+                ))
+                .into());
+            }
+        } else {
+            return Err(
+                TransactionError::Validation(String::from("public key recovery failed")).into(),
+            );
+        }
+
+        Ok(())
     }
 }
 
@@ -288,5 +348,44 @@ mod tests {
 
         // Verify must return false.
         assert!(!tx.verify(&pk));
+    }
+
+    #[test]
+    fn test_tx_validate_ensures_unique_programs() {
+        let prover = WorkflowStep::default();
+        let verifier = WorkflowStep::default();
+
+        let workflow = Workflow {
+            // Both steps are `Default::default()` -> same program hash -> invalid.
+            steps: vec![prover, verifier],
+        };
+
+        let mut tx = Transaction {
+            hash: Hash::default(),
+            payload: Payload::Run { workflow },
+            nonce: 0,
+            signature: Signature::default(),
+            propagated: false,
+            rec_id: 0,
+        };
+
+        let sk = SecretKey::random(&mut StdRng::from_entropy());
+        tx.sign(&sk);
+
+        assert!(tx.validate().is_err());
+    }
+
+    #[test]
+    fn test_tx_validations_verifies_signature() {
+        let tx = Transaction {
+            hash: Hash::default(),
+            payload: Payload::Empty,
+            nonce: 0,
+            signature: Signature::default(),
+            propagated: false,
+            rec_id: 0,
+        };
+
+        assert!(tx.validate().is_err());
     }
 }

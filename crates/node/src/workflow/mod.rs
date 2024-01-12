@@ -452,6 +452,7 @@ mod tests {
             nonce: 1,
             signature: Signature::default(),
             propagated: false,
+            rec_id: 0,
         };
 
         tx.sign(&key);
@@ -470,6 +471,7 @@ mod tests {
             nonce: 1,
             signature: Signature::default(),
             propagated: false,
+            rec_id: 0,
         };
 
         tx.sign(&key);
@@ -487,6 +489,7 @@ mod tests {
             nonce: 1,
             signature: Signature::default(),
             propagated: false,
+            rec_id: 0,
         };
 
         tx.sign(&key);
@@ -505,6 +508,7 @@ mod tests {
             nonce: 1,
             signature: Signature::default(),
             propagated: false,
+            rec_id: 0,
         };
 
         tx.sign(&key);
