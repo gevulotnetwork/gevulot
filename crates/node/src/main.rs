@@ -19,6 +19,7 @@ use gevulot_node::types;
 use libsecp256k1::SecretKey;
 use pea2pea::Pea2Pea;
 use rand::{rngs::StdRng, SeedableRng};
+use sqlx::postgres::PgPoolOptions;
 use tokio::sync::{Mutex as TMutex, RwLock};
 use tonic::transport::Server;
 use tracing_subscriber::{filter::LevelFilter, fmt::format::FmtSpan, EnvFilter};
@@ -65,6 +66,15 @@ async fn main() -> Result<()> {
         Command::Generate { target } => match target {
             GenerateCommand::NodeKey { options } => generate_node_key(options),
         },
+        Command::Migrate { db_url } => {
+            let pool = PgPoolOptions::new()
+                .max_connections(5)
+                .acquire_timeout(Duration::from_millis(500))
+                .connect(&db_url)
+                .await?;
+            // This will pick them up from `./migrations`.
+            sqlx::migrate!().run(&pool).await.map_err(|e| e.into())
+        }
         Command::Peer { peer, op } => match op {
             PeerCommand::Whitelist { whitelist } => {
                 todo!("implement peer whitelisting");
