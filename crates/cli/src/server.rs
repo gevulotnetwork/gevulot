@@ -119,6 +119,8 @@ pub async fn serve_file(
                     _ = download_started_interval.tick() => {
                         if !download_started {
                             log::error!("Node download didn't started in time. Local host can be unreachable from node.");
+                            //wait that the  http download buffer flush.
+                            tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
                             break;
                         }
                     }

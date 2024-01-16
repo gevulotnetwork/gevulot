@@ -15,6 +15,11 @@ mod server;
 
 type BoxResult<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
+pub async fn calculate_hash_command(file_path: &PathBuf) -> BoxResult<String> {
+    Ok(extract_hash_from_file_content(file_path)
+        .ok_or_else(|| format!("File not found:{:?}", file_path))?)
+}
+
 // {
 //     program: "Program Hash",
 //     cmd_args: [ {name: "args name", value:"args value"}, ...],

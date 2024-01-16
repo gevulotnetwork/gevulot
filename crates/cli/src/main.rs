@@ -84,6 +84,13 @@ enum ConfCommands {
         #[clap(short, long, value_name = "TASK ARRAY")]
         tasks: String,
     },
+    /// Calculate the Hash of the specified file.
+    #[command(arg_required_else_help = true)]
+    CalculateHash {
+        /// Path to the file to hash.
+        #[clap(short, long, value_name = "FILE PATH")]
+        file: PathBuf,
+    },
 }
 
 #[tokio::main]
@@ -131,6 +138,12 @@ async fn main() {
             match gevulot_cli::run_exec_command(client, args.keyfile, tasks).await {
                 Ok(tx_hash) => println!("Programs send to execution correctly. Tx hash:{tx_hash}"),
                 Err(err) => println!("An error occurs during send execution Tx :{err}"),
+            }
+        }
+        ConfCommands::CalculateHash { file } => {
+            match gevulot_cli::calculate_hash_command(&file).await {
+                Ok(tx_hash) => println!("The hash of the file is: {tx_hash}"),
+                Err(err) => println!("An error hash calculus Tx :{err}"),
             }
         }
     }
