@@ -44,7 +44,7 @@ enum ConfCommands {
         /// file path containing the program image of the verifier to deploy or the hash  of the verifier image file (--verifier-img-url is mandatory in this case). If the file doesn't exist, the parameter is used as a hash.
         #[clap(short, long, value_name = "VERIFIER FILE or HASH")]
         verifier: String,
-        /// url to get the prover img. If provided the prover will use this url to get the prover img. If not the cli tool start a local HTTP server to server the file to the node.
+        /// url to get the prover image. If provided the prover will use this URL to get the prover image file. If not the cli tool starts a local HTTP server to serve the file to the node.
         #[clap(long, value_name = "PROVER URL")]
         proverimgurl: Option<String>,
         /// url to get the verifier img. If provided the verifier will use this url to get the verifier img. If not the cli tool start a local HTTP server to server the file to the node.
