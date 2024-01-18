@@ -22,6 +22,7 @@ hex = "0.4"
 home = "0.5"
 jsonrpsee = { version = "0.20", features = [ "client", "server" ] }
 libsecp256k1 = "0.7"
+log = "0.4.20"
 num-bigint = { version = "0.4", features = [ "serde" ] }
 num-traits = "0.2"
 parking_lot = "0.12"
