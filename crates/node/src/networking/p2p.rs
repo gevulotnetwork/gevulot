@@ -441,8 +441,8 @@ mod tests {
 
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-        assert_eq!((&peer1.peer_list.read()).len(), 1);
-        assert!((&peer1.peer_addr_mapping.read()).is_empty());
+        assert_eq!(peer1.peer_list.read().len(), 1);
+        assert!(peer1.peer_addr_mapping.read().is_empty());
     }
 
     #[tokio::test]
