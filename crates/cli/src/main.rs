@@ -47,7 +47,7 @@ enum ConfCommands {
         /// url to get the prover image. If provided the prover will use this URL to get the prover image file. If not the cli tool starts a local HTTP server to serve the file to the node.
         #[clap(long, value_name = "PROVER URL")]
         proverimgurl: Option<String>,
-        /// url to get the verifier img. If provided the verifier will use this url to get the verifier img. If not the cli tool start a local HTTP server to server the file to the node.
+        /// url to get the verifier image. If provided the verifier will use this URL to get the verifier image. If not the cli tool starts a local HTTP server to serve the file to the node.
         #[clap(long, value_name = "VERIFIER URL")]
         verifierimgurl: Option<String>,
         /// Address the local http server use to listen for node file download request.
