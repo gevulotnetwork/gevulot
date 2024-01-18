@@ -4,7 +4,7 @@ Gevulot cli tool allows to send commands / transactions to a Gevulot node.
 
 ## Available commands
 
-The command provided by gelulot-cli are:
+The commands provided by gevulot-cli are:
  * generate-key : Generate a secret key in the specified file. The secret key is use to sign the Tx send to the node.
  * deploy: Send a deploy Tx to the node to deploy the specified prover / verifier.
  * exec : send a program workflow Tx to be executed by the node.
