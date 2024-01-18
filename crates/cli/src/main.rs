@@ -107,7 +107,7 @@ async fn main() {
                 "Key generated and saved in file:{}",
                 args.keyfile.to_str().unwrap_or("")
             ),
-            Err(err) => println!("Error during key  file creation:{err}"),
+            Err(err) => println!("Error during key file creation:{err}"),
         },
         ConfCommands::Deploy {
             name,
