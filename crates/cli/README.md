@@ -1,6 +1,6 @@
 # Gevulot cli tool
 
-Gevulot cli tool allow to send command / Tx to a Gevulot node.
+Gevulot cli tool allows to send commands / transactions to a Gevulot node.
 
 ## Available commands
 
