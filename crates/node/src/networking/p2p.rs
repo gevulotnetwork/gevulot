@@ -223,7 +223,7 @@ impl Handshake for P2P {
                 .cloned()
                 .collect();
             let local_diff: BTreeSet<SocketAddr> = distant_peer_list
-                .difference(&local_peer_list)
+                .difference(local_peer_list)
                 .cloned()
                 .collect();
 
