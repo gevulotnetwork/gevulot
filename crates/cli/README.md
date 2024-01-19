@@ -35,7 +35,7 @@ gevulot-cli -- deploy --name test --prover ./prover --verifier ./verifier
 
 To deploy a local prover and a distant verifier: 
 ```
-gelulot-cli -- deploy --name test --prover ../../target/debug/prover --verifier 491907d04032869088ef9b81004639ed1bb185f0413a261f74faaa0aa943d3f3 --verifierimgurl http://...
+gevulot-cli -- deploy --name test --prover ../../target/debug/prover --verifier 491907d04032869088ef9b81004639ed1bb185f0413a261f74faaa0aa943d3f3 --verifierimgurl http://...
 ```
 
 ### Exec command
