@@ -128,7 +128,7 @@ pub async fn run_exec_command(
         payload: Payload::Run {
             workflow: Workflow { steps },
         },
-        //TODO define nonce use
+        // NOTE: In the devnet `nonce` is just a placeholder for the future.
         nonce: 42,
         ..Default::default()
     };
