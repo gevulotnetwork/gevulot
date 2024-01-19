@@ -218,10 +218,6 @@ impl Handshake for P2P {
         //do peer comparition
         let mut local_diff = {
             let local_peer_list: &mut BTreeSet<SocketAddr> = &mut self.peer_list.write();
-            let distant_diff: BTreeSet<SocketAddr> = local_peer_list
-                .difference(&distant_peer_list)
-                .cloned()
-                .collect();
             let local_diff: BTreeSet<SocketAddr> = distant_peer_list
                 .difference(local_peer_list)
                 .cloned()
@@ -356,10 +352,6 @@ mod tests {
             .unwrap();
 
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-        //assert_eq!(peer1.get_connected_peers().len(), 3);
-        //assert_eq!(peer2.get_connected_peers().len(), 3);
-        //assert_eq!(peer3.get_connected_peers().len(), 3);
 
         tracing::debug!("send tx from peer2 to peer1 and peer3");
         let tx = new_tx();
