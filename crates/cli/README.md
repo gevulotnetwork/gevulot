@@ -42,7 +42,7 @@ gevulot-cli -- deploy --name test --prover ../../target/debug/prover --verifier 
 
 This command allows to execute a workflow of task on the nodes. A task is an execution of a program on the node. Deployed prover or verifier are programs.
 
-The task are defined using a json format. Use --tasks parameter to specify a list of execution tasks or steps.
+The tasks are defined using a json format. Use `--tasks` parameter to specify a list of execution tasks or steps.
 
 #### Example of steps:
 
