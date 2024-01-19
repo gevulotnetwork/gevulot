@@ -158,7 +158,7 @@ pub async fn run_deploy_command(
     let exist_prover_path = verify_file_path(&prover);
     let exist_verifier_path = verify_file_path(&verifier);
 
-    //start the local server if needed. Local file provided
+    // Start the local server if needed. Local file provided.
     let server_files_path: Vec<PathBuf> = exist_prover_path
         .iter()
         .chain(exist_verifier_path.iter())
