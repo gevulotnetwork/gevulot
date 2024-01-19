@@ -327,7 +327,7 @@ fn verify_file_path(file_path: &str) -> Option<PathBuf> {
         .and_then(|present| present.then_some(path))
 }
 
-//TODO add utillity function to Hash.
+// TODO: Add utility function to Hash.
 fn extract_hash_from_file_content(path: &PathBuf) -> Option<String> {
     let mut hasher = blake3::Hasher::new();
     let fd = std::fs::File::open(path).ok()?;
