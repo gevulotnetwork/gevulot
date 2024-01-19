@@ -318,7 +318,7 @@ fn get_last_segment_from_url(url: &str) -> Option<String> {
     })
 }
 
-//Verifiy that the path exist and it's a file.
+// Verify that the path exists and is a file.
 fn verify_file_path(file_path: &str) -> Option<PathBuf> {
     let path: PathBuf = file_path.into();
     path.try_exists()
