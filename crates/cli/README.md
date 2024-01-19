@@ -10,7 +10,7 @@ The commands provided by gevulot-cli are:
  * **exec** : Send a run Tx to be executed by the node.
  * **calculate-hash**: Calculate the Hash of the specified file.
 
- For detailled information use : gelulot-cli --help
+ For detailed information use : gevulot-cli --help
 
 ### Common parameters
 
