@@ -117,7 +117,6 @@ pub async fn run_exec_command(
         )
     })?;
 
-    //    serde_json::from_str::<JsonExecArgs>("{\"program\":\"step1\",\"cmd_args\":[{\"name\":\"--nonce\",\"value\":\"42\"}],\"inputs\":[]}").map_err(|err| format!("Json test decoding error :{err}")).unwrap();
 
     let steps = serde_json::from_str::<Vec<JsonExecArgs>>(&json_tasks)
         .map_err(|err| format!("Json decoding error :{err} with :{json_tasks}"))?
