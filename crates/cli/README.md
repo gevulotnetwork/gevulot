@@ -46,7 +46,7 @@ The tasks are defined using a json format. Use `--tasks` parameter to specify a 
 
 #### Example of steps:
 
-To execute the program with the specified hash with arguments --nonce=42: 
+To execute the program with the specified hash with arguments `--nonce=42`: 
 ```
 {"program":"9616d42b0d82c1ed06eab8eaa26680261ad831012bbf3ad8303738a53bf85c7c","cmd_args":[{"name":"--nonce","value":"42"}],"inputs":[]}
 ```
