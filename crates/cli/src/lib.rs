@@ -253,7 +253,6 @@ fn create_tx_data(
     let (image_file_name, image_file_url, image_file_checksum) =
         generate_tx_data(verified_file, tx_input_args, file_url_args, served_file_map)?;
     let mut data = ProgramMetadata {
-        //TODO what is the role of the name?
         name: image_file_name.clone(),
         hash: Hash::default(),
         image_file_name,
