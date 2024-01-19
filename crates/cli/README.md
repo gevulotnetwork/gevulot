@@ -30,7 +30,7 @@ For more information use: `gevulot-cli deploy --help`
 
 To deploy local images: 
 ```
-gelulot-cli -- deploy --name test --prover ./prover --verifier ./verifier
+gevulot-cli -- deploy --name test --prover ./prover --verifier ./verifier
 ```
 
 To deploy a local prover and a distant verifier: 
