@@ -117,7 +117,6 @@ pub async fn run_exec_command(
         )
     })?;
 
-
     let steps = serde_json::from_str::<Vec<JsonExecArgs>>(&json_tasks)
         .map_err(|err| format!("Json decoding error :{err} with :{json_tasks}"))?
         .into_iter()
