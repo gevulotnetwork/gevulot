@@ -38,7 +38,7 @@ enum ConfCommands {
         /// name of the deployment.
         #[clap(short, long, value_name = "DEPLOYMENT NAME")]
         name: String,
-        /// file path containing the img of the prover to deploy or the hash  of the prover img (--proverimgurl is mandorty in this case). If the  file is not found the parameters is used as an hash.
+        /// file path containing the program image of the prover to deploy or the hash  of the prover image file (--prover-img-url is mandatory in this case). If the  file doesn't exist, the parameter is used as a hash.
         #[clap(short, long, value_name = "PROVER FILE or HASH")]
         prover: String,
         /// file path containing the program image of the verifier to deploy or the hash  of the verifier image file (--verifier-img-url is mandatory in this case). If the file doesn't exist, the parameter is used as a hash.
