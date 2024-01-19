@@ -14,7 +14,7 @@ The commands provided by gevulot-cli are:
 
 ### Common parameters
 
- * -j, --jsonurl: URL of the node json RPC access point. Default: http://localhost:9944
+ * -j, --jsonurl: URL of the node JSON-RPC access point. Default: http://localhost:9944
  * -k, --keyfile: Path to a secret key file. Default: localkey.pki
 
 ### Deploy command
