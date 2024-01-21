@@ -1,3 +1,4 @@
+use crate::storage::database::entity;
 use crate::types::{self, transaction, Hash, Signature};
 use serde::{Deserialize, Serialize};
 
@@ -19,12 +20,12 @@ pub enum Kind {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, sqlx::FromRow)]
 pub struct Transaction {
+    pub author: entity::PublicKey,
     pub hash: Hash,
     pub kind: Kind,
     pub nonce: sqlx::types::Decimal,
     pub signature: Signature,
     pub propagated: bool,
-    pub rec_id: i8,
 }
 
 impl From<&types::Transaction> for Transaction {
@@ -43,13 +44,12 @@ impl From<&types::Transaction> for Transaction {
         };
 
         Transaction {
+            author: entity::PublicKey(value.author),
             hash: value.hash,
             kind,
             nonce: value.nonce.into(),
             signature: value.signature,
             propagated: value.propagated,
-            // This is safe because rec_id has values between 0-3.
-            rec_id: value.rec_id as i8,
         }
     }
 }
@@ -57,6 +57,7 @@ impl From<&types::Transaction> for Transaction {
 impl From<Transaction> for types::Transaction {
     fn from(value: Transaction) -> types::Transaction {
         types::Transaction {
+            author: value.author.into(),
             hash: value.hash,
             // This field is complemented separately.
             payload: transaction::Payload::Empty,
@@ -64,8 +65,6 @@ impl From<Transaction> for types::Transaction {
                 .expect("invalid nonce in db"),
             signature: value.signature,
             propagated: value.propagated,
-            // This is safe because rec_id has values between 0-3.
-            rec_id: value.rec_id as u8,
         }
     }
 }

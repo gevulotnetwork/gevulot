@@ -3,7 +3,7 @@ use std::{collections::HashSet, sync::Arc};
 use super::hash::Hash;
 use super::signature::Signature;
 use eyre::Result;
-use libsecp256k1::{recover, sign, verify, Message, PublicKey, RecoveryId, SecretKey};
+use libsecp256k1::{sign, verify, Message, PublicKey, SecretKey};
 use num_bigint::BigInt;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
@@ -232,44 +232,60 @@ pub enum TransactionError {
     Validation(String),
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct Transaction {
+    pub author: PublicKey,
     pub hash: Hash,
     pub payload: Payload,
     pub nonce: u64,
     pub signature: Signature,
-    pub rec_id: u8,
     #[serde(skip_serializing, skip_deserializing)]
     pub propagated: bool,
 }
 
+impl Default for Transaction {
+    fn default() -> Self {
+        Self {
+            author: PublicKey::from_secret_key(&SecretKey::default()),
+            hash: Hash::default(),
+            payload: Payload::default(),
+            nonce: 0,
+            signature: Signature::default(),
+            propagated: false,
+        }
+    }
+}
+
 impl Transaction {
+    pub fn new(payload: Payload, signing_key: &SecretKey) -> Self {
+        let author = PublicKey::from_secret_key(signing_key);
+
+        let mut tx = Self {
+            author,
+            hash: Hash::default(),
+            payload,
+            nonce: 0,
+            signature: Signature::default(),
+            propagated: false,
+        };
+
+        tx.sign(&signing_key);
+
+        tx
+    }
+
     pub fn sign(&mut self, key: &SecretKey) {
         // Refresh transaction hash before signing.
         self.hash = self.compute_hash();
         let msg: Message = self.hash.into();
-        let (sig, rec_id) = sign(&msg, key);
+        let (sig, _) = sign(&msg, key);
         self.signature = sig.into();
-        self.rec_id = rec_id.serialize();
     }
 
-    pub fn verify(&self, pub_key: &PublicKey) -> bool {
+    pub fn verify(&self) -> bool {
         let hash = self.compute_hash();
         let msg: Message = hash.into();
-
-        if let Ok(recovered_pub_key) = recover(
-            &msg,
-            &self.signature.into(),
-            &RecoveryId::parse(self.rec_id).expect("recovery_id"),
-        ) {
-            if pub_key != &recovered_pub_key {
-                return false;
-            }
-        } else {
-            return false;
-        }
-
-        verify(&msg, &self.signature.into(), pub_key)
+        verify(&msg, &self.signature.into(), &self.author)
     }
 
     pub fn compute_hash(&self) -> Hash {
@@ -295,23 +311,11 @@ impl Transaction {
             }
         }
 
-        let hash = self.compute_hash();
-        let msg: Message = hash.into();
-        if let Ok(recovered_pub_key) = recover(
-            &msg,
-            &self.signature.into(),
-            &RecoveryId::parse(self.rec_id).expect("recovery_id"),
-        ) {
-            if !verify(&msg, &self.signature.into(), &recovered_pub_key) {
-                return Err(TransactionError::Validation(String::from(
-                    "signature verification failed",
-                ))
-                .into());
-            }
-        } else {
-            return Err(
-                TransactionError::Validation(String::from("public key recovery failed")).into(),
-            );
+        if !self.verify() {
+            return Err(TransactionError::Validation(String::from(
+                "signature verification failed",
+            ))
+            .into());
         }
 
         Ok(())
@@ -328,26 +332,22 @@ mod tests {
     #[test]
     fn test_sign_and_verify_tx() {
         let sk = SecretKey::random(&mut StdRng::from_entropy());
-        let pk = PublicKey::from_secret_key(&sk);
 
-        let mut tx = Transaction::default();
-        tx.sign(&sk);
-        assert!(tx.verify(&pk));
+        let tx = Transaction::new(Payload::Empty, &sk);
+        assert!(tx.verify());
     }
 
     #[test]
     fn test_verify_fails_on_tamper() {
         let sk = SecretKey::random(&mut StdRng::from_entropy());
-        let pk = PublicKey::from_secret_key(&sk);
 
-        let mut tx = Transaction::default();
-        tx.sign(&sk);
+        let mut tx = Transaction::new(Payload::Empty, &sk);
 
         // Change nonce after signing.
         tx.nonce += 1;
 
         // Verify must return false.
-        assert!(!tx.verify(&pk));
+        assert!(!tx.verify());
     }
 
     #[test]
@@ -360,17 +360,15 @@ mod tests {
             steps: vec![prover, verifier],
         };
 
-        let mut tx = Transaction {
+        let sk = SecretKey::random(&mut StdRng::from_entropy());
+        let tx = Transaction {
+            author: PublicKey::from_secret_key(&sk),
             hash: Hash::default(),
             payload: Payload::Run { workflow },
             nonce: 0,
             signature: Signature::default(),
             propagated: false,
-            rec_id: 0,
         };
-
-        let sk = SecretKey::random(&mut StdRng::from_entropy());
-        tx.sign(&sk);
 
         assert!(tx.validate().is_err());
     }
@@ -378,12 +376,12 @@ mod tests {
     #[test]
     fn test_tx_validations_verifies_signature() {
         let tx = Transaction {
+            author: PublicKey::from_secret_key(&SecretKey::default()),
             hash: Hash::default(),
             payload: Payload::Empty,
             nonce: 0,
             signature: Signature::default(),
             propagated: false,
-            rec_id: 0,
         };
 
         assert!(tx.validate().is_err());

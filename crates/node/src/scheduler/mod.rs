@@ -8,7 +8,7 @@ use crate::vmm::{vm_server::TaskManager, VMId};
 use crate::workflow::{WorkflowEngine, WorkflowError};
 use async_trait::async_trait;
 use gevulot_node::types::transaction::Payload;
-use gevulot_node::types::{Signature, TaskKind, Transaction};
+use gevulot_node::types::{TaskKind, Transaction};
 use libsecp256k1::SecretKey;
 pub use program_manager::ProgramManager;
 use rand::RngCore;
@@ -294,31 +294,23 @@ impl TaskManager for Scheduler {
             );
 
             let nonce = rand::thread_rng().next_u64();
-            let mut tx = match running_task.task.kind {
-                TaskKind::Proof => Transaction {
-                    hash: Hash::default(),
-                    payload: Payload::Proof {
+            let tx = match running_task.task.kind {
+                TaskKind::Proof => Transaction::new(
+                    Payload::Proof {
                         parent: running_task.task.tx,
                         prover: program,
                         proof: result.data,
                     },
-                    nonce,
-                    signature: Signature::default(),
-                    propagated: false,
-                    rec_id: 0,
-                },
-                TaskKind::Verification => Transaction {
-                    hash: Hash::default(),
-                    payload: Payload::Verification {
+                    &self.node_key,
+                ),
+                TaskKind::Verification => Transaction::new(
+                    Payload::Verification {
                         parent: running_task.task.tx,
                         verifier: program,
                         verification: result.data,
                     },
-                    nonce,
-                    signature: Signature::default(),
-                    propagated: false,
-                    rec_id: 0,
-                },
+                    &self.node_key,
+                ),
                 TaskKind::PoW => {
                     todo!("proof of work tasks not implemented yet");
                 }
@@ -329,8 +321,6 @@ impl TaskManager for Scheduler {
                     );
                 }
             };
-
-            tx.sign(&self.node_key);
 
             let mut mempool = self.mempool.write().await;
             if let Err(err) = mempool.add(tx.clone()).await {
