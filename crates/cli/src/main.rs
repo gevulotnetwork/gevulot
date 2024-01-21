@@ -29,7 +29,7 @@ pub struct ArgConfiguration {
 
 #[derive(Subcommand, Debug)]
 enum ConfCommands {
-    /// Deploy prover and verifier.
+    /// Generate a private key file using --keyfile option.
     GenerateKey,
 
     /// Deploy prover and verifier.

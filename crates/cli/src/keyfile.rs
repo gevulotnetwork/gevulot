@@ -7,7 +7,14 @@ use std::path::PathBuf;
 pub fn create_key_file(file_path: &PathBuf) -> crate::BoxResult<()> {
     let key = SecretKey::random(&mut StdRng::from_entropy());
     let key_array = key.serialize();
-    Ok(fs::write(file_path, &key_array[..])?)
+    if !file_path.as_path().exists() {
+        Ok(fs::write(file_path, &key_array[..])?)
+    } else {
+        Err(Box::new(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            "Key file already exist. Can't erase it.",
+        )))
+    }
 }
 
 pub fn read_key_file(file_path: &PathBuf) -> crate::BoxResult<SecretKey> {
