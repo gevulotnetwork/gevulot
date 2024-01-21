@@ -4,6 +4,7 @@ exclude = [
 ]
 members = [
   "crates/node",
+  "crates/cli",
   "crates/shim",
   "crates/shim-ffi",
   "crates/tests/test-programs",

@@ -285,9 +285,9 @@ impl OnDisconnect for P2P {
 mod tests {
     use super::*;
     use eyre::Result;
-    use gevulot_node::types::{transaction::Payload, Hash, Transaction};
+    use gevulot_node::types::{transaction::Payload, Transaction};
     use libsecp256k1::SecretKey;
-    use rand::{rngs::StdRng, RngCore, SeedableRng};
+    use rand::{rngs::StdRng, SeedableRng};
     use tokio::sync::mpsc::{self, Sender};
     use tracing::level_filters::LevelFilter;
     use tracing_subscriber::EnvFilter;
@@ -484,16 +484,8 @@ mod tests {
 
     fn new_tx() -> Transaction {
         let rng = &mut StdRng::from_entropy();
-        let mut tx = Transaction {
-            hash: Hash::random(rng),
-            payload: Payload::Empty,
-            nonce: rng.next_u64(),
-            ..Default::default()
-        };
-
         let key = SecretKey::random(rng);
-        tx.sign(&key);
-        tx
+        Transaction::new(Payload::Empty, &key)
     }
 
     fn start_logger(default_level: LevelFilter) {
