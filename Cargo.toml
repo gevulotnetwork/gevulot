@@ -1,0 +1,13 @@
+[workspace]
+exclude = [
+  "prover"
+]
+members = [
+  "crates/node",
+  "crates/cli",
+  "crates/shim",
+  "crates/shim-ffi",
+  "crates/tests/test-programs",
+  "crates/tests/e2e-tests",
+]
+resolver = "2"

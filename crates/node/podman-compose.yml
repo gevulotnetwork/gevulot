@@ -1,0 +1,14 @@
+version: 3.7
+
+services:
+  database:
+    image: docker.io/library/postgres:16-alpine
+    restart: always
+    volumes:
+    - /tmp/gevulot/database:/var/lib/postgresql/data:Z
+    environment:
+    - POSTGRES_USER=gevulot
+    - POSTGRES_PASSWORD=gevulot
+    - POSTGRES_DB=gevulot
+    network_mode: host
+    hostname: 127.0.0.1
