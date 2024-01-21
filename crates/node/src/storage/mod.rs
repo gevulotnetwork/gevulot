@@ -1,4 +1,4 @@
-mod database;
+pub(crate) mod database;
 mod file;
 
 pub use database::postgres::Database;

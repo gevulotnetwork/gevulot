@@ -1,9 +1,11 @@
 use async_trait::async_trait;
 use bytes::Bytes;
 use eyre::Result;
+use libsecp256k1::PublicKey;
 use pea2pea::protocols::Writing;
 use std::collections::VecDeque;
 use std::sync::Arc;
+use thiserror::Error;
 use tokio::sync::RwLock;
 
 use crate::{
@@ -18,9 +20,22 @@ pub trait Storage: Send + Sync {
     async fn fill_deque(&self, deque: &mut VecDeque<Transaction>) -> Result<()>;
 }
 
+#[async_trait]
+pub trait AclWhitelist: Send + Sync {
+    async fn contains(&self, key: &PublicKey) -> Result<bool>;
+}
+
+#[allow(clippy::enum_variant_names)]
+#[derive(Error, Debug)]
+pub enum MempoolError {
+    #[error("permission denied")]
+    PermissionDenied,
+}
+
 #[derive(Clone)]
 pub struct Mempool {
     storage: Arc<dyn Storage>,
+    acl_whitelist: Arc<dyn AclWhitelist>,
     // TODO: This should be refactored to PubSub channel abstraction later on.
     tx_chan: Option<Arc<dyn networking::p2p::TxChannel>>,
     deque: VecDeque<Transaction>,
@@ -29,6 +44,7 @@ pub struct Mempool {
 impl Mempool {
     pub async fn new(
         storage: Arc<dyn Storage>,
+        acl_whitelist: Arc<dyn AclWhitelist>,
         tx_chan: Option<Arc<dyn networking::p2p::TxChannel>>,
     ) -> Result<Self> {
         let mut deque = VecDeque::new();
@@ -36,6 +52,7 @@ impl Mempool {
 
         Ok(Self {
             storage,
+            acl_whitelist,
             tx_chan,
             deque,
         })
@@ -53,6 +70,11 @@ impl Mempool {
     pub async fn add(&mut self, tx: Transaction) -> Result<()> {
         // First validate transaction.
         tx.validate()?;
+
+        // Secondly verify that author is whitelisted.
+        if !self.acl_whitelist.contains(&tx.author).await? {
+            return Err(MempoolError::PermissionDenied.into());
+        }
 
         let mut tx = tx;
         self.storage.set(&tx).await?;

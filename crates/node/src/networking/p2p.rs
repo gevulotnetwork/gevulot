@@ -177,8 +177,6 @@ mod tests {
 
     #[tokio::test]
     async fn test_two_peers() {
-        start_logger(LevelFilter::ERROR);
-
         let (tx1, mut rx1) = mpsc::channel(1);
         let (tx2, mut rx2) = mpsc::channel(1);
         let (sink1, sink2) = (

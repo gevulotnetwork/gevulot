@@ -1,6 +1,6 @@
 use std::{net::SocketAddr, path::PathBuf};
 
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand};
 
 #[derive(Debug, Args)]
 pub struct Config {
@@ -114,28 +114,25 @@ pub struct NodeKeyOptions {
     pub node_key_file: PathBuf,
 }
 
-#[derive(Clone, Debug, ValueEnum)]
-pub enum ACLTarget {
-    All,
-    Txs,
-    P2p,
-}
-
-#[derive(Debug, Args)]
-pub struct PeerACLOptions {
-    target: ACLTarget,
-}
-
 #[derive(Debug, Subcommand)]
 pub enum PeerCommand {
     Whitelist {
-        #[command(flatten)]
-        whitelist: PeerACLOptions,
+        #[arg(
+            long,
+            long_help = "Database URL",
+            env = "GEVULOT_DB_URL",
+            default_value = "postgres://gevulot:gevulot@localhost/gevulot"
+        )]
+        db_url: String,
     },
-
     Deny {
-        #[command(flatten)]
-        deny: PeerACLOptions,
+        #[arg(
+            long,
+            long_help = "Database URL",
+            env = "GEVULOT_DB_URL",
+            default_value = "postgres://gevulot:gevulot@localhost/gevulot"
+        )]
+        db_url: String,
     },
 }
 
