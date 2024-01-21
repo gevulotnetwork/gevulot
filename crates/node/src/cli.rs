@@ -144,6 +144,18 @@ pub enum GenerateCommand {
     },
 }
 
+#[derive(Debug, Subcommand)]
+pub enum ShowCommand {
+    PublicKey {
+        #[arg(
+        long,
+        long_help = "Key filename",
+        default_value_os_t = PathBuf::from("/var/lib/gevulot/node.key"),
+        )]
+        key_file: PathBuf,
+    },
+}
+
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Subcommand)]
 pub enum Command {
@@ -176,6 +188,12 @@ pub enum Command {
     Run {
         #[command(flatten)]
         config: Config,
+    },
+
+    /// Show information.
+    Show {
+        #[command(subcommand)]
+        op: ShowCommand,
     },
 }
 

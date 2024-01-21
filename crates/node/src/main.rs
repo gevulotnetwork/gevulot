@@ -13,7 +13,7 @@ use std::{
 use asset_manager::AssetManager;
 use async_trait::async_trait;
 use clap::Parser;
-use cli::{Cli, Command, Config, GenerateCommand, NodeKeyOptions, PeerCommand};
+use cli::{Cli, Command, Config, GenerateCommand, NodeKeyOptions, PeerCommand, ShowCommand};
 use eyre::Result;
 use gevulot_node::types;
 use libsecp256k1::{PublicKey, SecretKey};
@@ -88,6 +88,15 @@ async fn main() -> Result<()> {
             }
         },
         Command::Run { config } => run(Arc::new(config)).await,
+        Command::Show { op } => match op {
+            ShowCommand::PublicKey { key_file } => {
+                let bs = std::fs::read(key_file)?;
+                let key = SecretKey::parse(bs.as_slice().try_into()?)?;
+                let public_key = PublicKey::from_secret_key(&key);
+                println!("{}", hex::encode(public_key.serialize()));
+                Ok(())
+            }
+        },
     }
 }
 
