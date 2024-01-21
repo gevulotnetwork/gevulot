@@ -269,7 +269,7 @@ impl Transaction {
             propagated: false,
         };
 
-        tx.sign(&signing_key);
+        tx.sign(signing_key);
 
         tx
     }

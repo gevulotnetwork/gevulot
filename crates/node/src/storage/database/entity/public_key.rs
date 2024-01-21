@@ -55,7 +55,7 @@ impl TryFrom<&str> for PublicKey {
 
 impl PublicKey {
     pub fn from_secret_key(secret_key: &libsecp256k1::SecretKey) -> PublicKey {
-        PublicKey(libsecp256k1::PublicKey::from_secret_key(&secret_key))
+        PublicKey(libsecp256k1::PublicKey::from_secret_key(secret_key))
     }
 }
 

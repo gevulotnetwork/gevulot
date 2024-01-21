@@ -444,53 +444,46 @@ mod tests {
 
     fn transaction_for_workflow_steps(steps: Vec<WorkflowStep>) -> Transaction {
         let key = SecretKey::random(&mut StdRng::from_entropy());
-        let tx = Transaction::new(
+        Transaction::new(
             Payload::Run {
                 workflow: Workflow { steps },
             },
             &key,
-        );
-        tx
+        )
     }
 
     fn transaction_for_proof(parent: &Hash, program: &Hash) -> Transaction {
         let key = SecretKey::random(&mut StdRng::from_entropy());
-        let tx = Transaction::new(
+        Transaction::new(
             Payload::Proof {
                 parent: *parent,
                 prover: *program,
                 proof: "proof.".into(),
             },
             &key,
-        );
-
-        tx
+        )
     }
 
     fn transaction_for_proofkey(parent: &Hash) -> Transaction {
         let key = SecretKey::random(&mut StdRng::from_entropy());
-        let tx = Transaction::new(
+        Transaction::new(
             Payload::ProofKey {
                 parent: *parent,
                 key: "key.".into(),
             },
             &key,
-        );
-
-        tx
+        )
     }
 
     fn transaction_for_verification(parent: &Hash, program: &Hash) -> Transaction {
         let key = SecretKey::random(&mut StdRng::from_entropy());
-        let tx = Transaction::new(
+        Transaction::new(
             Payload::Verification {
                 parent: *parent,
                 verifier: *program,
                 verification: b"verification.".to_vec(),
             },
             &key,
-        );
-
-        tx
+        )
     }
 }
