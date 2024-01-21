@@ -123,15 +123,12 @@ pub async fn run_exec_command(
         .map(|t| t.try_into())
         .collect::<Result<Vec<_>, _>>()?;
 
-    let mut tx = Transaction {
-        payload: Payload::Run {
+    let tx = Transaction::new(
+        Payload::Run {
             workflow: Workflow { steps },
         },
-        // NOTE: In the devnet `nonce` is just a placeholder for the future.
-        nonce: 42,
-        ..Default::default()
-    };
-    tx.sign(&key);
+        &key,
+    );
 
     client.send_transaction(&tx).await?;
     Ok(tx.hash.to_string())
@@ -204,18 +201,14 @@ pub async fn run_deploy_command(
     let prover_hash = prover_data.hash.to_string();
     let verifier_hash = verifier_data.hash.to_string();
 
-    let mut tx = Transaction {
-        payload: Payload::Deploy {
+    let tx = Transaction::new(
+        Payload::Deploy {
             name,
             prover: prover_data,
             verifier: verifier_data,
         },
-        nonce: 42,
-        ..Default::default()
-    };
-
-    // Transaction hash gets computed during this as well.
-    tx.sign(&key);
+        &key,
+    );
 
     client
         .send_transaction(&tx)

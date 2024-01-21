@@ -328,7 +328,7 @@ mod tests {
 
     use gevulot_node::types::{
         transaction::{Payload, ProgramData, Workflow, WorkflowStep},
-        Hash, Signature, TaskKind, Transaction,
+        Hash, TaskKind, Transaction,
     };
     use libsecp256k1::SecretKey;
     use rand::{rngs::StdRng, SeedableRng};
@@ -444,70 +444,46 @@ mod tests {
 
     fn transaction_for_workflow_steps(steps: Vec<WorkflowStep>) -> Transaction {
         let key = SecretKey::random(&mut StdRng::from_entropy());
-        let mut tx = Transaction {
-            hash: Hash::default(),
-            payload: Payload::Run {
+        Transaction::new(
+            Payload::Run {
                 workflow: Workflow { steps },
             },
-            nonce: 1,
-            signature: Signature::default(),
-            propagated: false,
-        };
-
-        tx.sign(&key);
-        tx
+            &key,
+        )
     }
 
     fn transaction_for_proof(parent: &Hash, program: &Hash) -> Transaction {
         let key = SecretKey::random(&mut StdRng::from_entropy());
-        let mut tx = Transaction {
-            hash: Hash::default(),
-            payload: Payload::Proof {
+        Transaction::new(
+            Payload::Proof {
                 parent: *parent,
                 prover: *program,
                 proof: "proof.".into(),
             },
-            nonce: 1,
-            signature: Signature::default(),
-            propagated: false,
-        };
-
-        tx.sign(&key);
-        tx
+            &key,
+        )
     }
 
     fn transaction_for_proofkey(parent: &Hash) -> Transaction {
         let key = SecretKey::random(&mut StdRng::from_entropy());
-        let mut tx = Transaction {
-            hash: Hash::default(),
-            payload: Payload::ProofKey {
+        Transaction::new(
+            Payload::ProofKey {
                 parent: *parent,
                 key: "key.".into(),
             },
-            nonce: 1,
-            signature: Signature::default(),
-            propagated: false,
-        };
-
-        tx.sign(&key);
-        tx
+            &key,
+        )
     }
 
     fn transaction_for_verification(parent: &Hash, program: &Hash) -> Transaction {
         let key = SecretKey::random(&mut StdRng::from_entropy());
-        let mut tx = Transaction {
-            hash: Hash::default(),
-            payload: Payload::Verification {
+        Transaction::new(
+            Payload::Verification {
                 parent: *parent,
                 verifier: *program,
                 verification: b"verification.".to_vec(),
             },
-            nonce: 1,
-            signature: Signature::default(),
-            propagated: false,
-        };
-
-        tx.sign(&key);
-        tx
+            &key,
+        )
     }
 }

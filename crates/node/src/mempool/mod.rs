@@ -51,6 +51,9 @@ impl Mempool {
     }
 
     pub async fn add(&mut self, tx: Transaction) -> Result<()> {
+        // First validate transaction.
+        tx.validate()?;
+
         let mut tx = tx;
         self.storage.set(&tx).await?;
 

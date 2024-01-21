@@ -517,6 +517,8 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
+    use libsecp256k1::{PublicKey, SecretKey};
+
     use crate::types::{
         transaction::{Payload, ProgramMetadata},
         Signature, Transaction,
@@ -532,6 +534,7 @@ mod tests {
             .expect("failed to connect to db");
 
         let tx = Transaction {
+            author: PublicKey::from_secret_key(&SecretKey::default()),
             hash: Hash::default(),
             payload: Payload::Deploy {
                 name: "test deployment".to_string(),

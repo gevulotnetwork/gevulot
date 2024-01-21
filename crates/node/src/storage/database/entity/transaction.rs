@@ -1,3 +1,4 @@
+use crate::storage::database::entity;
 use crate::types::{self, transaction, Hash, Signature};
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +20,7 @@ pub enum Kind {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, sqlx::FromRow)]
 pub struct Transaction {
+    pub author: entity::PublicKey,
     pub hash: Hash,
     pub kind: Kind,
     pub nonce: sqlx::types::Decimal,
@@ -42,6 +44,7 @@ impl From<&types::Transaction> for Transaction {
         };
 
         Transaction {
+            author: entity::PublicKey(value.author),
             hash: value.hash,
             kind,
             nonce: value.nonce.into(),
@@ -54,6 +57,7 @@ impl From<&types::Transaction> for Transaction {
 impl From<Transaction> for types::Transaction {
     fn from(value: Transaction) -> types::Transaction {
         types::Transaction {
+            author: value.author.into(),
             hash: value.hash,
             // This field is complemented separately.
             payload: transaction::Payload::Empty,
