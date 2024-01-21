@@ -12,7 +12,7 @@ Currently Gevulot supports nVidia 3090 and 4090 GPUs.
 
 - CPU: 64+ cores
 - RAM: 512GB
-- Disk: xx TB NVMe
+- Disk: 1 TB NVMe
 
 These requirements are formed by best estimate based on earlier documentation of production requirements for Polygon Hermez and Aztec provers, and empirical experience from working with Taiko prover. 
 

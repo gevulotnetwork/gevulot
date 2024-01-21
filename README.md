@@ -8,7 +8,7 @@ The current status of the project is pre-alpha.
 
 ## Gevulot Node
 
-Gevulot node is written in Rust and packaged into Podman container. It uses QEMU-KVM as its hypervisor to run unikernel programs.
+Gevulot node is written in Rust and packaged into a container. It uses QEMU-KVM as its hypervisor to run unikernel programs.
 
 ### Building container
 
@@ -59,9 +59,9 @@ ExposeHostPort=5432
 ##### Initialization
 
 `sqlx-cli` can be run from `crates/node` directory as follows:
-- Create database:
+- **Create database**:
   - `cargo sqlx database create --database-url postgres://gevulot:gevulot@localhost/gevulot`
-- Run DB migrations:
+- **Run DB migrations**:
   - `cargo sqlx migrate run --database-url postgres://gevulot:gevulot@localhost/gevulot`
 
 ##### Refresh SQLX cache
