@@ -10,11 +10,11 @@ pub struct ArgConfiguration {
     /// RPC url of the Gevulot node
     #[clap(
         short,
-        long,
+        long = "jsonurl",
         default_value = "http://localhost:9944",
         value_name = "URL"
     )]
-    jsonurl: String,
+    json_url: String,
     /// Private key file path to sign Tx.
     #[clap(
         short,
@@ -99,7 +99,7 @@ async fn main() {
 
     let args = ArgConfiguration::parse();
 
-    let client = RpcClient::new(args.jsonurl);
+    let client = RpcClient::new(args.json_url);
 
     match args.command {
         ConfCommands::GenerateKey => match gevulot_cli::keyfile::create_key_file(&args.keyfile) {
