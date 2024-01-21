@@ -369,19 +369,38 @@ impl Database {
         Ok(txs)
     }
 
+    pub async fn get_unexecuted_transactions(&self) -> Result<Vec<types::Transaction>> {
+        let mut db_tx = self.pool.begin().await?;
+        let refs: Vec<Hash> = sqlx::query("SELECT hash FROM transaction WHERE executed IS false")
+            .map(|row: sqlx::postgres::PgRow| row.get(0))
+            .fetch_all(&mut *db_tx)
+            .await?;
+
+        let mut txs = Vec::with_capacity(refs.len());
+        for tx_hash in refs {
+            let tx = self.find_transaction(&tx_hash).await?;
+            if let Some(tx) = tx {
+                txs.push(tx);
+            }
+        }
+
+        Ok(txs)
+    }
+
     pub async fn add_transaction(&self, tx: &types::Transaction) -> Result<()> {
         let entity = entity::Transaction::from(tx);
 
         let mut db_tx = self.pool.begin().await?;
 
         sqlx::query(
-            "INSERT INTO transaction ( author, hash, kind, nonce, signature, propagated ) VALUES ( $1, $2, $3, $4, $5, $6 ) ON CONFLICT (hash) DO UPDATE SET propagated = $6")
+            "INSERT INTO transaction ( author, hash, kind, nonce, signature, propagated, executed ) VALUES ( $1, $2, $3, $4, $5, $6, $7 ) ON CONFLICT (hash) DO UPDATE SET propagated = $6, executed = $7")
             .bind(entity.author)
             .bind(entity.hash)
             .bind(entity.kind)
             .bind(entity.nonce)
             .bind(entity.signature)
             .bind(entity.propagated)
+            .bind(entity.executed)
         .execute(&mut *db_tx)
         .await?;
 
@@ -499,6 +518,14 @@ impl Database {
         db_tx.commit().await.map_err(|e| e.into())
     }
 
+    pub async fn mark_tx_executed(&self, tx_hash: &Hash) -> Result<()> {
+        sqlx::query("UPDATE transaction SET executed = true WHERE id = $1")
+            .bind(tx_hash)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn acl_whitelist_has(&self, key: &entity::PublicKey) -> Result<bool> {
         let res: Option<i32> = sqlx::query("SELECT 1 FROM acl_whitelist WHERE key = $1")
             .bind(key)
@@ -593,6 +620,7 @@ mod tests {
             nonce: 64,
             signature: Signature::default(),
             propagated: false,
+            executed: false,
         };
 
         database
