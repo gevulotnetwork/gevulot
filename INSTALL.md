@@ -42,7 +42,7 @@ blacklist nvidia-drm
 
 In Gevulot this is needed for direct access to GPU.
 
-**/etc/modules-load.d/vfio.conf
+**/etc/modules-load.d/vfio.conf**
 ```
 kvmgt
 vfio-pci
@@ -52,7 +52,7 @@ vfio-mdev
 
 [VSOCK](https://nanovms.com/dev/tutorials/what-is-vsock-why-use-with-unikernels) provides high speed communication channel between Gevulot node and program running in VM.
 
-**/etc/modules-load.d/vsock.conf
+**/etc/modules-load.d/vsock.conf**
 ```
 vsock_vhost
 ```
@@ -63,7 +63,6 @@ Depending on specific construction of the GPU device card, there can be multiple
 
 In order to make PCI passthrough work with virtual machines, all devices present in PCI bus must be bound with VFIO driver.
 
-**TODO: check following commands & configuration file**
 Find out the device IDs of the GPU:
 ```
 lspci -nnD | grep -i nvidia
