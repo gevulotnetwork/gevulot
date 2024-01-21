@@ -79,12 +79,12 @@ async fn main() -> Result<()> {
             PeerCommand::Whitelist { db_url } => {
                 let db = storage::Database::new(&db_url).await?;
                 let key = entity::PublicKey::try_from(peer.as_str())?;
-                db.acl_whitelist(&key).await.map_err(|e| e.into())
+                db.acl_whitelist(&key).await
             }
             PeerCommand::Deny { db_url } => {
                 let db = storage::Database::new(&db_url).await?;
                 let key = entity::PublicKey::try_from(peer.as_str())?;
-                db.acl_deny(&key).await.map_err(|e| e.into())
+                db.acl_deny(&key).await
             }
         },
         Command::Run { config } => run(Arc::new(config)).await,
@@ -180,7 +180,7 @@ impl networking::p2p::TxHandler for P2PTxHandler {
 #[async_trait::async_trait]
 impl mempool::AclWhitelist for Database {
     async fn contains(&self, key: &PublicKey) -> Result<bool> {
-        let key = entity::PublicKey(key.clone());
+        let key = entity::PublicKey(*key);
         self.acl_whitelist_has(&key).await
     }
 }
