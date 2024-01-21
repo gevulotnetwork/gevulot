@@ -13,10 +13,10 @@ use std::{
 use asset_manager::AssetManager;
 use async_trait::async_trait;
 use clap::Parser;
-use cli::{Cli, Command, Config, GenerateCommand, NodeKeyOptions, PeerCommand};
+use cli::{Cli, Command, Config, GenerateCommand, NodeKeyOptions, PeerCommand, ShowCommand};
 use eyre::Result;
 use gevulot_node::types;
-use libsecp256k1::SecretKey;
+use libsecp256k1::{PublicKey, SecretKey};
 use pea2pea::Pea2Pea;
 use rand::{rngs::StdRng, SeedableRng};
 use sqlx::postgres::PgPoolOptions;
@@ -38,7 +38,7 @@ mod vmm;
 mod workflow;
 
 use mempool::Mempool;
-use storage::Database;
+use storage::{database::entity, Database};
 
 fn start_logger(default_level: LevelFilter) {
     let filter = match EnvFilter::try_from_default_env() {
@@ -76,14 +76,27 @@ async fn main() -> Result<()> {
             sqlx::migrate!().run(&pool).await.map_err(|e| e.into())
         }
         Command::Peer { peer, op } => match op {
-            PeerCommand::Whitelist { whitelist } => {
-                todo!("implement peer whitelisting");
+            PeerCommand::Whitelist { db_url } => {
+                let db = storage::Database::new(&db_url).await?;
+                let key = entity::PublicKey::try_from(peer.as_str())?;
+                db.acl_whitelist(&key).await
             }
-            PeerCommand::Deny { deny } => {
-                todo!("implement peer denying");
+            PeerCommand::Deny { db_url } => {
+                let db = storage::Database::new(&db_url).await?;
+                let key = entity::PublicKey::try_from(peer.as_str())?;
+                db.acl_deny(&key).await
             }
         },
         Command::Run { config } => run(Arc::new(config)).await,
+        Command::Show { op } => match op {
+            ShowCommand::PublicKey { key_file } => {
+                let bs = std::fs::read(key_file)?;
+                let key = SecretKey::parse(bs.as_slice().try_into()?)?;
+                let public_key = PublicKey::from_secret_key(&key);
+                println!("{}", hex::encode(public_key.serialize()));
+                Ok(())
+            }
+        },
     }
 }
 
@@ -140,22 +153,20 @@ impl workflow::TransactionStore for storage::Database {
     }
 }
 
-struct AuthenticatingTxHandler {
+struct P2PTxHandler {
     mempool: Arc<RwLock<Mempool>>,
     database: Arc<Database>,
 }
 
-impl AuthenticatingTxHandler {
+impl P2PTxHandler {
     pub fn new(mempool: Arc<RwLock<Mempool>>, database: Arc<Database>) -> Self {
         Self { mempool, database }
     }
 }
 
 #[async_trait::async_trait]
-impl networking::p2p::TxHandler for AuthenticatingTxHandler {
+impl networking::p2p::TxHandler for P2PTxHandler {
     async fn recv_tx(&self, tx: Transaction) -> Result<()> {
-        // TODO: Authenticate tx by signature.
-
         // The transaction was received from P2P network so we can consider it
         // propagated at this point.
         let mut tx = tx;
@@ -163,6 +174,14 @@ impl networking::p2p::TxHandler for AuthenticatingTxHandler {
 
         // Submit the tx to mempool.
         self.mempool.write().await.add(tx).await
+    }
+}
+
+#[async_trait::async_trait]
+impl mempool::AclWhitelist for Database {
+    async fn contains(&self, key: &PublicKey) -> Result<bool> {
+        let key = entity::PublicKey(*key);
+        self.acl_whitelist_has(&key).await
     }
 }
 
@@ -180,10 +199,10 @@ async fn run(config: Arc<Config>) -> Result<()> {
     );
 
     let mempool = Arc::new(RwLock::new(
-        Mempool::new(database.clone(), Some(p2p.clone())).await?,
+        Mempool::new(database.clone(), database.clone(), Some(p2p.clone())).await?,
     ));
 
-    p2p.register_tx_handler(Arc::new(AuthenticatingTxHandler::new(
+    p2p.register_tx_handler(Arc::new(P2PTxHandler::new(
         mempool.clone(),
         database.clone(),
     )))

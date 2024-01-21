@@ -375,7 +375,8 @@ impl Database {
         let mut db_tx = self.pool.begin().await?;
 
         sqlx::query(
-            "INSERT INTO transaction ( hash, kind, nonce, signature, propagated ) VALUES ( $1, $2, $3, $4, $5 ) ON CONFLICT (hash) DO UPDATE SET propagated = $5")
+            "INSERT INTO transaction ( author, hash, kind, nonce, signature, propagated ) VALUES ( $1, $2, $3, $4, $5, $6 ) ON CONFLICT (hash) DO UPDATE SET propagated = $6")
+            .bind(entity.author)
             .bind(entity.hash)
             .bind(entity.kind)
             .bind(entity.nonce)
@@ -496,6 +497,32 @@ impl Database {
         }
 
         db_tx.commit().await.map_err(|e| e.into())
+    }
+
+    pub async fn acl_whitelist_has(&self, key: &entity::PublicKey) -> Result<bool> {
+        let res: Option<i32> = sqlx::query("SELECT 1 FROM acl_whitelist WHERE key = $1")
+            .bind(key)
+            .map(|row: sqlx::postgres::PgRow| row.get(0))
+            .fetch_optional(&self.pool)
+            .await?;
+
+        Ok(res.is_some())
+    }
+
+    pub async fn acl_whitelist(&self, key: &entity::PublicKey) -> Result<()> {
+        sqlx::query("INSERT INTO acl_whitelist ( key ) VALUES ( $1 ) ON CONFLICT (key) DO NOTHING")
+            .bind(key)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn acl_deny(&self, key: &entity::PublicKey) -> Result<()> {
+        sqlx::query("DELETE FROM acl_whitelist WHERE key = $1")
+            .bind(key)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
     }
 
     // Delete is mainly for test cases.

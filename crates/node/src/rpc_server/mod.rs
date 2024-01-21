@@ -73,8 +73,6 @@ impl RpcServer {
 async fn send_transaction(params: Params<'static>, ctx: Arc<Context>) -> RpcResponse<()> {
     tracing::info!("JSON-RPC: send_transaction()");
 
-    dbg!(&params);
-
     // Real logic
     let tx: Transaction = match params.one() {
         Ok(tx) => tx,
@@ -138,9 +136,20 @@ mod tests {
         core::{client::ClientT, params::ArrayParams},
         http_client::HttpClientBuilder,
     };
+    use libsecp256k1::{PublicKey, SecretKey};
     use tracing_subscriber::{filter::LevelFilter, fmt::format::FmtSpan, EnvFilter};
 
+    use crate::mempool;
+
     use super::*;
+
+    struct AlwaysGrantAclWhitelist;
+    #[async_trait::async_trait]
+    impl mempool::AclWhitelist for AlwaysGrantAclWhitelist {
+        async fn contains(&self, key: &PublicKey) -> Result<bool> {
+            Ok(true)
+        }
+    }
 
     #[ignore]
     #[tokio::test]
@@ -153,12 +162,15 @@ mod tests {
             .build(url)
             .expect("http client");
 
-        let tx = Transaction::default();
+        let key = SecretKey::default();
+        let mut tx = Transaction::default();
+        tx.sign(&key);
+
         let mut params = ArrayParams::new();
         params.insert(&tx).expect("rpc params");
 
         let resp = rpc_client
-            .request::<u32, ArrayParams>("sendTransaction", params)
+            .request::<RpcResponse<()>, ArrayParams>("sendTransaction", params)
             .await
             .expect("rpc request");
 
@@ -196,7 +208,11 @@ mod tests {
         });
 
         let db = Arc::new(Database::new(&cfg.db_url).await.unwrap());
-        let mempool = Arc::new(RwLock::new(Mempool::new(db.clone(), None).await.unwrap()));
+        let mempool = Arc::new(RwLock::new(
+            Mempool::new(db.clone(), Arc::new(AlwaysGrantAclWhitelist {}), None)
+                .await
+                .unwrap(),
+        ));
         let asset_manager = Arc::new(AssetManager::new(cfg.clone(), db.clone()));
 
         RpcServer::run(cfg.clone(), db.clone(), mempool, asset_manager)
