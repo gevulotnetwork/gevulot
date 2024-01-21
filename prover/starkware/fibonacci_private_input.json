@@ -1,7 +1,0 @@
-{
-    "trace_path": "/starkware/fibonacci_trace.json",
-    "memory_path": "/starkware/fibonacci_memory.json",
-    "pedersen": [],
-    "range_check": [],
-    "ecdsa": []
-}
