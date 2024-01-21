@@ -1118,7 +1118,6 @@ dependencies = [
  "home",
  "jsonrpsee",
  "libsecp256k1",
- "log",
  "num-bigint",
  "num-traits",
  "parking_lot",
