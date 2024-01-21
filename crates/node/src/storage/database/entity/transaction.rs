@@ -26,6 +26,7 @@ pub struct Transaction {
     pub nonce: sqlx::types::Decimal,
     pub signature: Signature,
     pub propagated: bool,
+    pub executed: bool,
 }
 
 impl From<&types::Transaction> for Transaction {
@@ -50,6 +51,7 @@ impl From<&types::Transaction> for Transaction {
             nonce: value.nonce.into(),
             signature: value.signature,
             propagated: value.propagated,
+            executed: value.executed,
         }
     }
 }
@@ -65,6 +67,7 @@ impl From<Transaction> for types::Transaction {
                 .expect("invalid nonce in db"),
             signature: value.signature,
             propagated: value.propagated,
+            executed: value.executed,
         }
     }
 }

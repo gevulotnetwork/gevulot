@@ -17,7 +17,8 @@ CREATE TABLE transaction (
     kind transaction_kind NOT NULL,
     nonce NUMERIC NOT NULL,
     signature VARCHAR(128) NOT NULL,
-    propagated BOOLEAN
+    propagated BOOLEAN,
+    executed BOOLEAN
 );
 
 CREATE TABLE deploy (

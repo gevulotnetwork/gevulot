@@ -241,6 +241,8 @@ pub struct Transaction {
     pub signature: Signature,
     #[serde(skip_serializing, skip_deserializing)]
     pub propagated: bool,
+    #[serde(skip_serializing, skip_deserializing)]
+    pub executed: bool,
 }
 
 impl Default for Transaction {
@@ -252,6 +254,7 @@ impl Default for Transaction {
             nonce: 0,
             signature: Signature::default(),
             propagated: false,
+            executed: false,
         }
     }
 }
@@ -267,6 +270,7 @@ impl Transaction {
             nonce: 0,
             signature: Signature::default(),
             propagated: false,
+            executed: false,
         };
 
         tx.sign(signing_key);
@@ -368,6 +372,7 @@ mod tests {
             nonce: 0,
             signature: Signature::default(),
             propagated: false,
+            executed: false,
         };
 
         assert!(tx.validate().is_err());
@@ -382,6 +387,7 @@ mod tests {
             nonce: 0,
             signature: Signature::default(),
             propagated: false,
+            executed: false,
         };
 
         assert!(tx.validate().is_err());

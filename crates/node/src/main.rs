@@ -138,7 +138,7 @@ impl mempool::Storage for storage::Database {
     }
 
     async fn fill_deque(&self, deque: &mut std::collections::VecDeque<Transaction>) -> Result<()> {
-        for t in self.get_transactions().await? {
+        for t in self.get_unexecuted_transactions().await? {
             deque.push_back(t);
         }
 
