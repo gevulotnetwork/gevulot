@@ -79,6 +79,7 @@ CREATE TABLE proof (
     parent VARCHAR(64) NOT NULL,
     prover VARCHAR(64),
     proof BYTEA NOT NULL,
+    UNIQUE(parent, prover),
     CONSTRAINT fk_transaction1
         FOREIGN KEY (tx)
             REFERENCES transaction (hash) ON DELETE CASCADE,

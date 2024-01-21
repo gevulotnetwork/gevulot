@@ -156,6 +156,17 @@ pub enum Command {
         target: GenerateCommand,
     },
 
+    /// Migrate DB.
+    Migrate {
+        #[arg(
+            long,
+            long_help = "Database URL",
+            env = "GEVULOT_DB_URL",
+            default_value = "postgres://gevulot:gevulot@localhost/gevulot"
+        )]
+        db_url: String,
+    },
+
     /// Peer related commands.
     Peer {
         peer: String,
