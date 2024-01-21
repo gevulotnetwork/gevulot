@@ -144,8 +144,8 @@ pub async fn run_deploy_command(
     name: String,
     prover: String,
     verifier: String,
-    proverimgurl: Option<String>,
-    verifierimgurl: Option<String>,
+    prover_img_url: Option<String>,
+    verifier_img_url: Option<String>,
     listen_addr: SocketAddr,
 ) -> BoxResult<(String, String, String)> {
     let key = keyfile::read_key_file(&keyfile).map_err(|err| {
@@ -179,7 +179,8 @@ pub async fn run_deploy_command(
     };
 
     //create tx data
-    let Ok(prover_data) = create_tx_data(exist_prover_path, prover, proverimgurl, &served_file_map)
+    let Ok(prover_data) =
+        create_tx_data(exist_prover_path, prover, prover_img_url, &served_file_map)
     else {
         return Err(
             "Wrong specified prover image file path. File can't be read."
@@ -190,7 +191,7 @@ pub async fn run_deploy_command(
     let Ok(verifier_data) = create_tx_data(
         exist_verifier_path,
         verifier,
-        verifierimgurl,
+        verifier_img_url,
         &served_file_map,
     ) else {
         return Err(
