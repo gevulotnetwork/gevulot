@@ -45,9 +45,11 @@ pub struct P2P {
     noise_states: Arc<RwLock<HashMap<SocketAddr, noise::State>>>,
     tx_handler: Arc<tokio::sync::RwLock<Arc<dyn TxHandler>>>,
     psk: Vec<u8>,
-    peer_list: Arc<RwLock<BTreeSet<SocketAddr>>>,
+    peer_list: Arc<tokio::sync::RwLock<BTreeSet<SocketAddr>>>,
     //Map to connection local addr notified on_disconnect and the peer connection addr (peer_list).
-    peer_addr_mapping: Arc<RwLock<HashMap<SocketAddr, SocketAddr>>>,
+    peer_addr_mapping: Arc<tokio::sync::RwLock<HashMap<SocketAddr, SocketAddr>>>,
+    pub peer_http_port_list: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>>,
+    http_port: Option<u16>,
 }
 
 impl Pea2Pea for P2P {
@@ -57,7 +59,12 @@ impl Pea2Pea for P2P {
 }
 
 impl P2P {
-    pub async fn new(name: &str, listen_addr: SocketAddr, psk_passphrase: &str) -> Self {
+    pub async fn new(
+        name: &str,
+        listen_addr: SocketAddr,
+        psk_passphrase: &str,
+        http_port: Option<u16>,
+    ) -> Self {
         let config = Config {
             name: Some(name.into()),
             listener_ip: Some(listen_addr.ip()),
@@ -79,6 +86,8 @@ impl P2P {
             psk: psk.to_vec(),
             peer_list: Default::default(),
             peer_addr_mapping: Default::default(),
+            peer_http_port_list: Default::default(),
+            http_port,
         };
 
         // Enable node functionalities.
@@ -125,24 +134,24 @@ impl Handshake for P2P {
         self.noise_states.write().insert(conn.addr(), noise_state);
 
         //exchange peer list
-
         let node_conn_side = !conn.side();
         let stream = self.borrow_stream(&mut conn);
 
         let local_bind_addr = self.node.listening_addr().unwrap();
         let peer_list_bytes: Vec<u8> = {
-            let peer_list: &mut BTreeSet<SocketAddr> = &mut self.peer_list.write();
-            peer_list.insert(local_bind_addr); //add it if not present.
-            bincode::serialize(peer_list).map_err(|err| {
+            let mut peer_list = self.peer_list.write().await;
+            (*peer_list).insert(local_bind_addr); //add it if not present.
+            bincode::serialize(&*peer_list).map_err(|err| {
                 std::io::Error::new(std::io::ErrorKind::Other, format!("serialize error:{err}"))
             })?
         };
 
-        let (distant_peer_list, distant_listening_addr) = match node_conn_side {
+        let (distant_peer_list, distant_listening_addr, distant_http_port) = match node_conn_side {
             ConnectionSide::Initiator => {
-                //on_disconnect doesn't notify with the bind port but the connect port.
-                //can't be use to open a connection.
-                //So the connecting node notify it's bind address.
+                stream.write_u16(self.http_port.unwrap_or(0)).await?; //0 mean none.
+                                                                      //on_disconnect doesn't notify with the bind port but the connect port.
+                                                                      //can't be use to open a connection.
+                                                                      //So the connecting node notify it's bind address.
                 let bind_addr_bytes = bincode::serialize(&self.node.listening_addr().unwrap())
                     .map_err(|err| {
                         std::io::Error::new(
@@ -157,6 +166,7 @@ impl Handshake for P2P {
                 stream.write_u32(peer_list_bytes.len() as u32).await?;
                 stream.write_all(&peer_list_bytes).await?;
 
+                let distant_http_port = stream.read_u16().await?;
                 // receive the peer list
                 let buffer_len = stream.read_u32().await? as usize;
                 //TODO validate buffer lengh
@@ -172,11 +182,17 @@ impl Handshake for P2P {
 
                 self.peer_addr_mapping
                     .write()
+                    .await
                     .insert(stream.peer_addr().unwrap(), stream.peer_addr().unwrap());
 
-                (distant_peer_list, stream.peer_addr().unwrap())
+                (
+                    distant_peer_list,
+                    stream.peer_addr().unwrap(),
+                    distant_http_port,
+                )
             }
             ConnectionSide::Responder => {
+                let distant_http_port = stream.read_u16().await?;
                 //receive the connecting node addr
                 let buffer_len = stream.read_u32().await? as usize;
                 let mut buffer = vec![0; buffer_len];
@@ -189,9 +205,10 @@ impl Handshake for P2P {
                         )
                     })?;
                 {
-                    self.peer_list.write().insert(distant_listening_addr);
+                    self.peer_list.write().await.insert(distant_listening_addr);
                     self.peer_addr_mapping
                         .write()
+                        .await
                         .insert(stream.peer_addr().unwrap(), distant_listening_addr);
                 }
 
@@ -207,23 +224,24 @@ impl Handshake for P2P {
                         )
                     })?;
 
+                stream.write_u16(self.http_port.unwrap_or(0)).await?;
                 //send peer list
                 stream.write_u32(peer_list_bytes.len() as u32).await?;
                 stream.write_all(&peer_list_bytes).await?;
 
-                (distant_peer_list, distant_listening_addr)
+                (distant_peer_list, distant_listening_addr, distant_http_port)
             }
         };
 
         //do peer comparition
         let mut local_diff = {
-            let local_peer_list: &mut BTreeSet<SocketAddr> = &mut self.peer_list.write();
+            let mut local_peer_list = self.peer_list.write().await;
             let local_diff: BTreeSet<SocketAddr> = distant_peer_list
-                .difference(local_peer_list)
+                .difference(&*local_peer_list)
                 .cloned()
                 .collect();
 
-            local_peer_list.append(&mut local_diff.iter().cloned().collect());
+            (*local_peer_list).append(&mut local_diff.iter().cloned().collect());
             local_diff
         };
         local_diff.remove(&local_bind_addr);
@@ -235,6 +253,11 @@ impl Handshake for P2P {
             //already logged and mostly because there's double connection between 2 peers.
             let _ = node.connect(addr).await;
         }
+
+        self.peer_http_port_list.write().await.insert(
+            distant_listening_addr,
+            (distant_http_port != 0).then_some(distant_http_port),
+        );
 
         Ok(conn)
     }
@@ -275,8 +298,12 @@ impl Writing for P2P {
 #[async_trait::async_trait]
 impl OnDisconnect for P2P {
     async fn on_disconnect(&self, addr: SocketAddr) {
-        if let Some(peer_conn_addr) = self.peer_addr_mapping.write().remove(&addr) {
-            self.peer_list.write().remove(&peer_conn_addr);
+        if let Some(peer_conn_addr) = self.peer_addr_mapping.write().await.remove(&addr) {
+            let distant_listening_addr = self.peer_list.write().await.remove(&peer_conn_addr);
+            self.peer_http_port_list
+                .write()
+                .await
+                .remove(&peer_conn_addr);
         }
     }
 }
@@ -285,9 +312,9 @@ impl OnDisconnect for P2P {
 mod tests {
     use super::*;
     use eyre::Result;
-    use gevulot_node::types::{transaction::Payload, Transaction};
+    use gevulot_node::types::{transaction::Payload, Hash, Transaction};
     use libsecp256k1::SecretKey;
-    use rand::{rngs::StdRng, SeedableRng};
+    use rand::{rngs::StdRng, RngCore, SeedableRng};
     use tokio::sync::mpsc::{self, Sender};
     use tracing::level_filters::LevelFilter;
     use tracing_subscriber::EnvFilter;
@@ -344,6 +371,9 @@ mod tests {
             .await
             .unwrap();
 
+        assert_eq!(peer1.peer_http_port_list.len(), 1);
+        assert_eq!(peer2.peer_http_port_list.len(), 1);
+
         tracing::debug!("connect peer3 to peer1");
         peer3
             .node()
@@ -352,6 +382,10 @@ mod tests {
             .unwrap();
 
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+        assert_eq!(peer1.peer_http_port_list.len(), 2);
+        assert_eq!(peer2.peer_http_port_list.len(), 2);
+        assert_eq!(peer3.peer_http_port_list.len(), 2);
 
         tracing::debug!("send tx from peer2 to peer1 and peer3");
         let tx = new_tx();
@@ -402,6 +436,8 @@ mod tests {
                 .connect(peer2.node().listening_addr().unwrap())
                 .await
                 .unwrap();
+            assert_eq!(peer1.peer_http_port_list.len(), 1);
+            assert_eq!(peer2.peer_http_port_list.len(), 1);
 
             tracing::debug!("Nodes Connected");
             tracing::debug!("send tx from peer1 to peer2");
@@ -435,6 +471,8 @@ mod tests {
 
         assert_eq!(peer1.peer_list.read().len(), 1);
         assert!(peer1.peer_addr_mapping.read().is_empty());
+        assert_eq!(peer1.peer_http_port_list.len(), 0);
+        assert_eq!(peer2.peer_http_port_list.len(), 0);
     }
 
     #[tokio::test]
@@ -484,8 +522,16 @@ mod tests {
 
     fn new_tx() -> Transaction {
         let rng = &mut StdRng::from_entropy();
+        let mut tx = Transaction {
+            hash: Hash::random(rng),
+            payload: Payload::Empty,
+            nonce: rng.next_u64(),
+            ..Default::default()
+        };
+
         let key = SecretKey::random(rng);
-        Transaction::new(Payload::Empty, &key)
+        tx.sign(&key);
+        tx
     }
 
     fn start_logger(default_level: LevelFilter) {

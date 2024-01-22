@@ -198,6 +198,7 @@ async fn run(config: Arc<Config>) -> Result<()> {
             "mempool-pubsub",
             config.p2p_listen_addr,
             &config.p2p_psk_passphrase,
+            Some(config.http_download_port),
         )
         .await,
     );
@@ -231,7 +232,11 @@ async fn run(config: Arc<Config>) -> Result<()> {
         resource_manager.clone(),
     );
 
-    let asset_mgr = Arc::new(AssetManager::new(config.clone(), database.clone()));
+    let asset_mgr = Arc::new(AssetManager::new(
+        config.clone(),
+        database.clone(),
+        p2p.as_ref().peer_http_port_list.clone(),
+    ));
 
     let node_key = read_node_key(&config.node_key_file)?;
 
@@ -311,6 +316,7 @@ async fn p2p_beacon(config: P2PBeaconConfig) -> Result<()> {
             "gevulot-network",
             config.p2p_listen_addr,
             &config.p2p_psk_passphrase,
+            None,
         )
         .await,
     );
