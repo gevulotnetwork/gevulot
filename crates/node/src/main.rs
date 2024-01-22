@@ -13,7 +13,10 @@ use std::{
 use asset_manager::AssetManager;
 use async_trait::async_trait;
 use clap::Parser;
-use cli::{Cli, Command, Config, GenerateCommand, NodeKeyOptions, PeerCommand, ShowCommand};
+use cli::{
+    Cli, Command, Config, GenerateCommand, NodeKeyOptions, P2PBeaconConfig, PeerCommand,
+    ShowCommand,
+};
 use eyre::Result;
 use gevulot_node::types;
 use libsecp256k1::{PublicKey, SecretKey};
@@ -87,6 +90,7 @@ async fn main() -> Result<()> {
                 db.acl_deny(&key).await
             }
         },
+        Command::P2PBeacon { config } => p2p_beacon(config).await,
         Command::Run { config } => run(Arc::new(config)).await,
         Command::Show { op } => match op {
             ShowCommand::PublicKey { key_file } => {
@@ -292,6 +296,28 @@ async fn run(config: Arc<Config>) -> Result<()> {
     .await?;
 
     tracing::info!("gevulot node started");
+    loop {
+        sleep(Duration::from_secs(1));
+    }
+}
+
+/// p2p_beacon brings up P2P networking but nothing else. This function can be
+/// used for independent P2P network beacon that provides connectivity for
+/// others, while it doesn't participate in the Gevulot's operational side
+/// in any other way - i.e. this won't handle transactions in any way.
+async fn p2p_beacon(config: P2PBeaconConfig) -> Result<()> {
+    let p2p = Arc::new(
+        networking::P2P::new(
+            "gevulot-network",
+            config.p2p_listen_addr,
+            &config.p2p_psk_passphrase,
+        )
+        .await,
+    );
+
+    let p2p_addr = p2p.node().start_listening().await?;
+    tracing::info!("listening for p2p at {}", p2p_addr);
+
     loop {
         sleep(Duration::from_secs(1));
     }
