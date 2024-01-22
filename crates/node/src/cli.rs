@@ -48,7 +48,7 @@ pub struct Config {
         long,
         long_help = "",
         env = "GEVULOT_P2P_DISCOVERY_ADDR",
-        default_value = "bootstrap.p2p.devnet.gevulot.com"
+        default_value = "34.88.251.176:9999"
     )]
     pub p2p_discovery_addrs: Vec<String>,
 
