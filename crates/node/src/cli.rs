@@ -62,6 +62,14 @@ pub struct Config {
 
     #[arg(
         long,
+        long_help = "Port open to download file between nodes. Use P2P interface to bind.",
+        env = "GEVULOT_HTTP_PORT",
+        default_value = "9995"
+    )]
+    pub http_download_port: u16,
+
+    #[arg(
+        long,
         long_help = "P2P PSK passphrase",
         env = "GEVULOT_PSK_PASSPHRASE",
         default_value = "Pack my box with five dozen liquor jugs."
