@@ -349,9 +349,27 @@ mod tests {
             Arc::new(Sink::new(Arc::new(tx3))),
         );
         let (peer1, peer2, peer3) = (
-            P2P::new("peer1", "127.0.0.1:0".parse().unwrap(), "secret passphrase").await,
-            P2P::new("peer2", "127.0.0.1:0".parse().unwrap(), "secret passphrase").await,
-            P2P::new("peer3", "127.0.0.1:0".parse().unwrap(), "secret passphrase").await,
+            P2P::new(
+                "peer1",
+                "127.0.0.1:0".parse().unwrap(),
+                "secret passphrase",
+                None,
+            )
+            .await,
+            P2P::new(
+                "peer2",
+                "127.0.0.1:0".parse().unwrap(),
+                "secret passphrase",
+                Some(9995),
+            )
+            .await,
+            P2P::new(
+                "peer3",
+                "127.0.0.1:0".parse().unwrap(),
+                "secret passphrase",
+                Some(9995),
+            )
+            .await,
         );
 
         tracing::debug!("start listening");
@@ -371,8 +389,8 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(peer1.peer_http_port_list.len(), 1);
-        assert_eq!(peer2.peer_http_port_list.len(), 1);
+        assert_eq!(peer1.peer_http_port_list.read().await.len(), 1);
+        assert_eq!(peer2.peer_http_port_list.read().await.len(), 1);
 
         tracing::debug!("connect peer3 to peer1");
         peer3
@@ -383,9 +401,9 @@ mod tests {
 
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-        assert_eq!(peer1.peer_http_port_list.len(), 2);
-        assert_eq!(peer2.peer_http_port_list.len(), 2);
-        assert_eq!(peer3.peer_http_port_list.len(), 2);
+        assert_eq!(peer1.peer_http_port_list.read().await.len(), 2);
+        assert_eq!(peer2.peer_http_port_list.read().await.len(), 2);
+        assert_eq!(peer3.peer_http_port_list.read().await.len(), 2);
 
         tracing::debug!("send tx from peer2 to peer1 and peer3");
         let tx = new_tx();
@@ -419,13 +437,24 @@ mod tests {
             Arc::new(Sink::new(Arc::new(tx2))),
         );
 
-        let peer1 = P2P::new("peer1", "127.0.0.1:0".parse().unwrap(), "secret passphrase").await;
+        let peer1 = P2P::new(
+            "peer1",
+            "127.0.0.1:0".parse().unwrap(),
+            "secret passphrase",
+            None,
+        )
+        .await;
         peer1.node().start_listening().await.expect("peer1 listen");
         peer1.register_tx_handler(sink1.clone()).await;
 
         {
-            let peer2 =
-                P2P::new("peer2", "127.0.0.1:0".parse().unwrap(), "secret passphrase").await;
+            let peer2 = P2P::new(
+                "peer2",
+                "127.0.0.1:0".parse().unwrap(),
+                "secret passphrase",
+                Some(8776),
+            )
+            .await;
             peer2.node().start_listening().await.expect("peer2 listen");
 
             peer2.register_tx_handler(sink2.clone()).await;
@@ -436,8 +465,8 @@ mod tests {
                 .connect(peer2.node().listening_addr().unwrap())
                 .await
                 .unwrap();
-            assert_eq!(peer1.peer_http_port_list.len(), 1);
-            assert_eq!(peer2.peer_http_port_list.len(), 1);
+            assert_eq!(peer1.peer_http_port_list.read().await.len(), 1);
+            assert_eq!(peer2.peer_http_port_list.read().await.len(), 1);
 
             tracing::debug!("Nodes Connected");
             tracing::debug!("send tx from peer1 to peer2");
@@ -469,10 +498,10 @@ mod tests {
 
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-        assert_eq!(peer1.peer_list.read().len(), 1);
-        assert!(peer1.peer_addr_mapping.read().is_empty());
-        assert_eq!(peer1.peer_http_port_list.len(), 0);
-        assert_eq!(peer2.peer_http_port_list.len(), 0);
+        assert_eq!(peer1.peer_list.read().await.len(), 1);
+        assert!(peer1.peer_addr_mapping.read().await.is_empty());
+        assert_eq!(peer1.peer_http_port_list.read().await.len(), 0);
+        assert_eq!(peer1.peer_http_port_list.read().await.len(), 0);
     }
 
     #[tokio::test]
@@ -486,8 +515,20 @@ mod tests {
             Arc::new(Sink::new(Arc::new(tx2))),
         );
         let (peer1, peer2) = (
-            P2P::new("peer1", "127.0.0.1:0".parse().unwrap(), "secret passphrase").await,
-            P2P::new("peer2", "127.0.0.1:0".parse().unwrap(), "secret passphrase").await,
+            P2P::new(
+                "peer1",
+                "127.0.0.1:0".parse().unwrap(),
+                "secret passphrase",
+                None,
+            )
+            .await,
+            P2P::new(
+                "peer2",
+                "127.0.0.1:0".parse().unwrap(),
+                "secret passphrase",
+                None,
+            )
+            .await,
         );
 
         tracing::debug!("start listening");
