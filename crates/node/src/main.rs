@@ -220,7 +220,7 @@ async fn run(config: Arc<Config>) -> Result<()> {
     .await;
 
     //start http download manager
-    let download_jh = networking::download_manager::serve_file(&config);
+    let download_jh = networking::download_manager::serve_files(&config).await?;
 
     // TODO(tuommaki): read total available resources from config / acquire system stats.
     let num_gpus = if config.gpu_devices.is_some() { 1 } else { 0 };
@@ -310,9 +310,13 @@ async fn run(config: Arc<Config>) -> Result<()> {
     .await?;
 
     tracing::info!("gevulot node started");
-    loop {
-        sleep(Duration::from_secs(1));
+    // loop {
+    //     sleep(Duration::from_secs(1));
+    // }
+    if let Err(err) = download_jh.await {
+        tracing::info!("dwn mng error:{err}");
     }
+    Ok(())
 }
 
 /// p2p_beacon brings up P2P networking but nothing else. This function can be
