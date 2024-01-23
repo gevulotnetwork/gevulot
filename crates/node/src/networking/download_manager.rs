@@ -36,8 +36,9 @@ pub async fn serve_file(config: &Config, bind_addr: SocketAddr) -> Result<JoinHa
         async move {
             loop {
                 match listener.accept().await {
-                    Ok((stream, _)) => {
+                    Ok((stream, _from)) => {
                         let io = TokioIo::new(stream);
+                        tracing::info!("ICI DownloadManager get connection from:{}", _from);
                         tokio::task::spawn({
                             let data_directory = data_directory.clone();
                             async move {

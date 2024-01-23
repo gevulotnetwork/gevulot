@@ -14,7 +14,6 @@ use gevulot_node::{
     },
 };
 use libsecp256k1::SecretKey;
-use rand::{rngs::StdRng, SeedableRng};
 use server::FileServer;
 use tokio::time::sleep;
 
@@ -31,6 +30,8 @@ pub struct ArgConfiguration {
     pub verifier_img: PathBuf,
     #[clap(short, long, default_value = "http://localhost:9944")]
     pub json_rpc_url: String,
+    #[clap(short, long, default_value = "localkey.pki")]
+    pub key_file: PathBuf,
     #[clap(short, long, default_value = "127.0.0.1:0")]
     pub listen_addr: SocketAddr,
 }
@@ -41,7 +42,8 @@ async fn main() -> Result<()> {
     let client = RpcClient::new(cfg.json_rpc_url);
     let file_server = Arc::new(FileServer::new(cfg.listen_addr).await);
 
-    let key = SecretKey::random(&mut StdRng::from_entropy());
+    let bs = std::fs::read(cfg.key_file)?;
+    let key = SecretKey::parse_slice(&bs)?;
 
     let (_tx_hash, prover_hash, verifier_hash) = deploy_programs(
         &client,
@@ -77,18 +79,14 @@ async fn deploy_programs(
         from_img_file_to_metadata(prover_img, &file_server.register_file(prover_img).await);
     let verifier =
         from_img_file_to_metadata(verifier_img, &file_server.register_file(verifier_img).await);
-    let mut tx = Transaction {
-        payload: Payload::Deploy {
+    let tx = Transaction::new(
+        Payload::Deploy {
             name: deployment_name.to_string(),
             prover: prover.clone(),
             verifier: verifier.clone(),
         },
-        nonce: 42,
-        ..Default::default()
-    };
-
-    // Transaction hash gets computed during this as well.
-    tx.sign(key);
+        key,
+    );
 
     client
         .send_transaction(&tx)
@@ -128,17 +126,14 @@ async fn send_proving_task(
         }],
     };
 
-    let mut tx = Transaction {
-        payload: Payload::Run {
+    let tx = Transaction::new(
+        Payload::Run {
             workflow: Workflow {
                 steps: vec![proving_step, verifying_step],
             },
         },
-        nonce,
-        ..Default::default()
-    };
-
-    tx.sign(key);
+        key,
+    );
 
     client
         .send_transaction(&tx)

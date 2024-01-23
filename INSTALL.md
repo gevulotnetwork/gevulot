@@ -171,18 +171,15 @@ Network=host
 # Expose JSON-RPC.
 ExposeHostPort=9944
 
+# Expose P2P.
+ExposeHostPort=9999
+
 # Bind VSOCK & GPU into container.
 AddDevice=/dev/vsock:rw
 AddDevice=/dev/vfio/59:rw
 
 # Disable SELinux labelling to allow access to VFIO devices.
 SecurityLabelDisable=true
-
-# Run as gevulot user.
-User=gevulot
-
-# Maintain existing groups.
-UserNS=keep-id
 
 # Mount host directory for Gevulot files.
 Volume=/var/lib/gevulot:/var/lib/gevulot:z
