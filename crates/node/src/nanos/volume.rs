@@ -34,7 +34,7 @@ pub fn create(data_dir: &Path, label: &str, size: &str) -> Result<PathBuf> {
 
     let volume_file = parse_output(&String::from_utf8(output.stderr)?)?;
     Ok(PathBuf::new()
-        .join(home::home_dir().expect("missing $HOME"))
+        .join(data_dir)
         .join(".ops")
         .join("volumes")
         .join(volume_file))
