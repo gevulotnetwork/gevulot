@@ -1,4 +1,7 @@
-use std::{path::PathBuf, process::Command};
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use eyre::Result;
 use thiserror::Error;
@@ -13,8 +16,9 @@ pub enum NanosVolumeError {
     ParseError(String),
 }
 
-pub fn create(label: &str, size: &str) -> Result<PathBuf> {
+pub fn create(data_dir: &Path, label: &str, size: &str) -> Result<PathBuf> {
     let output = Command::new("ops")
+        .env("HOME", data_dir)
         .arg("volume")
         .arg("create")
         .arg(label)
