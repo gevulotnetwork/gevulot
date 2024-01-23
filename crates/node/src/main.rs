@@ -173,11 +173,17 @@ impl networking::p2p::TxHandler for P2PTxHandler {
     async fn recv_tx(&self, tx: Transaction) -> Result<()> {
         // The transaction was received from P2P network so we can consider it
         // propagated at this point.
+        let tx_hash = tx.hash;
         let mut tx = tx;
         tx.propagated = true;
 
         // Submit the tx to mempool.
-        self.mempool.write().await.add(tx).await
+        self.mempool.write().await.add(tx).await?;
+
+        //TODO copy paste of the asset manager handle_transaction matrhod.
+        //added because when a tx arrive from the p2p asset are not added.
+        //should be done in a better way.
+        self.database.add_asset(&tx_hash).await
     }
 }
 
