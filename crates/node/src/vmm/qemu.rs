@@ -155,8 +155,12 @@ impl Provider for Qemu {
             .to_lowercase();
 
         // XXX: This isn't async and will call out to `ops` for now.
-        let workspace_file = nanos::volume::create(&workspace_volume_label, "2g")?.into_os_string();
+        tracing::debug!("creating workspace volume for the VM");
+        let workspace_file =
+            nanos::volume::create(&self.config.data_directory, &workspace_volume_label, "2g")?
+                .into_os_string();
         let workspace_file = workspace_file.to_str().expect("workspace volume path");
+        tracing::debug!("workspace volume created");
 
         let cpus = req.cpus;
         let mem_req = req.mem;
