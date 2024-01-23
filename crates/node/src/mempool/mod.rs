@@ -80,12 +80,14 @@ impl Mempool {
         self.storage.set(&tx).await?;
 
         // Broadcast new transaction to P2P network if it's configured.
-        if let Some(ref tx_chan) = self.tx_chan {
-            if tx_chan.send_tx(&tx).await.is_ok() {
-                tx.propagated = true;
-                self.storage.set(&tx).await?;
-            } else {
-                // TODO: Implement retry?
+        if !tx.propagated {
+            if let Some(ref tx_chan) = self.tx_chan {
+                if tx_chan.send_tx(&tx).await.is_ok() {
+                    tx.propagated = true;
+                    self.storage.set(&tx).await?;
+                } else {
+                    // TODO: Implement retry?
+                }
             }
         }
 
