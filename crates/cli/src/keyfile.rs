@@ -9,7 +9,7 @@ pub fn create_key_file(file_path: &PathBuf) -> crate::BoxResult<PublicKey> {
     let key_array = key.serialize();
     if !file_path.as_path().exists() {
         fs::write(file_path, &key_array[..])?;
-        let pubkey = PublicKey::from_secret_key(&libsecp256k1::SecretKey::default());
+        let pubkey = PublicKey::from_secret_key(&key);
         Ok(pubkey)
     } else {
         Err(Box::new(std::io::Error::new(
