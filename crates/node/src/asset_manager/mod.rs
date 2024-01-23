@@ -60,6 +60,10 @@ impl AssetManager {
         loop {
             for tx_hash in self.database.get_incomplete_assets().await? {
                 if let Some(tx) = self.database.find_transaction(&tx_hash).await? {
+                    tracing::info!(
+                        "ICI AssetManager run asset find_transaction hash: {}",
+                        &tx_hash
+                    );
                     if let Err(err) = self.process_transaction(&tx).await {
                         tracing::error!(
                             "failed to process transaction (hash: {}) assets: {}",
@@ -168,6 +172,11 @@ impl AssetManager {
         // TODO: Blocking operation.
         std::fs::create_dir_all(file_path.parent().unwrap())?;
 
+        tracing::info!(
+            "ICI download file to {}",
+            file_path.as_path().to_str().unwrap().to_string()
+        );
+
         let mut resp = match self.http_client.get(url.clone()).send().await {
             Ok(resp) => resp,
             Err(err) => {
@@ -202,6 +211,8 @@ impl AssetManager {
                         })
                         .collect()
                 };
+                tracing::info!("ICI download get from uri {uri}, peer list:{:?}", peer_urls);
+
                 let mut resp = None;
                 for url in peer_urls {
                     if let Ok(val) = self.http_client.get(url).send().await {
