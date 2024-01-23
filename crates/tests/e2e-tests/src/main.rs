@@ -79,11 +79,14 @@ async fn deploy_programs(
         from_img_file_to_metadata(prover_img, &file_server.register_file(prover_img).await);
     let verifier =
         from_img_file_to_metadata(verifier_img, &file_server.register_file(verifier_img).await);
-    let tx = Transaction::new(Payload::Deploy {
+    let tx = Transaction::new(
+        Payload::Deploy {
             name: deployment_name.to_string(),
             prover: prover.clone(),
             verifier: verifier.clone(),
-        }, key);
+        },
+        key,
+    );
 
     client
         .send_transaction(&tx)
@@ -123,11 +126,14 @@ async fn send_proving_task(
         }],
     };
 
-    let tx = Transaction::new(Payload::Run {
+    let tx = Transaction::new(
+        Payload::Run {
             workflow: Workflow {
                 steps: vec![proving_step, verifying_step],
             },
-        }, key);
+        },
+        key,
+    );
 
     client
         .send_transaction(&tx)
