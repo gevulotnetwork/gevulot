@@ -3,7 +3,6 @@ use gevulot_node::types::{
     self,
     transaction::{Payload, ProgramData},
 };
-use reqwest::Url;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::{path::PathBuf, sync::Arc, time::Duration};
@@ -198,11 +197,12 @@ impl AssetManager {
                     })?;
                 let peer_urls: Vec<_> = {
                     let list = self.http_peer_list.read().await;
+                    tracing::info!("ICI download get from uri {uri}, peer list:{:?}", list);
                     list.iter()
                         .filter_map(|(peer, port)| {
                             port.map(|port| {
                                 //use parse to create an URL, no new method.
-                                let mut url = Url::parse("http://localhost").unwrap(); //unwrap always succeed
+                                let mut url = reqwest::Url::parse("http://localhost").unwrap(); //unwrap always succeed
                                 url.set_ip_host(peer.ip()).unwrap(); //unwrap always succeed
                                 url.set_port(Some(port)).unwrap(); //unwrap always succeed
                                 url.set_path(&uri); //unwrap always succeed

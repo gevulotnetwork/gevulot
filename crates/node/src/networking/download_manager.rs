@@ -8,27 +8,28 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
-use std::net::SocketAddr;
 use std::path::Path;
 use tokio::fs::File;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 use tokio_util::io::ReaderStream;
 
-pub struct DownloadManager {
-    file_server_jh: JoinHandle<()>,
-}
+// pub struct DownloadManager {
+//     file_server_jh: JoinHandle<()>,
+// }
 
-impl DownloadManager {
-    pub async fn new(config: &Config, bind_addr: SocketAddr) -> Result<Self> {
-        let file_server_jh = serve_file(config, bind_addr).await?;
-        Ok(DownloadManager { file_server_jh })
-    }
-}
+// impl DownloadManager {
+//     pub async fn new(config: &Config, bind_addr: SocketAddr) -> Result<Self> {
+//         let file_server_jh = serve_file(config).await?;
+//         Ok(DownloadManager { file_server_jh })
+//     }
+// }
 
 //start the local server and serve the specified file path.
-//Return the file_names and associated Url to get the file from the server.
-pub async fn serve_file(config: &Config, bind_addr: SocketAddr) -> Result<JoinHandle<()>> {
+//Return the server task join handle.
+pub async fn serve_file(config: &Config) -> Result<JoinHandle<()>> {
+    let mut bind_addr = config.p2p_listen_addr.clone();
+    bind_addr.set_port(config.http_download_port);
     let listener = TcpListener::bind(bind_addr).await?;
 
     let jh = tokio::spawn({

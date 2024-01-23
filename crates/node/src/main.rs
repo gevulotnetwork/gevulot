@@ -219,6 +219,9 @@ async fn run(config: Arc<Config>) -> Result<()> {
     )))
     .await;
 
+    //start http download manager
+    let download_jh = networking::download_manager::serve_file(&config);
+
     // TODO(tuommaki): read total available resources from config / acquire system stats.
     let num_gpus = if config.gpu_devices.is_some() { 1 } else { 0 };
     let resource_manager = Arc::new(Mutex::new(scheduler::ResourceManager::new(
