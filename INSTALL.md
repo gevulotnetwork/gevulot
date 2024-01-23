@@ -165,6 +165,7 @@ AutoUpdate=registry
 Environment=RUST_LOG=warn,gevulot=debug,sqlx=error
 Environment=GEVULOT_DB_URL=postgres://<user>:<password>@<host>/gevulot
 Environment=GEVULOT_GPU_DEVICES=0000:01:00.0
+Environment=GEVULOT_PSK_PASSPHRASE="<coordinated pre-shared key for P2P network>"
 
 Network=host
 
@@ -175,11 +176,17 @@ ExposeHostPort=9944
 ExposeHostPort=9999
 
 # Bind VSOCK & GPU into container.
+AddDevice=/dev/kvm:rw
 AddDevice=/dev/vsock:rw
+AddDevice=/dev/vhost-vsock:rw
 AddDevice=/dev/vfio/59:rw
+AddDevice=/dev/vfio/vfio:rw
 
 # Disable SELinux labelling to allow access to VFIO devices.
 SecurityLabelDisable=true
+
+# Allow larger memlock limit for QEMU / VFIO use
+Ulimit=memlock=-1:-1
 
 # Mount host directory for Gevulot files.
 Volume=/var/lib/gevulot:/var/lib/gevulot:z
