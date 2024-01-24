@@ -191,3 +191,19 @@ Ulimit=memlock=-1:-1
 # Mount host directory for Gevulot files.
 Volume=/var/lib/gevulot:/var/lib/gevulot:z
 ```
+
+## Auto-update
+
+In order to receive automatic updates for Gevulot node, enable `podman-auto-update` timer:
+```
+sudo systemctl enable podman-auto-update.timer
+```
+
+This will update the container registry every night.
+
+## Manual update
+
+To manually update containers at will, run following:
+```
+sudo systemctl start podman-auto-update
+```
