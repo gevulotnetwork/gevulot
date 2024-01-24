@@ -24,6 +24,10 @@ Development & testing has been done on Fedora 39.
 
 For GPU support the PCI passthrough must be appropriately configured. 
 
+## Disk partitioning
+
+Disk partitioning should be done in such a way that Gevulot data directory has most of the disk space. It is used for unikernel images, as well as for transaction input data.
+
 ## PCI passthrough for GPU
 
 ### Blacklist nVidia drivers from loading during boot
