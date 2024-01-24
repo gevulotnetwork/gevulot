@@ -233,6 +233,10 @@ impl Handshake for P2P {
             }
         };
 
+        tracing::info!(
+            "ICI New connection: local:{local_bind_addr} distant:{distant_listening_addr}"
+        );
+
         //do peer comparition
         let mut local_diff = {
             let mut local_peer_list = self.peer_list.write().await;

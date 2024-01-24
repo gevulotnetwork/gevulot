@@ -180,7 +180,7 @@ impl networking::p2p::TxHandler for P2PTxHandler {
         // Submit the tx to mempool.
         self.mempool.write().await.add(tx).await?;
 
-        //TODO copy paste of the asset manager handle_transaction matrhod.
+        //TODO copy paste of the asset manager handle_transaction method.
         //added because when a tx arrive from the p2p asset are not added.
         //should be done in a better way.
         self.database.add_asset(&tx_hash).await
