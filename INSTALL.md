@@ -32,7 +32,9 @@ When passing GPU to VM running unikernel, the device cannot be in use by the hos
 
 **/etc/modprobe.d/nvidia.conf**
 ```
+blacklist nouveau
 blacklist nvidia
+blacklist nvidiafb
 blacklist nvidia-drm
 ```
 
