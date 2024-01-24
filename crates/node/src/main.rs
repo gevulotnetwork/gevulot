@@ -309,12 +309,8 @@ async fn run(config: Arc<Config>) -> Result<()> {
     )
     .await?;
 
-    tracing::info!("gevulot node started");
-    // loop {
-    //     sleep(Duration::from_secs(1));
-    // }
     if let Err(err) = download_jh.await {
-        tracing::info!("dwn mng error:{err}");
+        tracing::info!("download_manager error:{err}");
     }
     Ok(())
 }

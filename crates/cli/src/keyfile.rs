@@ -23,5 +23,3 @@ pub fn read_key_file(file_path: &PathBuf) -> crate::BoxResult<SecretKey> {
     let key_array = fs::read(file_path)?;
     Ok(SecretKey::parse_slice(&key_array)?)
 }
-
-//pub print_pub_key

@@ -14,17 +14,6 @@ use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 use tokio_util::io::ReaderStream;
 
-// pub struct DownloadManager {
-//     file_server_jh: JoinHandle<()>,
-// }
-
-// impl DownloadManager {
-//     pub async fn new(config: &Config, bind_addr: SocketAddr) -> Result<Self> {
-//         let file_server_jh = serve_file(config).await?;
-//         Ok(DownloadManager { file_server_jh })
-//     }
-// }
-
 //start the local server and serve the specified file path.
 //Return the server task join handle.
 pub async fn serve_files(config: &Config) -> Result<JoinHandle<()>> {
