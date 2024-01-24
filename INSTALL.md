@@ -38,6 +38,13 @@ blacklist nvidiafb
 blacklist nvidia-drm
 ```
 
+On Ubuntu the module blacklisting doesn't necessarily work as expected. In that case [driverctl](https://gitlab.com/driverctl/driverctl) can help:
+```
+sudo apt install driverctl
+sudo driverctl set-override 0000:01:00.0 vfio-pci
+sudo driverctl set-override 0000:01:00.1 vfio-pci
+```
+
 ### Load VFIO & VSOCK modules
 
 [VFIO](https://docs.kernel.org/driver-api/vfio.html) provides framework for virtual machines to utilize host machine hardware directly, allowing high performance device access.
