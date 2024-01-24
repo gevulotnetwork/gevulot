@@ -28,7 +28,7 @@ use tokio_util::io::ReaderStream;
 //start the local server and serve the specified file path.
 //Return the server task join handle.
 pub async fn serve_files(config: &Config) -> Result<JoinHandle<()>> {
-    let mut bind_addr = config.p2p_listen_addr.clone();
+    let mut bind_addr = config.p2p_listen_addr;
     bind_addr.set_port(config.http_download_port);
     let listener = TcpListener::bind(bind_addr).await?;
 
