@@ -30,7 +30,6 @@ use tokio_util::io::ReaderStream;
 pub async fn serve_files(config: &Config) -> Result<JoinHandle<()>> {
     let mut bind_addr = config.p2p_listen_addr.clone();
     bind_addr.set_port(config.http_download_port);
-    tracing::info!("ICI start http download manager bind_addr:{}", bind_addr);
     let listener = TcpListener::bind(bind_addr).await?;
 
     let jh = tokio::spawn({
@@ -40,7 +39,6 @@ pub async fn serve_files(config: &Config) -> Result<JoinHandle<()>> {
                 match listener.accept().await {
                     Ok((stream, _from)) => {
                         let io = TokioIo::new(stream);
-                        tracing::info!("ICI DownloadManager get connection from:{}", _from);
                         tokio::task::spawn({
                             let data_directory = data_directory.clone();
                             async move {
