@@ -44,12 +44,7 @@ pub struct Config {
     )]
     pub node_key_file: PathBuf,
 
-    #[arg(
-        long,
-        long_help = "",
-        env = "GEVULOT_P2P_DISCOVERY_ADDR",
-        default_value = "34.88.251.176:9999"
-    )]
+    #[arg(long, long_help = "", env = "GEVULOT_P2P_DISCOVERY_ADDR")]
     pub p2p_discovery_addrs: Vec<String>,
 
     #[arg(
@@ -59,6 +54,14 @@ pub struct Config {
         default_value = "127.0.0.1:9999"
     )]
     pub p2p_listen_addr: SocketAddr,
+
+    #[arg(
+        long,
+        long_help = "Port open to download file between nodes. Use P2P interface to bind.",
+        env = "GEVULOT_HTTP_PORT",
+        default_value = "9995"
+    )]
+    pub http_download_port: u16,
 
     #[arg(
         long,
