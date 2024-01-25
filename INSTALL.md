@@ -36,8 +36,17 @@ When passing GPU to VM running unikernel, the device cannot be in use by the hos
 
 **/etc/modprobe.d/nvidia.conf**
 ```
+blacklist nouveau
 blacklist nvidia
+blacklist nvidiafb
 blacklist nvidia-drm
+```
+
+On Ubuntu the module blacklisting doesn't necessarily work as expected. In that case [driverctl](https://gitlab.com/driverctl/driverctl) can help:
+```
+sudo apt install driverctl
+sudo driverctl set-override 0000:01:00.0 vfio-pci
+sudo driverctl set-override 0000:01:00.1 vfio-pci
 ```
 
 ### Load VFIO & VSOCK modules
@@ -58,6 +67,7 @@ vfio-mdev
 
 **/etc/modules-load.d/vsock.conf**
 ```
+vsock
 vsock_vhost
 ```
 
@@ -169,6 +179,7 @@ AutoUpdate=registry
 Environment=RUST_LOG=warn,gevulot=debug,sqlx=error
 Environment=GEVULOT_DB_URL=postgres://<user>:<password>@<host>/gevulot
 Environment=GEVULOT_GPU_DEVICES=0000:01:00.0
+Environment=GEVULOT_P2P_DISCOVERY_ADDR=34.88.251.176:9999
 Environment=GEVULOT_PSK_PASSPHRASE="<coordinated pre-shared key for P2P network>"
 
 Network=host
@@ -190,8 +201,24 @@ AddDevice=/dev/vfio/vfio:rw
 SecurityLabelDisable=true
 
 # Allow larger memlock limit for QEMU / VFIO use
-Ulimit=memlock=-1:-1
+PodmanArgs=--ulimit=memlock=-1:-1
 
 # Mount host directory for Gevulot files.
 Volume=/var/lib/gevulot:/var/lib/gevulot:z
+```
+
+## Auto-update
+
+In order to receive automatic updates for Gevulot node, enable `podman-auto-update` timer:
+```
+sudo systemctl enable podman-auto-update.timer
+```
+
+This will update the container registry every night.
+
+## Manual update
+
+To manually update containers at will, run following:
+```
+sudo systemctl start podman-auto-update
 ```
