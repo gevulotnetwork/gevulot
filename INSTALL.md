@@ -91,6 +91,7 @@ lspci -nnD | grep -i nvidia
 In the above example output the first entry on the line is the PCI slot name. The second last column is the PCI ID.
 
 Configure all PCI device IDs to VFIO:
+
 **/etc/modprobe.d/vfio.conf**
 ```
 options vfio-pci ids=10de:2684,10de:22ba
@@ -160,7 +161,13 @@ podman run -it -v /var/lib/gevulot:/var/lib/gevulot:z quay.io/gevulot/node:lates
 
 Gevulot node is packaged as a container for best possible platform compatibility and it is recommended to run it with Podman Quadlet. 
 
+To pass VFIO devices into container, check the specific devices for your installation and update them to systemd unit below:
+```
+ls /dev/vfio
+```
+
 Use following systemd unit as basis for running Gevulot node:
+
 **/etc/containers/systemd/gevulot-node.container**
 ```
 [Install]
