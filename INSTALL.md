@@ -32,8 +32,17 @@ When passing GPU to VM running unikernel, the device cannot be in use by the hos
 
 **/etc/modprobe.d/nvidia.conf**
 ```
+blacklist nouveau
 blacklist nvidia
+blacklist nvidiafb
 blacklist nvidia-drm
+```
+
+On Ubuntu the module blacklisting doesn't necessarily work as expected. In that case [driverctl](https://gitlab.com/driverctl/driverctl) can help:
+```
+sudo apt install driverctl
+sudo driverctl set-override 0000:01:00.0 vfio-pci
+sudo driverctl set-override 0000:01:00.1 vfio-pci
 ```
 
 ### Load VFIO & VSOCK modules
