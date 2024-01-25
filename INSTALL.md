@@ -197,7 +197,7 @@ AddDevice=/dev/vfio/vfio:rw
 SecurityLabelDisable=true
 
 # Allow larger memlock limit for QEMU / VFIO use
-Ulimit=memlock=-1:-1
+PodmanArgs=--ulimit=memlock=-1:-1
 
 # Mount host directory for Gevulot files.
 Volume=/var/lib/gevulot:/var/lib/gevulot:z
