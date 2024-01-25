@@ -173,11 +173,17 @@ impl networking::p2p::TxHandler for P2PTxHandler {
     async fn recv_tx(&self, tx: Transaction) -> Result<()> {
         // The transaction was received from P2P network so we can consider it
         // propagated at this point.
+        let tx_hash = tx.hash;
         let mut tx = tx;
         tx.propagated = true;
 
         // Submit the tx to mempool.
-        self.mempool.write().await.add(tx).await
+        self.mempool.write().await.add(tx).await?;
+
+        //TODO copy paste of the asset manager handle_transaction method.
+        //added because when a tx arrive from the p2p asset are not added.
+        //should be done in a better way.
+        self.database.add_asset(&tx_hash).await
     }
 }
 
@@ -198,6 +204,7 @@ async fn run(config: Arc<Config>) -> Result<()> {
             "mempool-pubsub",
             config.p2p_listen_addr,
             &config.p2p_psk_passphrase,
+            Some(config.http_download_port),
         )
         .await,
     );
@@ -211,6 +218,9 @@ async fn run(config: Arc<Config>) -> Result<()> {
         database.clone(),
     )))
     .await;
+
+    //start http download manager
+    let download_jh = networking::download_manager::serve_files(&config).await?;
 
     // TODO(tuommaki): read total available resources from config / acquire system stats.
     let num_gpus = if config.gpu_devices.is_some() { 1 } else { 0 };
@@ -231,7 +241,11 @@ async fn run(config: Arc<Config>) -> Result<()> {
         resource_manager.clone(),
     );
 
-    let asset_mgr = Arc::new(AssetManager::new(config.clone(), database.clone()));
+    let asset_mgr = Arc::new(AssetManager::new(
+        config.clone(),
+        database.clone(),
+        p2p.as_ref().peer_http_port_list.clone(),
+    ));
 
     let node_key = read_node_key(&config.node_key_file)?;
 
@@ -295,10 +309,10 @@ async fn run(config: Arc<Config>) -> Result<()> {
     )
     .await?;
 
-    tracing::info!("gevulot node started");
-    loop {
-        sleep(Duration::from_secs(1));
+    if let Err(err) = download_jh.await {
+        tracing::info!("download_manager error:{err}");
     }
+    Ok(())
 }
 
 /// p2p_beacon brings up P2P networking but nothing else. This function can be
@@ -311,6 +325,7 @@ async fn p2p_beacon(config: P2PBeaconConfig) -> Result<()> {
             "gevulot-network",
             config.p2p_listen_addr,
             &config.p2p_psk_passphrase,
+            None,
         )
         .await,
     );

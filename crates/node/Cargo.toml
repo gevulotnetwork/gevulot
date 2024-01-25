@@ -20,6 +20,9 @@ eyre = "0.6.8"
 futures-util = "0.3"
 hex = "0.4"
 home = "0.5"
+http-body-util = "0.1"
+hyper = { version = "1", features = ["full"] }
+hyper-util = { version = "0.1", features = ["full"] }
 jsonrpsee = { version = "0.20", features = [ "client", "server" ] }
 libsecp256k1 = "0.7"
 num-bigint = { version = "0.4", features = [ "serde" ] }
