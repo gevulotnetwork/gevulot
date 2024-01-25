@@ -103,8 +103,9 @@ async fn main() {
 
     match args.command {
         ConfCommands::GenerateKey => match gevulot_cli::keyfile::create_key_file(&args.keyfile) {
-            Ok(()) => println!(
-                "Key generated and saved in file:{}",
+            Ok(pubkey) => println!(
+                "Key generated  pubkey:{} and saved in file:{}",
+                hex::encode(pubkey.serialize()),
                 args.keyfile.to_str().unwrap_or("")
             ),
             Err(err) => println!("Error during key file creation:{err}"),

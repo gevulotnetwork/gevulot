@@ -205,6 +205,7 @@ mod tests {
             num_cpus: 8,
             mem_gb: 8,
             gpu_devices: None,
+            http_download_port: 0,
         });
 
         let db = Arc::new(Database::new(&cfg.db_url).await.unwrap());
@@ -213,7 +214,11 @@ mod tests {
                 .await
                 .unwrap(),
         ));
-        let asset_manager = Arc::new(AssetManager::new(cfg.clone(), db.clone()));
+        let asset_manager = Arc::new(AssetManager::new(
+            cfg.clone(),
+            db.clone(),
+            Arc::new(RwLock::new(std::collections::HashMap::new())),
+        ));
 
         RpcServer::run(cfg.clone(), db.clone(), mempool, asset_manager)
             .await
