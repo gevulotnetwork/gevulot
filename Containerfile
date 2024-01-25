@@ -3,7 +3,7 @@ FROM rust:1-bookworm
 COPY ./Cargo.* ./
 COPY ./crates ./crates
 
-RUN apt-get update && apt-get install -y \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y \
   libssl-dev \
   protobuf-compiler
 
@@ -15,7 +15,7 @@ FROM debian:bookworm
 COPY --from=0 target/release/gevulot /gevulot
 
 # Install QEMU.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-recommends \
   ca-certificates \
   curl \
   qemu-system
