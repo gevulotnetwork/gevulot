@@ -63,6 +63,7 @@ vfio-mdev
 
 **/etc/modules-load.d/vsock.conf**
 ```
+vsock
 vsock_vhost
 ```
 
