@@ -165,6 +165,7 @@ AutoUpdate=registry
 Environment=RUST_LOG=warn,gevulot=debug,sqlx=error
 Environment=GEVULOT_DB_URL=postgres://<user>:<password>@<host>/gevulot
 Environment=GEVULOT_GPU_DEVICES=0000:01:00.0
+Environment=GEVULOT_P2P_DISCOVERY_ADDR=34.88.251.176:9999
 Environment=GEVULOT_PSK_PASSPHRASE="<coordinated pre-shared key for P2P network>"
 
 Network=host
