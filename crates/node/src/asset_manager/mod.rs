@@ -1,3 +1,11 @@
+use crate::{
+    cli::Config,
+    storage::Database,
+    types::{
+        transaction::{self, Transaction},
+        Hash, Program,
+    },
+};
 use eyre::{eyre, Result};
 use gevulot_node::types::{
     self,
@@ -7,16 +15,7 @@ use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::{path::PathBuf, sync::Arc, time::Duration};
 use thiserror::Error;
-use tokio::{io::AsyncWriteExt, time::sleep};
-
-use crate::{
-    cli::Config,
-    storage::{self, Database},
-    types::{
-        transaction::{self, Transaction},
-        Hash, Program,
-    },
-};
+use tokio::time::sleep;
 
 #[allow(clippy::enum_variant_names)]
 #[derive(Error, Debug)]
@@ -115,20 +114,18 @@ impl AssetManager {
     }
 
     async fn process_program(&self, program: &Program) -> Result<()> {
-        // TODO: Process and program files are now downloaded in different ways. Combine these.
-        let file_path = PathBuf::new()
-            .join(self.config.data_directory.clone())
-            .join("images")
-            .join(program.hash.to_string())
-            .join(program.image_file_name.clone());
-
-        let url = reqwest::Url::parse(&program.image_file_url)?;
-        self.download(&url, &file_path).await
+        self.download_image(
+            &program.image_file_url,
+            program.hash,
+            &program.image_file_name,
+            &program.image_file_checksum,
+        )
+        .await
     }
 
     async fn process_run(&self, tx: &Transaction) -> Result<()> {
         // TODO: Process and program files are now downloaded in different ways. Combine these.
-        let file_storage = storage::File::new(&self.config.data_directory);
+        //let file_storage = storage::File::new(&self.config.data_directory);
 
         let workflow = match tx.payload.clone() {
             Payload::Run { workflow } => workflow,
@@ -149,7 +146,17 @@ impl AssetManager {
                             name: file_name,
                             url: file_url,
                         };
-                        file_storage.download(&f).await?;
+                        crate::networking::download_manager::download_file(
+                            &f.url,
+                            &self.config.data_directory,
+                            f.get_file_relative_path()
+                                .to_str()
+                                .ok_or(eyre!("Download bad file path: {:?}", f.name))?,
+                            self.get_peer_list().await,
+                            &self.http_client,
+                            checksum.into(),
+                        )
+                        .await?;
                     }
                     ProgramData::Output { .. } => {
                         /* ProgramData::Output asinput means it comes from another
@@ -163,94 +170,39 @@ impl AssetManager {
     }
 
     /// download downloads file from the given `url` and saves it to file in `file_path`.
-    async fn download(&self, url: &reqwest::Url, file_path: &PathBuf) -> Result<()> {
-        // TODO: Blocking operation.
-        std::fs::create_dir_all(file_path.parent().unwrap())?;
+    async fn download_image(
+        &self,
+        url: &str,
+        program_hash: gevulot_node::types::Hash,
+        image_file_name: &str,
+        file_checksum: &str,
+    ) -> Result<()> {
+        let file_path = PathBuf::new()
+            .join("images")
+            .join(program_hash.to_string())
+            .join(image_file_name);
+        tracing::info!(
+            "asset download url:{url} file_path:{file_path:?} file_checksum:{file_checksum}"
+        );
+        crate::networking::download_manager::download_file(
+            url,
+            &self.config.data_directory,
+            file_path
+                .to_str()
+                .ok_or(eyre!("Download bad file path: {:?}", file_path))?,
+            self.get_peer_list().await,
+            &self.http_client,
+            file_checksum.into(),
+        )
+        .await
+    }
 
-        let mut resp = match self.http_client.get(url.clone()).send().await {
-            Ok(resp) => resp,
-            Err(err) => {
-                let uri = file_path
-                    .as_path()
-                    .components()
-                    .rev()
-                    .take(2)
-                    .map(|c| c.as_os_str().to_os_string())
-                    .reduce(|acc, mut el| {
-                        el.push("/");
-                        el.push(&acc);
-                        el
-                    })
-                    .ok_or_else(|| eyre!("Download bad file path: {:?}", file_path))
-                    .and_then(|s| {
-                        s.into_string()
-                            .map_err(|err| eyre!("Download bad file path: {:?}", file_path))
-                    })?;
-                let peer_urls: Vec<_> = {
-                    let list = self.http_peer_list.read().await;
-                    list.iter()
-                        .filter_map(|(peer, port)| {
-                            port.map(|port| {
-                                //use parse to create an URL, no new method.
-                                let mut url = reqwest::Url::parse("http://localhost").unwrap(); //unwrap always succeed
-                                url.set_ip_host(peer.ip()).unwrap(); //unwrap always succeed
-                                url.set_port(Some(port)).unwrap(); //unwrap always succeed
-                                url.set_path(&uri); //unwrap always succeed
-                                url
-                            })
-                        })
-                        .collect()
-                };
-                tracing::debug!(
-                    "asset manager download file from uri {uri} to  {}, use peer list:{:?}",
-                    file_path.as_path().to_str().unwrap().to_string(),
-                    peer_urls
-                );
-
-                let mut resp = None;
-                for url in peer_urls {
-                    if let Ok(val) = self.http_client.get(url).send().await {
-                        resp = Some(val);
-                        break;
-                    }
-                }
-                match resp {
-                    Some(resp) => resp,
-                    _ => {
-                        return Err(eyre!(
-                            "Download no host found to download the file: {:?}",
-                            file_path
-                        ));
-                    }
-                }
-            }
-        };
-
-        if resp.status() == reqwest::StatusCode::OK {
-            //create a tmp file during download.
-            //this way the file won't be available for download from the other nodes
-            //until it is completely written.
-            let mut tmp_file_path = file_path.clone();
-            tmp_file_path.set_extension(".tmp");
-
-            let fd = tokio::fs::File::create(&tmp_file_path).await?;
-            let mut fd = tokio::io::BufWriter::new(fd);
-
-            while let Some(chunk) = resp.chunk().await? {
-                fd.write_all(&chunk).await?;
-            }
-
-            fd.flush().await?;
-            //rename to original name
-            std::fs::rename(tmp_file_path, file_path)?;
-        } else {
-            tracing::error!(
-                "failed to download file from {}: response status: {}",
-                url,
-                resp.status()
-            );
-        }
-
-        Ok(())
+    async fn get_peer_list(&self) -> Vec<(SocketAddr, Option<u16>)> {
+        self.http_peer_list
+            .read()
+            .await
+            .iter()
+            .map(|(a, p)| (*a, *p))
+            .collect()
     }
 }

@@ -1,4 +1,5 @@
 use crate::cli::Config;
+use eyre::eyre;
 use eyre::Result;
 use futures_util::TryStreamExt;
 use http_body_util::combinators::BoxBody;
@@ -8,11 +9,116 @@ use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
+use std::net::SocketAddr;
 use std::path::Path;
 use tokio::fs::File;
+use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 use tokio_util::io::ReaderStream;
+
+/// download downloads file from the given `url` and saves it to file in `file_path`.
+pub async fn download_file(
+    url: &str,
+    local_directory_path: &Path,
+    file: &str,
+    http_peer_list: Vec<(SocketAddr, Option<u16>)>,
+    http_client: &reqwest::Client,
+    file_hash: gevulot_node::types::Hash,
+) -> Result<()> {
+    tracing::info!("download_file url:{url} local_directory_path:{local_directory_path:?} file:{file} file_hash:{file_hash}");
+    let url = reqwest::Url::parse(url)?;
+    tracing::info!("ICI1");
+    let mut resp = match http_client.get(url.clone()).send().await {
+        Ok(resp) => resp,
+        Err(err) => {
+            tracing::info!("ICI ERRRO {err}");
+
+            let peer_urls: Vec<reqwest::Url> = http_peer_list
+                .iter()
+                .filter_map(|(peer, port)| {
+                    port.map(|port| {
+                        //use parse to create an URL, no new method.
+                        let mut url = reqwest::Url::parse("http://localhost").unwrap(); //unwrap always succeed
+                        url.set_ip_host(peer.ip()).unwrap(); //unwrap always succeed
+                        url.set_port(Some(port)).unwrap(); //unwrap always succeed
+                        url.set_path(file); //unwrap always succeed
+                        url
+                    })
+                })
+                .collect();
+            tracing::debug!(
+                "asset download file from file {file} to  {:?}, use peer list:{:?}",
+                local_directory_path,
+                peer_urls
+            );
+
+            let mut resp = None;
+            for url in peer_urls {
+                if let Ok(val) = http_client.get(url).send().await {
+                    resp = Some(val);
+                    break;
+                }
+            }
+            match resp {
+                Some(resp) => resp,
+                _ => {
+                    return Err(eyre!(
+                        "Download no host found to download the file: {:?}",
+                        file
+                    ));
+                }
+            }
+        }
+    };
+
+    tracing::info!("ICI2");
+    if resp.status() == reqwest::StatusCode::OK {
+        tracing::info!("ICI3");
+
+        let file_path = local_directory_path.join(file);
+        tracing::info!("downlod_file status ok file_path:{file_path:?}");
+        // Ensure any necessary subdirectories exists.
+        if let Some(parent) = file_path.parent() {
+            tracing::info!("downlod_file status ok parent:{parent:?}");
+            if let Ok(false) = tokio::fs::try_exists(parent).await {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+        }
+        tracing::info!("ICI33");
+        //create a tmp file during download.
+        //this way the file won't be available for download from the other nodes
+        //until it is completely written.
+        let mut tmp_file_path = file_path.clone();
+        tmp_file_path.set_extension(".tmp");
+        tracing::info!("downlod_file status ok tmp_file_path:{tmp_file_path:?}");
+        let fd = tokio::fs::File::create(&tmp_file_path).await?;
+        let mut fd = tokio::io::BufWriter::new(fd);
+
+        //create the Hasher to verify the Hash
+        let mut hasher = blake3::Hasher::new();
+
+        while let Some(chunk) = resp.chunk().await? {
+            hasher.update(&chunk);
+            fd.write_all(&chunk).await?;
+        }
+
+        fd.flush().await?;
+        let checksum: gevulot_node::types::Hash = (&hasher.finalize()).into();
+        if checksum != file_hash {
+            Err(eyre!("Download file: {:?}, bad checksum", file))
+        } else {
+            //rename to original name
+            Ok(std::fs::rename(tmp_file_path, file_path)?)
+        }
+    } else {
+        Err(eyre!(
+            "failed to download file from {}: response status: {}",
+            url,
+            resp.status()
+        ))
+    }
+}
 
 //start the local server and serve the specified file path.
 //Return the server task join handle.
@@ -89,7 +195,6 @@ async fn server_process_file(
         }
     };
 
-    let file_hash = file_digest.to_string();
     let reader = ReaderStream::new(file);
     let stream_body = StreamBody::new(reader.map_ok(Frame::data));
 
