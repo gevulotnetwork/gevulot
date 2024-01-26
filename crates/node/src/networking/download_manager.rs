@@ -91,7 +91,7 @@ pub async fn download_file(
         //this way the file won't be available for download from the other nodes
         //until it is completely written.
         let mut tmp_file_path = file_path.clone();
-        tmp_file_path.set_extension(".tmp");
+        tmp_file_path.set_extension("tmp");
         tracing::info!("downlod_file status ok tmp_file_path:{tmp_file_path:?}");
         let fd = tokio::fs::File::create(&tmp_file_path).await?;
         let mut fd = tokio::io::BufWriter::new(fd);
@@ -174,13 +174,14 @@ async fn server_process_file(
 ) -> std::result::Result<Response<BoxBody<Bytes, std::io::Error>>, hyper::Error> {
     let file_digest = &req.uri().path()[1..];
 
-    let mut file_path = data_directory.join("images").join(file_digest);
+    let mut file_path = data_directory.join(file_digest);
 
     let file = match File::open(&file_path).await {
         Ok(file) => file,
         Err(_) => {
             //try to see if the file is currently being updated.
-            file_path.set_extension(".tmp");
+            tracing::info!("ICI http server file not found: {file_path:?}");
+            file_path.set_extension("tmp");
             let (status_code, message) = if file_path.as_path().exists() {
                 (
                     StatusCode::PARTIAL_CONTENT,
