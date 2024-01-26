@@ -124,9 +124,6 @@ impl AssetManager {
     }
 
     async fn process_run(&self, tx: &Transaction) -> Result<()> {
-        // TODO: Process and program files are now downloaded in different ways. Combine these.
-        //let file_storage = storage::File::new(&self.config.data_directory);
-
         let workflow = match tx.payload.clone() {
             Payload::Run { workflow } => workflow,
             _ => return Err(AssetManagerError::IncompatibleTxPayload(tx.hash).into()),
