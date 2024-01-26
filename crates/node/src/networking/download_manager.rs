@@ -26,14 +26,11 @@ pub async fn download_file(
     http_client: &reqwest::Client,
     file_hash: gevulot_node::types::Hash,
 ) -> Result<()> {
-    tracing::info!("download_file url:{url} local_directory_path:{local_directory_path:?} file:{file} file_hash:{file_hash} http_peer_list:{http_peer_list:?}");
+    tracing::trace!("download_file url:{url} local_directory_path:{local_directory_path:?} file:{file} file_hash:{file_hash} http_peer_list:{http_peer_list:?}");
     let url = reqwest::Url::parse(url)?;
-    tracing::info!("ICI1");
     let mut resp = match http_client.get(url.clone()).send().await {
         Ok(resp) => resp,
         Err(err) => {
-            tracing::info!("ICI ERRRO {err}");
-
             let peer_urls: Vec<reqwest::Url> = http_peer_list
                 .iter()
                 .filter_map(|(peer, port)| {
@@ -47,16 +44,9 @@ pub async fn download_file(
                     })
                 })
                 .collect();
-            tracing::debug!(
-                "asset download file from file {file} to  {:?}, use peer list:{:?}",
-                local_directory_path,
-                peer_urls
-            );
-
             let mut resp = None;
             for url in peer_urls {
                 if let Ok(val) = http_client.get(url.clone()).send().await {
-                    tracing::info!("ICI download_file http url connected:{url}");
                     resp = Some(val);
                     break;
                 }
@@ -73,26 +63,19 @@ pub async fn download_file(
         }
     };
 
-    tracing::info!("ICI2");
     if resp.status() == reqwest::StatusCode::OK {
-        tracing::info!("ICI3");
-
         let file_path = local_directory_path.join(file);
-        tracing::info!("downlod_file status ok file_path:{file_path:?}");
         // Ensure any necessary subdirectories exists.
         if let Some(parent) = file_path.parent() {
-            tracing::info!("downlod_file status ok parent:{parent:?}");
             if let Ok(false) = tokio::fs::try_exists(parent).await {
                 tokio::fs::create_dir_all(parent).await?;
             }
         }
-        tracing::info!("ICI33");
         //create a tmp file during download.
         //this way the file won't be available for download from the other nodes
         //until it is completely written.
         let mut tmp_file_path = file_path.clone();
         tmp_file_path.set_extension("tmp");
-        tracing::info!("downlod_file status ok tmp_file_path:{tmp_file_path:?}");
         let fd = tokio::fs::File::create(&tmp_file_path).await?;
         let mut fd = tokio::io::BufWriter::new(fd);
 
@@ -180,7 +163,6 @@ async fn server_process_file(
         Ok(file) => file,
         Err(_) => {
             //try to see if the file is currently being updated.
-            tracing::info!("ICI http server file not found: {file_path:?}");
             file_path.set_extension("tmp");
             let (status_code, message) = if file_path.as_path().exists() {
                 (
