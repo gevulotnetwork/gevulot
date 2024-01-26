@@ -26,7 +26,7 @@ pub async fn download_file(
     http_client: &reqwest::Client,
     file_hash: gevulot_node::types::Hash,
 ) -> Result<()> {
-    tracing::info!("download_file url:{url} local_directory_path:{local_directory_path:?} file:{file} file_hash:{file_hash}");
+    tracing::info!("download_file url:{url} local_directory_path:{local_directory_path:?} file:{file} file_hash:{file_hash} http_peer_list:{http_peer_list:?}");
     let url = reqwest::Url::parse(url)?;
     tracing::info!("ICI1");
     let mut resp = match http_client.get(url.clone()).send().await {
@@ -55,7 +55,8 @@ pub async fn download_file(
 
             let mut resp = None;
             for url in peer_urls {
-                if let Ok(val) = http_client.get(url).send().await {
+                if let Ok(val) = http_client.get(url.clone()).send().await {
+                    tracing::info!("ICI download_file http url connected:{url}");
                     resp = Some(val);
                     break;
                 }
