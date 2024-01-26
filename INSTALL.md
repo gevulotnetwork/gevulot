@@ -129,11 +129,36 @@ For persistent effect, create a systemd unit for this.
 
 Gevulot node uses Postgres database for its operation. It has been tested to work with Postgres releases 15 and 16.
 
+### Example systemd unit
+
+Below is an example systemd unit that can be used as a template to run containerized postgres:
+
+**/etc/containers/systemd/gevulot-postgres.container**
+```
+[Install]
+WantedBy=default.target
+
+[Container]
+ContainerName=gevulot-postgres
+
+Image=docker.io/library/postgres:16-alpine
+
+Environment=POSTGRES_USER=<username>
+Environment=POSTGRES_PASSWORD=<password>
+Environment=POSTGRES_DB=gevulot
+
+Network=host
+ExposeHostPort=5432
+
+Volume=/var/lib/postgresql/data:/var/lib/postgresql/data:z
+```
+
+
 ### Database migration
 
 In order to create initial tables or perform latest migrations, run:
 ```
-podman run -it --network=host quay.io/gevulot/node:latest migrate [--db-url=<DB URL>]
+podman run -it --network=host quay.io/gevulot/node:latest migrate [--db-url=postgres://<username>:<password>@<dbhost>/gevulot]
 ```
 
 ## Gevulot user
