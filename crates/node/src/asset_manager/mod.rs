@@ -114,13 +114,7 @@ impl AssetManager {
     }
 
     async fn process_program(&self, program: &Program) -> Result<()> {
-        self.download_image(
-            &program.image_file_url,
-            program.hash,
-            &program.image_file_name,
-            &program.image_file_checksum,
-        )
-        .await
+        self.download_image(program).await
     }
 
     async fn process_run(&self, tx: &Transaction) -> Result<()> {
@@ -169,27 +163,24 @@ impl AssetManager {
     /// download downloads file from the given `url` and saves it to file in `file_path`.
     async fn download_image(
         &self,
-        url: &str,
-        program_hash: gevulot_node::types::Hash,
-        image_file_name: &str,
-        file_checksum: &str,
+        program: &Program,
     ) -> Result<()> {
         let file_path = PathBuf::new()
             .join("images")
-            .join(program_hash.to_string())
-            .join(image_file_name);
+            .join(program.hash.to_string())
+            .join(&program.image_file_name);
         tracing::info!(
-            "asset download url:{url} file_path:{file_path:?} file_checksum:{file_checksum}"
+            "asset download url:{} file_path:{file_path:?} file_checksum:{}", program.image_file_url, program.image_file_checksum
         );
         crate::networking::download_manager::download_file(
-            url,
+            &program.image_file_url,
             &self.config.data_directory,
             file_path
                 .to_str()
                 .ok_or(eyre!("Download bad file path: {:?}", file_path))?,
             self.get_peer_list().await,
             &self.http_client,
-            file_checksum.into(),
+            (&*program.image_file_checksum).into(),
         )
         .await
     }

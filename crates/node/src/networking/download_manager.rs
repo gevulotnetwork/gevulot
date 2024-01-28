@@ -17,7 +17,7 @@ use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 use tokio_util::io::ReaderStream;
 
-/// download downloads file from the given `url` and saves it to file in `file_path`.
+/// download_file downloads file from the given `url` and saves it to file in `local_directory_path` + / + `file`.
 pub async fn download_file(
     url: &str,
     local_directory_path: &Path,
@@ -51,15 +51,7 @@ pub async fn download_file(
                     break;
                 }
             }
-            match resp {
-                Some(resp) => resp,
-                _ => {
-                    return Err(eyre!(
-                        "Download no host found to download the file: {:?}",
-                        file
-                    ));
-                }
-            }
+            resp.ok_or(eyre!("Download no host found to download the file: {file:?}"))?
         }
     };
 
