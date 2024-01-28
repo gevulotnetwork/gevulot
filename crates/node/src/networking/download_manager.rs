@@ -51,7 +51,9 @@ pub async fn download_file(
                     break;
                 }
             }
-            resp.ok_or(eyre!("Download no host found to download the file: {file:?}"))?
+            resp.ok_or(eyre!(
+                "Download no host found to download the file: {file:?}"
+            ))?
         }
     };
 

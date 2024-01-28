@@ -161,16 +161,15 @@ impl AssetManager {
     }
 
     /// download downloads file from the given `url` and saves it to file in `file_path`.
-    async fn download_image(
-        &self,
-        program: &Program,
-    ) -> Result<()> {
+    async fn download_image(&self, program: &Program) -> Result<()> {
         let file_path = PathBuf::new()
             .join("images")
             .join(program.hash.to_string())
             .join(&program.image_file_name);
         tracing::info!(
-            "asset download url:{} file_path:{file_path:?} file_checksum:{}", program.image_file_url, program.image_file_checksum
+            "asset download url:{} file_path:{file_path:?} file_checksum:{}",
+            program.image_file_url,
+            program.image_file_checksum
         );
         crate::networking::download_manager::download_file(
             &program.image_file_url,
