@@ -52,3 +52,4 @@ uuid = { version = "1", features = [ "v4", "fast-rng", "macro-diagnostics", "ser
 
 [build-dependencies]
 tonic-build = "0.8"
+vergen = { version = "8.3.0", features = [ "build", "git", "git2" ] }

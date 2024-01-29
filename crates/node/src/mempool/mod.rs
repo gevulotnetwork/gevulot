@@ -1,8 +1,6 @@
 use async_trait::async_trait;
-use bytes::Bytes;
 use eyre::Result;
 use libsecp256k1::PublicKey;
-use pea2pea::protocols::Writing;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use thiserror::Error;
@@ -106,14 +104,5 @@ pub struct P2PTxHandler(Arc<RwLock<Mempool>>);
 impl networking::p2p::TxHandler for P2PTxHandler {
     async fn recv_tx(&self, tx: Transaction) -> Result<()> {
         self.0.write().await.add(tx).await
-    }
-}
-
-#[async_trait::async_trait]
-impl networking::p2p::TxChannel for networking::p2p::P2P {
-    async fn send_tx(&self, tx: &Transaction) -> Result<()> {
-        let bs = Bytes::from(bincode::serialize(tx)?);
-        self.broadcast(bs)?;
-        Ok(())
     }
 }

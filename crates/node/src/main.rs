@@ -201,10 +201,11 @@ async fn run(config: Arc<Config>) -> Result<()> {
 
     let p2p = Arc::new(
         networking::P2P::new(
-            "mempool-pubsub",
+            "gevulot-p2p-network",
             config.p2p_listen_addr,
             &config.p2p_psk_passphrase,
             Some(config.http_download_port),
+            config.p2p_advertised_listen_addr,
         )
         .await,
     );
@@ -326,6 +327,7 @@ async fn p2p_beacon(config: P2PBeaconConfig) -> Result<()> {
             config.p2p_listen_addr,
             &config.p2p_psk_passphrase,
             None,
+            config.p2p_advertised_listen_addr,
         )
         .await,
     );
