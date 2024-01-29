@@ -236,6 +236,7 @@ impl Handshake for P2P {
             }
         };
 
+        #[allow(clippy::infallible_destructuring_match)]
         let handshake_msg = match peer_handshake_msg {
             protocol::Handshake::V1(msg) => msg,
         };
@@ -278,7 +279,7 @@ impl Handshake for P2P {
             local_diff
         };
         local_diff.remove(&local_p2p_addr);
-        local_diff.remove(&remote_peer_p2p_addr);
+        local_diff.remove(remote_peer_p2p_addr);
 
         let node = self.node();
         for addr in local_diff {
