@@ -142,6 +142,7 @@ impl P2P {
 
     async fn process_diagnostics_request(
         &self,
+        source: SocketAddr,
         req: protocol::DiagnosticsRequestKind,
     ) -> io::Result<()> {
         let resp = protocol::DiagnosticsResponseV0::Version {
@@ -154,6 +155,12 @@ impl P2P {
                 env!("VERGEN_GIT_DESCRIBE")
             ),
         };
+
+        let bs =
+            Bytes::from(bincode::serialize(&resp).expect("diagnostics response serialization"));
+
+        // Reply to requester.
+        self.unicast(source, bs)?;
 
         Ok(())
     }
@@ -331,9 +338,13 @@ impl Reading for P2P {
 
         match bincode::deserialize(message.as_ref()) {
             Ok(protocol::Message::V0(msg)) => match msg {
-                protocol::MessageV0::Transaction(tx) => self.recv_tx(tx).await,
+                protocol::MessageV0::Transaction(tx) => {
+                    tracing::debug!("received transaction {}", tx.hash);
+                    self.recv_tx(tx).await;
+                }
                 protocol::MessageV0::DiagnosticsRequest(kind) => {
-                    self.process_diagnostics_request(kind).await?
+                    tracing::debug!("received diagnostics request");
+                    self.process_diagnostics_request(source, kind).await?;
                 }
                 // Nodes are expected to ignore the diagnostics response.
                 protocol::MessageV0::DiagnosticsResponse(_) => (),
@@ -350,6 +361,8 @@ impl TxChannel for P2P {
     async fn send_tx(&self, tx: &Transaction) -> Result<()> {
         let msg = protocol::Message::V0(protocol::MessageV0::Transaction(tx.clone()));
         let bs = Bytes::from(bincode::serialize(&msg)?);
+
+        tracing::debug!("broadcasting transaction {}", tx.hash);
         self.broadcast(bs)?;
         Ok(())
     }
