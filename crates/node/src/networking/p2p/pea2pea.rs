@@ -1,7 +1,7 @@
 use std::{
     collections::{BTreeSet, HashMap},
     io,
-    net::SocketAddr,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     str,
     sync::Arc,
 };
@@ -123,15 +123,22 @@ impl P2P {
     }
 
     async fn build_handshake_msg(&self) -> protocol::Handshake {
-        let local_bind_addr = self.node.listening_addr().unwrap();
+        let my_local_bind_addr = self.node.listening_addr().expect("p2p node listening_addr");
+
+        // If NAT listen address hasn't been set, default 0.0.0.0:<port> is
+        // used as a placeholder and replaced with the effective remote address
+        // observed by peer.
+        let my_p2p_listen_addr = self.nat_listen_addr.unwrap_or(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+            my_local_bind_addr.port(),
+        ));
+
         let peers: BTreeSet<SocketAddr> = {
             let mut peer_list = self.peer_list.write().await;
             // Ensure that our local address is present.
-            (*peer_list).insert(local_bind_addr);
+            (*peer_list).insert(my_p2p_listen_addr);
             peer_list.clone()
         };
-
-        let my_p2p_listen_addr = self.nat_listen_addr.unwrap_or(local_bind_addr);
 
         protocol::Handshake::V1(protocol::HandshakeV1 {
             my_p2p_listen_addr,
@@ -248,23 +255,38 @@ impl Handshake for P2P {
         };
 
         #[allow(clippy::infallible_destructuring_match)]
-        let handshake_msg = match peer_handshake_msg {
+        let mut handshake_msg = match peer_handshake_msg {
             protocol::Handshake::V1(msg) => msg,
         };
 
+        // Current TCP connection peer address.
+        let remote_peer = stream.peer_addr().unwrap();
+
+        // Check if the remote P2P listen address needs to be updated from
+        // the one observed in connection.
+        let default_ip = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
+        if handshake_msg.my_p2p_listen_addr.ip() == default_ip {
+            handshake_msg
+                .peers
+                .remove(&handshake_msg.my_p2p_listen_addr);
+            handshake_msg.my_p2p_listen_addr =
+                SocketAddr::new(remote_peer.ip(), handshake_msg.my_p2p_listen_addr.port());
+            handshake_msg.peers.insert(handshake_msg.my_p2p_listen_addr);
+        }
+
         tracing::debug!("node information exchanged.");
+
+        tracing::debug!("tcp connection peer address: {}", remote_peer);
         tracing::debug!(
             "peer advertised address: {}",
             handshake_msg.my_p2p_listen_addr
         );
+
         if tracing::enabled!(tracing::Level::DEBUG) {
             let print_peers: Vec<String> =
                 handshake_msg.peers.iter().map(|x| x.to_string()).collect();
             tracing::debug!("peer contact list addresses: {:#?}", print_peers);
         }
-
-        // Current TCP connection peer address.
-        let remote_peer = stream.peer_addr().unwrap();
 
         // Advertised remote peer listen address.
         let remote_peer_p2p_addr = &handshake_msg.my_p2p_listen_addr;
