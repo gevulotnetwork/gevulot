@@ -64,7 +64,7 @@ pub struct Config {
 
     #[arg(
         long,
-        long_help = "Port open to download file between nodes. Use P2P interface to bind.",
+        long_help = "Port open to download transaction data between nodes. Use P2P interface to bind.",
         env = "GEVULOT_HTTP_PORT",
         default_value = "9995"
     )]
