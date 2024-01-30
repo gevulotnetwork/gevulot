@@ -519,7 +519,7 @@ impl Database {
     }
 
     pub async fn mark_tx_executed(&self, tx_hash: &Hash) -> Result<()> {
-        sqlx::query("UPDATE transaction SET executed = true WHERE id = $1")
+        sqlx::query("UPDATE transaction SET executed = true WHERE hash = $1")
             .bind(tx_hash)
             .execute(&self.pool)
             .await?;
