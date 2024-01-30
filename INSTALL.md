@@ -161,11 +161,25 @@ In order to create initial tables or perform latest migrations, run:
 podman run -it --network=host quay.io/gevulot/node:latest migrate [--db-url=postgres://<username>:<password>@<dbhost>/gevulot]
 ```
 
-## Gevulot user
+## Gevulot networking
 
-Gevulot node runs as a normal user. For privilege separation purposes, create a user for Gevulot.
+Gevulot uses networking in following ways:
 
-In order to allow access to virtualization functionalities, add the user into `kvm` group.
+- JSON-RPC (over HTTP) to provide an end user API for submitting & querying transactions.
+- P2P networking to propagate transactions between the nodes.
+- HTTP to download data attached to transactions (including program images).
+
+In order to guarantee full functionality, access to all those services must be allowed.
+
+If Gevulot node is behind NAT, one must configure the public address that external nodes can connect to and configure port forwarding in such a way that both, the P2P port and configured HTTP port is accessible from the outside.
+
+Gevulot help
+
+```
+podman run -it quay.io/gevulot/node:latest run -h
+```
+
+...displays all possible configuration directives. When running the node as a systemd unit, an environment variable based configuration is preferred for easy configuration management.
 
 ## Gevulot node storage
 
