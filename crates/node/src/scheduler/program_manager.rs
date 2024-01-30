@@ -1,5 +1,6 @@
 use eyre::Result;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use thiserror::Error;
 use tokio::sync::Mutex as TMutex;
 
@@ -24,6 +25,14 @@ pub struct ProgramHandle {
 impl ProgramHandle {
     pub fn vm_id(&self) -> Arc<dyn VMId> {
         self.vm_handle.vm_id()
+    }
+
+    pub async fn is_alive(&self) -> Result<bool> {
+        self.vm_handle.is_alive().await
+    }
+
+    pub fn run_time(&self) -> Duration {
+        self.vm_handle.run_time()
     }
 }
 
