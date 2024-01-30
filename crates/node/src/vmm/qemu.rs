@@ -2,7 +2,6 @@ use std::{
     any::Any,
     collections::HashMap,
     fs::File,
-    io::Read,
     path::Path,
     process::{Child, Command, Stdio},
     sync::Arc,
@@ -458,37 +457,6 @@ impl VMClient for Qmp {
         dbg!(&resp);
         resp
     }
-}
-
-/*
-async fn watchdog(vm_handle: &QEMUVMHandle) {
-    loop {
-        if let Ok(status) = vm_handle
-            .qmp
-            .lock()
-            .expect("QEMUVMHandle.qmp.lock()")
-            .query_status()
-            .await
-        {
-            tracing::debug!("VCPU status: {:#?}", status);
-        } else {
-            tracing::error!("VM died");
-            let mut child = vm_handle.child.lock().expect("QEMUVMHandle.child.lock()");
-            dump_read(child.stdout.as_mut().unwrap());
-            dump_read(child.stderr.as_mut().unwrap());
-
-            child.wait().unwrap();
-        }
-
-        sleep(Duration::from_secs(3)).await;
-    }
-}
-    */
-
-fn dump_read(mut read: impl Read) {
-    let mut buffer = String::new();
-    read.read_to_string(&mut buffer).unwrap();
-    tracing::info!(buffer);
 }
 
 //
