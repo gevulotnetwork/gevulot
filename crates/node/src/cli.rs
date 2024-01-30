@@ -57,6 +57,13 @@ pub struct Config {
 
     #[arg(
         long,
+        long_help = "Advertised P2P listen address (if different from the effective P2P listen address)",
+        env = "GEVULOT_P2P_ADVERTISED_LISTEN_ADDR"
+    )]
+    pub p2p_advertised_listen_addr: Option<SocketAddr>,
+
+    #[arg(
+        long,
         long_help = "Port open to download file between nodes. Use P2P interface to bind.",
         env = "GEVULOT_HTTP_PORT",
         default_value = "9995"
@@ -148,6 +155,13 @@ pub struct P2PBeaconConfig {
         default_value = "127.0.0.1:9999"
     )]
     pub p2p_listen_addr: SocketAddr,
+
+    #[arg(
+        long,
+        long_help = "Advertised P2P listen address (if different from the effective P2P listen address)",
+        env = "GEVULOT_P2P_ADVERTISED_LISTEN_ADDR"
+    )]
+    pub p2p_advertised_listen_addr: Option<SocketAddr>,
 
     #[arg(
         long,

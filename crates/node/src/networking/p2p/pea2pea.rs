@@ -1,14 +1,14 @@
 use std::{
     collections::{BTreeSet, HashMap},
     io,
-    net::SocketAddr,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     str,
     sync::Arc,
 };
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 
-use super::noise;
+use super::{noise, protocol};
 use bytes::{Bytes, BytesMut};
 use eyre::Result;
 use gevulot_node::types::Transaction;
@@ -44,12 +44,17 @@ pub struct P2P {
     node: Node,
     noise_states: Arc<RwLock<HashMap<SocketAddr, noise::State>>>,
     tx_handler: Arc<tokio::sync::RwLock<Arc<dyn TxHandler>>>,
-    psk: Vec<u8>,
-    peer_list: Arc<tokio::sync::RwLock<BTreeSet<SocketAddr>>>,
-    //Map to connection local addr notified on_disconnect and the peer connection addr (peer_list).
+
+    // Peer connection map: <(P2P TCP connection's peer address) , (peer's advertised address in peer_list)>.
+    // This mapping is needed for proper cleanup on OnDisconnect.
     peer_addr_mapping: Arc<tokio::sync::RwLock<HashMap<SocketAddr, SocketAddr>>>,
+    peer_list: Arc<tokio::sync::RwLock<BTreeSet<SocketAddr>>>,
+
     pub peer_http_port_list: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>>,
+
     http_port: Option<u16>,
+    nat_listen_addr: Option<SocketAddr>,
+    psk: Vec<u8>,
 }
 
 impl Pea2Pea for P2P {
@@ -64,6 +69,7 @@ impl P2P {
         listen_addr: SocketAddr,
         psk_passphrase: &str,
         http_port: Option<u16>,
+        nat_listen_addr: Option<SocketAddr>,
     ) -> Self {
         let config = Config {
             name: Some(name.into()),
@@ -88,6 +94,7 @@ impl P2P {
             peer_addr_mapping: Default::default(),
             peer_http_port_list: Default::default(),
             http_port,
+            nat_listen_addr,
         };
 
         // Enable node functionalities.
@@ -114,109 +121,117 @@ impl P2P {
             tracing::debug!("submitted received tx to tx_handler");
         }
     }
+
+    async fn build_handshake_msg(&self) -> protocol::Handshake {
+        let my_local_bind_addr = self.node.listening_addr().expect("p2p node listening_addr");
+
+        // If NAT listen address hasn't been set, default 0.0.0.0:<port> is
+        // used as a placeholder and replaced with the effective remote address
+        // observed by peer.
+        let my_p2p_listen_addr = self.nat_listen_addr.unwrap_or(SocketAddr::new(
+            IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
+            my_local_bind_addr.port(),
+        ));
+
+        let peers: BTreeSet<SocketAddr> = {
+            let mut peer_list = self.peer_list.write().await;
+            // Ensure that our local address is present.
+            (*peer_list).insert(my_p2p_listen_addr);
+            peer_list.clone()
+        };
+
+        protocol::Handshake::V1(protocol::HandshakeV1 {
+            my_p2p_listen_addr,
+            peers,
+            http_port: self.http_port,
+        })
+    }
+
+    async fn process_diagnostics_request(
+        &self,
+        source: SocketAddr,
+        req: protocol::DiagnosticsRequestKind,
+    ) -> io::Result<()> {
+        let resp = protocol::DiagnosticsResponseV0::Version {
+            major: env!("CARGO_PKG_VERSION_MAJOR").parse::<u16>().unwrap(),
+            minor: env!("CARGO_PKG_VERSION_MINOR").parse::<u16>().unwrap(),
+            patch: env!("CARGO_PKG_VERSION_PATCH").parse::<u16>().unwrap(),
+            build: format!(
+                "{}: {}",
+                env!("VERGEN_BUILD_TIMESTAMP"),
+                env!("VERGEN_GIT_DESCRIBE")
+            ),
+        };
+
+        let bs =
+            Bytes::from(bincode::serialize(&resp).expect("diagnostics response serialization"));
+
+        // Reply to requester.
+        self.unicast(source, bs)?;
+
+        Ok(())
+    }
 }
 
 #[async_trait::async_trait]
 impl Handshake for P2P {
     async fn perform_handshake(&self, mut conn: Connection) -> io::Result<Connection> {
-        // create the noise objects
+        tracing::debug!("starting handshake");
+
+        // Create the noise objects.
         let noise_builder =
             snow::Builder::new("Noise_XXpsk3_25519_ChaChaPoly_BLAKE2s".parse().unwrap());
         let noise_keypair = noise_builder.generate_keypair().unwrap();
         let noise_builder = noise_builder.local_private_key(&noise_keypair.private);
         let noise_builder = noise_builder.psk(3, self.psk.as_slice());
 
-        // perform the noise handshake
+        // Perform the noise handshake.
         let (noise_state, _) =
             noise::handshake_xx(self, &mut conn, noise_builder, Bytes::new()).await?;
 
-        // save the noise state to be reused by Reading and Writing
+        // Save the noise state to be reused by Reading and Writing.
         self.noise_states.write().insert(conn.addr(), noise_state);
 
-        //exchange peer list
+        tracing::debug!("noise handshake finished. exchanging node information");
+
+        // Exchange application level handshake message.
         let node_conn_side = !conn.side();
         let stream = self.borrow_stream(&mut conn);
 
-        let local_bind_addr = self.node.listening_addr().unwrap();
-        let peer_list_bytes: Vec<u8> = {
-            let mut peer_list = self.peer_list.write().await;
-            (*peer_list).insert(local_bind_addr); //add it if not present.
-            bincode::serialize(&*peer_list).map_err(|err| {
-                std::io::Error::new(std::io::ErrorKind::Other, format!("serialize error:{err}"))
-            })?
-        };
-
-        let (distant_peer_list, distant_listening_addr, distant_http_port) = match node_conn_side {
+        let peer_handshake_msg: protocol::Handshake = match node_conn_side {
             ConnectionSide::Initiator => {
-                stream.write_u16(self.http_port.unwrap_or(0)).await?; //0 mean none.
-                                                                      //on_disconnect doesn't notify with the bind port but the connect port.
-                                                                      //can't be use to open a connection.
-                                                                      //So the connecting node notify it's bind address.
-                let bind_addr_bytes = bincode::serialize(&self.node.listening_addr().unwrap())
+                // Serialize & send our handshake message.
+                let handshake_msg_bytes = bincode::serialize(&self.build_handshake_msg().await)
                     .map_err(|err| {
                         std::io::Error::new(
                             std::io::ErrorKind::Other,
                             format!("serialize error:{err}"),
                         )
                     })?;
-                stream.write_u32(bind_addr_bytes.len() as u32).await?;
-                stream.write_all(&bind_addr_bytes).await?;
+                stream.write_u32(handshake_msg_bytes.len() as u32).await?;
+                stream.write_all(&handshake_msg_bytes).await?;
 
-                //send peer list
-                stream.write_u32(peer_list_bytes.len() as u32).await?;
-                stream.write_all(&peer_list_bytes).await?;
-
-                let distant_http_port = stream.read_u16().await?;
-                // receive the peer list
+                // Receive handshake message from peer.
                 let buffer_len = stream.read_u32().await? as usize;
-                //TODO validate buffer lengh
+
+                // TODO: Validate buffer length.
                 let mut buffer = vec![0; buffer_len];
                 stream.read_exact(&mut buffer).await?;
-                let distant_peer_list: BTreeSet<SocketAddr> = bincode::deserialize(&buffer)
-                    .map_err(|err| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            format!("deserialize error:{err}"),
-                        )
-                    })?;
 
-                self.peer_addr_mapping
-                    .write()
-                    .await
-                    .insert(stream.peer_addr().unwrap(), stream.peer_addr().unwrap());
-
-                (
-                    distant_peer_list,
-                    stream.peer_addr().unwrap(),
-                    distant_http_port,
-                )
+                bincode::deserialize(&buffer).map_err(|err| {
+                    std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        format!("deserialize error:{err}"),
+                    )
+                })?
             }
             ConnectionSide::Responder => {
-                let distant_http_port = stream.read_u16().await?;
-                //receive the connecting node addr
+                // Receive the handshake message from the connecting peer.
                 let buffer_len = stream.read_u32().await? as usize;
                 let mut buffer = vec![0; buffer_len];
                 stream.read_exact(&mut buffer).await?;
-                let distant_listening_addr: SocketAddr =
-                    bincode::deserialize(&buffer).map_err(|err| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            format!("deserialize error:{err}"),
-                        )
-                    })?;
-                {
-                    self.peer_list.write().await.insert(distant_listening_addr);
-                    self.peer_addr_mapping
-                        .write()
-                        .await
-                        .insert(stream.peer_addr().unwrap(), distant_listening_addr);
-                }
 
-                // receive the peer list
-                let buffer_len = stream.read_u32().await? as usize;
-                let mut buffer = vec![0; buffer_len];
-                stream.read_exact(&mut buffer).await?;
-                let distant_peer_list: BTreeSet<SocketAddr> = bincode::deserialize(&buffer)
+                let peer_handshake_msg: protocol::Handshake = bincode::deserialize(&buffer)
                     .map_err(|err| {
                         std::io::Error::new(
                             std::io::ErrorKind::Other,
@@ -224,21 +239,82 @@ impl Handshake for P2P {
                         )
                     })?;
 
-                stream.write_u16(self.http_port.unwrap_or(0)).await?;
-                //send peer list
-                stream.write_u32(peer_list_bytes.len() as u32).await?;
-                stream.write_all(&peer_list_bytes).await?;
+                // Serialize & send our handshake message.
+                let handshake_msg_bytes = bincode::serialize(&self.build_handshake_msg().await)
+                    .map_err(|err| {
+                        std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            format!("serialize error:{err}"),
+                        )
+                    })?;
+                stream.write_u32(handshake_msg_bytes.len() as u32).await?;
+                stream.write_all(&handshake_msg_bytes).await?;
 
-                (distant_peer_list, distant_listening_addr, distant_http_port)
+                peer_handshake_msg
             }
         };
 
-        tracing::trace!("New connection: local:{local_bind_addr} distant:{distant_listening_addr}");
+        #[allow(clippy::infallible_destructuring_match)]
+        let mut handshake_msg = match peer_handshake_msg {
+            protocol::Handshake::V1(msg) => msg,
+        };
 
-        //do peer comparition
+        // Current TCP connection peer address.
+        let remote_peer = stream.peer_addr().unwrap();
+
+        // Check if the remote P2P listen address needs to be updated from
+        // the one observed in connection.
+        let default_ip = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
+        if handshake_msg.my_p2p_listen_addr.ip() == default_ip {
+            handshake_msg
+                .peers
+                .remove(&handshake_msg.my_p2p_listen_addr);
+            handshake_msg.my_p2p_listen_addr =
+                SocketAddr::new(remote_peer.ip(), handshake_msg.my_p2p_listen_addr.port());
+            handshake_msg.peers.insert(handshake_msg.my_p2p_listen_addr);
+        }
+
+        tracing::debug!("node information exchanged.");
+
+        tracing::debug!("tcp connection peer address: {}", remote_peer);
+        tracing::debug!(
+            "peer advertised address: {}",
+            handshake_msg.my_p2p_listen_addr
+        );
+
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            let print_peers: Vec<String> =
+                handshake_msg.peers.iter().map(|x| x.to_string()).collect();
+            tracing::debug!("peer contact list addresses: {:#?}", print_peers);
+        }
+
+        // Advertised remote peer listen address.
+        let remote_peer_p2p_addr = &handshake_msg.my_p2p_listen_addr;
+
+        tracing::debug!(
+            "new connection: local:{} peer:{}",
+            self.node.listening_addr().unwrap(), // Cannot fail.
+            remote_peer
+        );
+
+        // Insert mapping between current TCP connection peer address and
+        // the advertised remote listen address (the one present in peer list).
+        self.peer_addr_mapping
+            .write()
+            .await
+            .insert(remote_peer, *remote_peer_p2p_addr);
+
+        // Capture the broadcasted public P2P listening addresses. These can be
+        // different than the actual bind addresses (e.g. w/ port forwarding).
+        let local_p2p_addr = self
+            .nat_listen_addr
+            .unwrap_or(self.node.listening_addr().unwrap());
+
+        // Merge remote peer list with the local one to get full view on the network.
         let mut local_diff = {
             let mut local_peer_list = self.peer_list.write().await;
-            let local_diff: BTreeSet<SocketAddr> = distant_peer_list
+            let local_diff: BTreeSet<SocketAddr> = handshake_msg
+                .peers
                 .difference(&*local_peer_list)
                 .cloned()
                 .collect();
@@ -246,20 +322,24 @@ impl Handshake for P2P {
             (*local_peer_list).append(&mut local_diff.iter().cloned().collect());
             local_diff
         };
-        local_diff.remove(&local_bind_addr);
-        local_diff.remove(&distant_listening_addr);
+        local_diff.remove(&local_p2p_addr);
+        local_diff.remove(remote_peer_p2p_addr);
 
+        tracing::debug!("found {} new nodes", local_diff.len());
         let node = self.node();
         for addr in local_diff {
-            //the return error is not use because:
-            //already logged and mostly because there's double connection between 2 peers.
+            tracing::debug!("connect to {}", &addr);
+
+            // XXX: If `node.connect(addr)` returns an error, it's omitted because:
+            // 1.) It's already logged.
+            // 2.) It often happens because there is already a connection between the 2 peers.
             let _ = node.connect(addr).await;
         }
 
-        self.peer_http_port_list.write().await.insert(
-            distant_listening_addr,
-            (distant_http_port != 0).then_some(distant_http_port),
-        );
+        self.peer_http_port_list
+            .write()
+            .await
+            .insert(handshake_msg.my_p2p_listen_addr, handshake_msg.http_port);
 
         Ok(conn)
     }
@@ -279,7 +359,18 @@ impl Reading for P2P {
         tracing::debug!(parent: self.node().span(), "decrypted a message from {}", source);
 
         match bincode::deserialize(message.as_ref()) {
-            Ok(tx) => self.recv_tx(tx).await,
+            Ok(protocol::Message::V0(msg)) => match msg {
+                protocol::MessageV0::Transaction(tx) => {
+                    tracing::debug!("received transaction {}", tx.hash);
+                    self.recv_tx(tx).await;
+                }
+                protocol::MessageV0::DiagnosticsRequest(kind) => {
+                    tracing::debug!("received diagnostics request");
+                    self.process_diagnostics_request(source, kind).await?;
+                }
+                // Nodes are expected to ignore the diagnostics response.
+                protocol::MessageV0::DiagnosticsResponse(_) => (),
+            },
             Err(err) => tracing::error!("failed to decode incoming transaction: {}", err),
         }
 
@@ -287,6 +378,17 @@ impl Reading for P2P {
     }
 }
 
+#[async_trait::async_trait]
+impl TxChannel for P2P {
+    async fn send_tx(&self, tx: &Transaction) -> Result<()> {
+        let msg = protocol::Message::V0(protocol::MessageV0::Transaction(tx.clone()));
+        let bs = Bytes::from(bincode::serialize(&msg)?);
+
+        tracing::debug!("broadcasting transaction {}", tx.hash);
+        self.broadcast(bs)?;
+        Ok(())
+    }
+}
 impl Writing for P2P {
     type Message = Bytes;
     type Codec = noise::Codec;
@@ -301,7 +403,7 @@ impl Writing for P2P {
 impl OnDisconnect for P2P {
     async fn on_disconnect(&self, addr: SocketAddr) {
         if let Some(peer_conn_addr) = self.peer_addr_mapping.write().await.remove(&addr) {
-            let distant_listening_addr = self.peer_list.write().await.remove(&peer_conn_addr);
+            let _ = self.peer_list.write().await.remove(&peer_conn_addr);
             self.peer_http_port_list
                 .write()
                 .await
@@ -356,6 +458,7 @@ mod tests {
                 "127.0.0.1:0".parse().unwrap(),
                 "secret passphrase",
                 None,
+                None,
             )
             .await,
             P2P::new(
@@ -363,6 +466,7 @@ mod tests {
                 "127.0.0.1:0".parse().unwrap(),
                 "secret passphrase",
                 Some(9995),
+                None,
             )
             .await,
             P2P::new(
@@ -370,6 +474,7 @@ mod tests {
                 "127.0.0.1:0".parse().unwrap(),
                 "secret passphrase",
                 Some(9995),
+                None,
             )
             .await,
         );
@@ -444,6 +549,7 @@ mod tests {
             "127.0.0.1:0".parse().unwrap(),
             "secret passphrase",
             None,
+            None,
         )
         .await;
         peer1.node().start_listening().await.expect("peer1 listen");
@@ -455,11 +561,12 @@ mod tests {
                 "127.0.0.1:0".parse().unwrap(),
                 "secret passphrase",
                 Some(8776),
+                None,
             )
             .await;
             peer2.node().start_listening().await.expect("peer2 listen");
-
             peer2.register_tx_handler(sink2.clone()).await;
+
             tracing::debug!("Nodes init Done");
 
             peer1
@@ -493,7 +600,7 @@ mod tests {
 
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-        //simulate the silent node de-connection by dropping the node.
+        // Simulate the silent node disconnection by dropping the node.
         tracing::debug!("send tx from peer1 to disconnected peer2");
         let tx = new_tx();
         peer1.send_tx(&tx).await.unwrap();
@@ -522,12 +629,14 @@ mod tests {
                 "127.0.0.1:0".parse().unwrap(),
                 "secret passphrase",
                 None,
+                None,
             )
             .await,
             P2P::new(
                 "peer2",
                 "127.0.0.1:0".parse().unwrap(),
                 "secret passphrase",
+                None,
                 None,
             )
             .await,

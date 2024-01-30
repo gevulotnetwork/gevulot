@@ -200,6 +200,7 @@ mod tests {
             p2p_discovery_addrs: vec![],
             p2p_listen_addr: "127.0.0.1:9999".parse().unwrap(),
             p2p_psk_passphrase: "secret.".to_string(),
+            p2p_advertised_listen_addr: None,
             provider: "qemu".to_string(),
             vsock_listen_port: 8080,
             num_cpus: 8,
