@@ -162,19 +162,23 @@ impl P2P {
 #[async_trait::async_trait]
 impl Handshake for P2P {
     async fn perform_handshake(&self, mut conn: Connection) -> io::Result<Connection> {
-        // create the noise objects
+        tracing::debug!("starting handshake");
+
+        // Create the noise objects.
         let noise_builder =
             snow::Builder::new("Noise_XXpsk3_25519_ChaChaPoly_BLAKE2s".parse().unwrap());
         let noise_keypair = noise_builder.generate_keypair().unwrap();
         let noise_builder = noise_builder.local_private_key(&noise_keypair.private);
         let noise_builder = noise_builder.psk(3, self.psk.as_slice());
 
-        // perform the noise handshake
+        // Perform the noise handshake.
         let (noise_state, _) =
             noise::handshake_xx(self, &mut conn, noise_builder, Bytes::new()).await?;
 
-        // save the noise state to be reused by Reading and Writing
+        // Save the noise state to be reused by Reading and Writing.
         self.noise_states.write().insert(conn.addr(), noise_state);
+
+        tracing::debug!("noise handshake finished. exchanging node information");
 
         // Exchange application level handshake message.
         let node_conn_side = !conn.side();
@@ -241,14 +245,25 @@ impl Handshake for P2P {
             protocol::Handshake::V1(msg) => msg,
         };
 
+        tracing::debug!("node information exchanged.");
+        tracing::debug!(
+            "peer advertised address: {}",
+            handshake_msg.my_p2p_listen_addr
+        );
+        if tracing::enabled!(tracing::Level::DEBUG) {
+            let print_peers: Vec<String> =
+                handshake_msg.peers.iter().map(|x| x.to_string()).collect();
+            tracing::debug!("peer contact list addresses: {:#?}", print_peers);
+        }
+
         // Current TCP connection peer address.
         let remote_peer = stream.peer_addr().unwrap();
 
         // Advertised remote peer listen address.
         let remote_peer_p2p_addr = &handshake_msg.my_p2p_listen_addr;
 
-        tracing::trace!(
-            "New connection: local:{} peer:{}",
+        tracing::debug!(
+            "new connection: local:{} peer:{}",
             self.node.listening_addr().unwrap(), // Cannot fail.
             remote_peer
         );
@@ -281,8 +296,11 @@ impl Handshake for P2P {
         local_diff.remove(&local_p2p_addr);
         local_diff.remove(remote_peer_p2p_addr);
 
+        tracing::debug!("found {} new nodes", local_diff.len());
         let node = self.node();
         for addr in local_diff {
+            tracing::debug!("connect to {}", &addr);
+
             // XXX: If `node.connect(addr)` returns an error, it's omitted because:
             // 1.) It's already logged.
             // 2.) It often happens because there is already a connection between the 2 peers.
