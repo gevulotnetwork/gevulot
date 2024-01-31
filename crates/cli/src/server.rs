@@ -8,11 +8,9 @@ use hyper::service::service_fn;
 use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use indicatif::{MultiProgress, ProgressBar, ProgressState, ProgressStyle};
-use sha3::{Digest, Sha3_256};
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::net::SocketAddr;
-use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::fs::File;
@@ -21,27 +19,16 @@ use tokio::task::JoinHandle;
 use tokio::time::{self, Duration};
 use tokio_util::io::ReaderStream;
 
+pub async fn start_server(bind_addr: SocketAddr) -> std::io::Result<TcpListener> {
+    TcpListener::bind(bind_addr).await
+}
+
 //start the local server and serve the specified file path.
 //Return the file_names and associated Url to get the file from the server.
 pub async fn serve_file(
-    bind_addr: SocketAddr,
-    files: &[PathBuf],
-) -> crate::BoxResult<(HashMap<&PathBuf, String>, JoinHandle<()>)> {
-    let listener = TcpListener::bind(bind_addr).await?;
-
-    // Re-read the listen address in case random port was used.
-    let listener_addr = listener.local_addr()?;
-
-    let files_data: Vec<(&PathBuf, (String, String))> = files
-        .iter()
-        .map(|path| (path, calculate_file_url_digest(path, listener_addr)))
-        .collect();
-    //create the list of file to be served.
-    let mut served_files: HashMap<String, PathBuf> = files_data
-        .iter()
-        .map(|(path, (_url, hash))| (hash.to_string(), path.to_path_buf()))
-        .collect();
-
+    listener: TcpListener,
+    mut served_files: HashMap<String, PathBuf>,
+) -> crate::BoxResult<JoinHandle<()>> {
     //build progress bar
     let multi_pg = MultiProgress::new();
     let pg_map: HashMap<String, ProgressBar> = served_files
@@ -129,12 +116,7 @@ pub async fn serve_file(
         }
     });
 
-    //return served file url.
-    let ret = files_data
-        .into_iter()
-        .map(|(path, (url, _hash))| (path, url))
-        .collect();
-    Ok((ret, jh))
+    Ok(jh)
 }
 
 async fn server_process_file(
@@ -184,18 +166,6 @@ async fn server_process_file(
         .status(StatusCode::OK)
         .body(BodyExt::boxed(stream_body))
         .unwrap())
-}
-
-//calculate the file name digest and the local server url.
-//return the file path, file_url and file digest
-fn calculate_file_url_digest(file_path: &Path, listen_addr: SocketAddr) -> (String, String) {
-    //use to_string_lossy because path verification should have been done before.
-    let file_name = file_path.to_string_lossy();
-    let mut hasher = Sha3_256::new();
-    hasher.update(file_name.as_bytes());
-    let digest = hex::encode(hasher.finalize());
-    let file_url = format!("http://{}/{}", listen_addr, digest);
-    (file_url, digest)
 }
 
 fn build_file_progress_bar(file_name: String, total_size: u64) -> ProgressBar {

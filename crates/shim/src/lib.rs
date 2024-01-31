@@ -1,5 +1,6 @@
 use std::fs::File;
 use std::io::{BufRead, BufReader};
+use std::path::PathBuf;
 use std::time::Instant;
 use std::{path::Path, thread::sleep, time::Duration};
 
@@ -44,6 +45,16 @@ impl Task {
             data,
             files,
         })
+    }
+
+    pub fn get_task_files_path<'a, 'b>(&'a self, workspace: &'b str) -> Vec<(&'a str, PathBuf)> {
+        self.files
+            .iter()
+            .map(|name| {
+                let path = Path::new(workspace).join(&self.id).join(name);
+                (name.as_str(), path)
+            })
+            .collect()
     }
 }
 

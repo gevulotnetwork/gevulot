@@ -10,6 +10,10 @@ const HASH_SIZE: usize = 32;
 pub struct Hash([u8; HASH_SIZE]);
 
 impl Hash {
+    pub fn new(bytes: [u8; HASH_SIZE]) -> Self {
+        Hash(bytes)
+    }
+
     pub fn to_vec(&self) -> Vec<u8> {
         self.0.to_vec()
     }
