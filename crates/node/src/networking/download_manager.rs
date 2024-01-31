@@ -24,6 +24,13 @@ pub async fn serve_files(config: &Config) -> Result<JoinHandle<()>> {
     let jh = tokio::spawn({
         let data_directory = config.data_directory.clone();
         async move {
+            tracing::info!(
+                "listening for http at {}",
+                listener
+                    .local_addr()
+                    .expect("http listener's local address")
+            );
+
             loop {
                 match listener.accept().await {
                     Ok((stream, _from)) => {
