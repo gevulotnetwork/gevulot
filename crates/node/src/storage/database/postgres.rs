@@ -446,7 +446,7 @@ impl Database {
                                 checksum,
                             } => {
                                 sqlx::query(
-                                    "INSERT INTO program_input_data ( workflow_step_id, file_name, file_url, checksum ) VALUES ( $1, $2, $3, $4 ) ON CONFLICT (workflow_step_id) DO NOTHING")
+                                    "INSERT INTO program_input_data ( workflow_step_id, file_name, file_url, checksum ) VALUES ( $1, $2, $3, $4 ) ON CONFLICT (workflow_step_id, file_name) DO NOTHING")
                                     .bind(step_id)
                                     .bind(file_name)
                                     .bind(file_url)
