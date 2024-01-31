@@ -35,6 +35,9 @@ use crate::{
 use self::program_manager::{ProgramError, ProgramHandle};
 use self::resource_manager::ResourceError;
 
+// If VM doesn't have running task within `MAX_VM_IDLE_RUN_TIME`, it will be terminated.
+const MAX_VM_IDLE_RUN_TIME: Duration = Duration::from_secs(10);
+
 struct RunningTask {
     task: Task,
     vm_id: Arc<dyn VMId>,
@@ -86,6 +89,9 @@ impl Scheduler {
 
     pub async fn run(&self) -> Result<()> {
         'SCHEDULING_LOOP: loop {
+            // Reap terminated tasks & VMs.
+            self.reap_zombies().await;
+
             // Before scheduling new workload, try to start pending programs first.
             {
                 let mut pending_programs = self.pending_programs.lock().await;
@@ -102,6 +108,9 @@ impl Scheduler {
                             let err = e.downcast_ref::<ResourceError>().unwrap();
                             tracing::info!("resources unavailable: {}", err);
                             sleep(Duration::from_millis(500)).await;
+
+                            // Return the popped program_id back to pending queue.
+                            pending_programs.push_front(program_id);
                             continue 'SCHEDULING_LOOP;
                         }
                         Err(e) => panic!("failed to start program: {e}"),
@@ -223,7 +232,117 @@ impl Scheduler {
         Ok(())
     }
 
-    async fn terminate_vm(&self, program: Hash, vm_id: Arc<dyn VMId>) {}
+    async fn reap_zombies(&self) {
+        let mut running_tasks = self.running_tasks.lock().await;
+        let mut running_vms = self.running_vms.lock().await;
+
+        let mut zombies = vec![];
+        for task in running_tasks.iter() {
+            // TODO: Add maximum running time limit for a task here.
+
+            if let Some(vm_handle) = running_vms
+                .iter()
+                .find(|x| x.vm_id().eq(task.vm_id.clone()))
+            {
+                tracing::debug!(
+                    "inspecting if VM for task id {} is still alive",
+                    task.task.id
+                );
+                match vm_handle.is_alive().await {
+                    Ok(true) => {
+                        tracing::debug!("VM is still alive.");
+                        continue; // All good
+                    }
+                    Ok(false) => {
+                        // VM is not running anymore.
+                        tracing::warn!(
+                            "VM {} running for task (id: {}, tx hash: {}) has stopped",
+                            task.vm_id,
+                            task.task.id,
+                            task.task.tx
+                        );
+                        zombies.push((task.task.id, task.vm_id.clone()));
+                    }
+                    Err(err) => {
+                        tracing::error!("failed to query VM state for {} running task (id: {}, tx hash: {}): {}", task.vm_id, task.task.id, task.task.tx, err);
+                        zombies.push((task.task.id, task.vm_id.clone()));
+                    }
+                }
+            } else {
+                // VM doesn't exist. Shouldn't happen...
+                tracing::error!("found task (id: {}, tx hash: {}) running on VM {} but not the corresponding running VM", task.task.id, task.task.tx, task.vm_id);
+                zombies.push((task.task.id, task.vm_id.clone()));
+            }
+        }
+
+        while let Some((task_id, vm_id)) = zombies.pop() {
+            tracing::debug!(
+                "reaping stopped task (id: {}) running on VM {}",
+                task_id,
+                vm_id
+            );
+
+            // For each zombie task:
+            // - Stop the VM.
+            // - Remove the VM from the `running_vms`.
+            // - Remove the task from the `running_tasks`.
+            //
+            if let Some(idx) = running_vms.iter().position(|x| x.vm_id().eq(vm_id.clone())) {
+                let vm_handle = running_vms.swap_remove(idx);
+                if let Err(err) = self
+                    .program_manager
+                    .lock()
+                    .await
+                    .stop_program(vm_handle)
+                    .await
+                {
+                    tracing::error!("failed to stop VM {}: {}", vm_id, err);
+                }
+            }
+
+            if let Some(idx) = running_tasks.iter().position(|x| x.task.id == task_id) {
+                let _ = running_tasks.swap_remove(idx);
+            }
+        }
+
+        // Now, reap VMs that don't have running task.
+        let mut zombies = vec![];
+        for vm_handle in running_vms.iter() {
+            if !running_tasks.iter().any(|x| x.vm_id.eq(vm_handle.vm_id())) {
+                // XXX: Following is not 100% correct. It checks the runtime
+                // from the very beginning of the whole VM's start-up, which
+                // is not the same as idle runtime. However, right now each VM
+                // is expected to be run only for one task and this check is
+                // not visited until there's no running task for the given VM
+                // so it's ought to be ok.
+                if vm_handle.run_time() > MAX_VM_IDLE_RUN_TIME {
+                    tracing::debug!(
+                        "VM {} has been running idle for {:#?}; scheduling for termination",
+                        vm_handle.vm_id(),
+                        vm_handle.run_time()
+                    );
+                    zombies.push(vm_handle.vm_id());
+                }
+            }
+        }
+
+        while let Some(vm_id) = zombies.pop() {
+            tracing::debug!("reaping idle VM {}", vm_id);
+
+            if let Some(idx) = running_vms.iter().position(|x| x.vm_id().eq(vm_id.clone())) {
+                let vm_handle = running_vms.swap_remove(idx);
+                if let Err(err) = self
+                    .program_manager
+                    .lock()
+                    .await
+                    .stop_program(vm_handle)
+                    .await
+                {
+                    tracing::error!("failed to stop VM {}: {}", vm_id, err);
+                }
+            }
+        }
+    }
 }
 
 #[async_trait]

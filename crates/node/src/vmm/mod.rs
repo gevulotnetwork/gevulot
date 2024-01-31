@@ -1,6 +1,7 @@
-use std::any::Any;
 use std::path::Path;
 use std::sync::Arc;
+use std::time::Instant;
+use std::{any::Any, time::Duration};
 
 use crate::types::{program::ResourceRequest, Program};
 use async_trait::async_trait;
@@ -14,13 +15,28 @@ pub trait VMId: Send + Sync + std::fmt::Display {
     fn eq(&self, x: Arc<dyn VMId>) -> bool;
 }
 
+#[async_trait::async_trait]
+pub trait VMClient: Send + Sync {
+    async fn is_alive(&self) -> Result<bool>;
+}
+
 pub struct VMHandle {
+    start_time: Instant,
     vm_id: Arc<dyn VMId>,
+    vm_client: Arc<dyn VMClient>,
 }
 
 impl VMHandle {
     pub fn vm_id(&self) -> Arc<dyn VMId> {
         self.vm_id.clone()
+    }
+
+    pub async fn is_alive(&self) -> Result<bool> {
+        self.vm_client.is_alive().await
+    }
+
+    pub fn run_time(&self) -> Duration {
+        self.start_time.elapsed()
     }
 }
 

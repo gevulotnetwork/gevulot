@@ -2,11 +2,10 @@ use std::{
     any::Any,
     collections::HashMap,
     fs::File,
-    io::Read,
     path::Path,
     process::{Child, Command, Stdio},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use async_trait::async_trait;
@@ -21,13 +20,14 @@ use serde_json::json;
 use tokio::{
     io::{ReadHalf, WriteHalf},
     net::{TcpStream, ToSocketAddrs},
+    sync::Mutex,
     time::sleep,
 };
 use tokio_vsock::{Incoming, VsockConnectInfo, VsockListener};
 use tonic::Extensions;
 use vsock::get_local_cid;
 
-use super::{vm_server::ProgramRegistry, Provider, VMHandle, VMId};
+use super::{vm_server::ProgramRegistry, Provider, VMClient, VMHandle, VMId};
 use crate::{
     cli::Config,
     nanos,
@@ -215,7 +215,7 @@ impl Provider for Qemu {
             .args(["-device", "virtio-rng-pci"])
             .args(["-machine", "accel=kvm:tcg"])
             .args(["-cpu", "host"])
-            //.arg("-no-reboot")
+            .arg("-no-reboot")
             .arg("-no-shutdown")
             .args(["-cpu", "max"])
             // IMAGE FILE
@@ -272,74 +272,47 @@ impl Provider for Qemu {
 
         qemu_vm_handle.child = Some(cmd.spawn().expect("failed to start VM"));
 
-        sleep(Duration::from_millis(300)).await;
-        let mut qmp_client = Qmp::new(format!("localhost:{qmp_port}")).await?;
+        let start_time = Instant::now();
+
+        // Reconnect until the VM starts.
+        let qmp_client = {
+            let mut client = None;
+            let mut retry_count = 0;
+            while client.is_none() {
+                if retry_count > 100 {
+                    // If we can't start QEMU, there's no point running the node
+                    // and the best way to capture operator's attention is to panic.
+                    panic!("failed to start QEMU; aborting.");
+                }
+
+                match Qmp::new(format!("localhost:{qmp_port}")).await {
+                    Ok(c) => client = Some(c),
+                    Err(_) => {
+                        retry_count += 1;
+                        sleep(Duration::from_millis(10)).await;
+                    }
+                };
+            }
+            client.unwrap()
+        };
 
         // Attach the workspace volume.
         let err_add = qmp_client.blockdev_add("workspace", workspace_file).await;
         if err_add.is_err() {
             tracing::error!("blockdev_add failed: {:?}", err_add);
         }
-        //sleep(Duration::from_millis(100)).await;
+
         let err_add = qmp_client.device_add("workspace", 1).await;
         if err_add.is_err() {
             tracing::error!("device_add failed: {:?}", err_add);
         }
-        //sleep(Duration::from_millis(100)).await;
+
         qmp_client.system_reset().await?;
-        //sleep(Duration::from_millis(100)).await;
-
-        /*
-        tokio::spawn({
-            let mut qemu_vm_handle = qemu_vm_handle.clone();
-            async move {
-                watchdog(&mut qemu_vm_handle).await;
-            }
-        });
-        */
-
-        //watchdog(&mut qemu_vm_handle);
-
-        /*
-        for _ in 1..5 {
-            if let Ok(status) = qmp_client.query_status().await {
-                tracing::debug!("VCPU status: {:#?}", status);
-                let stdout = qemu_vm_handle.child.as_mut().unwrap().stdout.as_mut();
-                if stdout.is_some() {
-                    dump_read(&mut stdout.unwrap());
-                }
-                /*
-                dump_read(
-                    &mut qemu_vm_handle
-                        .child
-                        .as_mut()
-                        .unwrap()
-                        .stderr
-                        .as_mut()
-                        .unwrap(),
-                );
-                */
-            } else {
-                tracing::error!("VM died");
-                let stdout = qemu_vm_handle.child.as_mut().unwrap().stdout.as_mut();
-                if stdout.is_some() {
-                    dump_read(&mut stdout.unwrap());
-                }
-
-                let stderr = qemu_vm_handle.child.as_mut().unwrap().stderr.as_mut();
-                if stderr.is_some() {
-                    dump_read(&mut stderr.unwrap());
-                }
-
-                qemu_vm_handle.child.as_mut().unwrap().wait().unwrap();
-            }
-
-            sleep(Duration::from_secs(3)).await;
-        }
-            */
 
         Ok(VMHandle {
+            start_time,
             vm_id: Arc::new(cid),
+            vm_client: Arc::new(qmp_client),
         })
     }
 
@@ -374,7 +347,10 @@ impl Provider for Qemu {
 }
 
 struct Qmp {
-    stream: QapiStream<QmpStreamTokio<ReadHalf<TcpStream>>, QmpStreamTokio<WriteHalf<TcpStream>>>,
+    #[allow(clippy::type_complexity)]
+    stream: Mutex<
+        QapiStream<QmpStreamTokio<ReadHalf<TcpStream>>, QmpStreamTokio<WriteHalf<TcpStream>>>,
+    >,
 }
 
 impl Qmp {
@@ -382,19 +358,24 @@ impl Qmp {
         let stream = QmpStreamTokio::open_tcp(addr).await?;
         tracing::debug!("QMP: {:#?}", stream.capabilities);
         let stream = stream.negotiate().await?;
+        let stream = Mutex::new(stream);
 
         Ok(Qmp { stream })
     }
 
-    async fn query_status(&mut self) -> Result<StatusInfo> {
+    async fn query_status(&self) -> Result<StatusInfo> {
         self.stream
+            .lock()
+            .await
             .execute(qmp::query_status {})
             .await
             .map_err(|e| e.into())
     }
 
-    async fn blockdev_add(&mut self, node_name: &str, device_file: &str) -> Result<()> {
+    async fn blockdev_add(&self, node_name: &str, device_file: &str) -> Result<()> {
         self.stream
+            .lock()
+            .await
             .execute(qmp::blockdev_add(qmp::BlockdevOptions::raw {
                 base: qmp::BlockdevOptionsBase {
                     detect_zeroes: None,
@@ -437,7 +418,7 @@ impl Qmp {
             .map(|_| ())
     }
 
-    async fn device_add(&mut self, node_name: &str, disk_id: u8) -> Result<()> {
+    async fn device_add(&self, node_name: &str, disk_id: u8) -> Result<()> {
         let mut args = serde_json::map::Map::new();
         args.insert(String::from("drive"), json!(node_name));
         args.insert(
@@ -445,6 +426,8 @@ impl Qmp {
             json!(format!("persistent-disk-{disk_id}")),
         );
         self.stream
+            .lock()
+            .await
             .execute(qmp::device_add {
                 bus: Some("scsi0.0".to_string()),
                 id: Some(node_name.to_string()),
@@ -456,8 +439,10 @@ impl Qmp {
             .map(|_| ())
     }
 
-    async fn system_reset(&mut self) -> Result<()> {
+    async fn system_reset(&self) -> Result<()> {
         self.stream
+            .lock()
+            .await
             .execute(qmp::system_reset {})
             .await
             .map_err(|e| e.into())
@@ -465,35 +450,13 @@ impl Qmp {
     }
 }
 
-/*
-async fn watchdog(vm_handle: &QEMUVMHandle) {
-    loop {
-        if let Ok(status) = vm_handle
-            .qmp
-            .lock()
-            .expect("QEMUVMHandle.qmp.lock()")
-            .query_status()
-            .await
-        {
-            tracing::debug!("VCPU status: {:#?}", status);
-        } else {
-            tracing::error!("VM died");
-            let mut child = vm_handle.child.lock().expect("QEMUVMHandle.child.lock()");
-            dump_read(child.stdout.as_mut().unwrap());
-            dump_read(child.stderr.as_mut().unwrap());
-
-            child.wait().unwrap();
-        }
-
-        sleep(Duration::from_secs(3)).await;
+#[async_trait::async_trait]
+impl VMClient for Qmp {
+    async fn is_alive(&self) -> Result<bool> {
+        let resp = self.query_status().await.map(|status| status.running);
+        dbg!(&resp);
+        resp
     }
-}
-    */
-
-fn dump_read(mut read: impl Read) {
-    let mut buffer = String::new();
-    read.read_to_string(&mut buffer).unwrap();
-    tracing::info!(buffer);
 }
 
 //
