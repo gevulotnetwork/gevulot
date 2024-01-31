@@ -453,9 +453,7 @@ impl Qmp {
 #[async_trait::async_trait]
 impl VMClient for Qmp {
     async fn is_alive(&self) -> Result<bool> {
-        let resp = self.query_status().await.map(|status| status.running);
-        dbg!(&resp);
-        resp
+        self.query_status().await.map(|status| status.running)
     }
 }
 
