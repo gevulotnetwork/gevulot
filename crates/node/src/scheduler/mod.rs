@@ -244,13 +244,13 @@ impl Scheduler {
                 .iter()
                 .find(|x| x.vm_id().eq(task.vm_id.clone()))
             {
-                tracing::debug!(
+                tracing::trace!(
                     "inspecting if VM for task id {} is still alive",
                     task.task.id
                 );
                 match vm_handle.is_alive().await {
                     Ok(true) => {
-                        tracing::debug!("VM is still alive.");
+                        tracing::trace!("VM is still alive.");
                         continue; // All good
                     }
                     Ok(false) => {
