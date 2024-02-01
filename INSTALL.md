@@ -233,6 +233,9 @@ Network=host
 # Expose JSON-RPC.
 ExposeHostPort=9944
 
+# Expose HTTP
+ExposeHostPort=9995
+
 # Expose P2P.
 ExposeHostPort=9999
 
