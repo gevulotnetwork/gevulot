@@ -282,7 +282,8 @@ impl Provider for Qemu {
                 if retry_count > 100 {
                     // If we can't start QEMU, there's no point running the node
                     // and the best way to capture operator's attention is to panic.
-                    panic!("failed to start QEMU; aborting.");
+                    tracing::error!("failed to start QEMU; aborting.");
+                    std::process::exit(1);
                 }
 
                 match Qmp::new(format!("localhost:{qmp_port}")).await {
