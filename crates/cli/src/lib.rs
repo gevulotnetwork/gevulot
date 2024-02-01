@@ -1,4 +1,5 @@
 use crate::file::FileData;
+use gevulot_node::types::transaction::ProgramMetadata;
 use gevulot_node::types::Hash;
 use gevulot_node::{
     rpc_client::RpcClient,
@@ -175,14 +176,16 @@ pub async fn run_deploy_command(
     let prover_data: FileData = file_data.swap_remove(0).into();
     let verifier_data: FileData = file_data.swap_remove(0).into();
 
-    let prover_hash = prover_data.checksum.to_string();
-    let verifier_hash = verifier_data.checksum.to_string();
+    let prover_prg_data: ProgramMetadata = prover_data.into();
+    let prover_prg_hash = prover_prg_data.hash;
+    let verifier_prg_data: ProgramMetadata = verifier_data.into();
+    let verifier_prg_hash = verifier_prg_data.hash;
 
     let tx = Transaction::new(
         Payload::Deploy {
             name,
-            prover: prover_data.into(),
-            verifier: verifier_data.into(),
+            prover: prover_prg_data,
+            verifier: verifier_prg_data,
         },
         &key,
     );
@@ -193,7 +196,11 @@ pub async fn run_deploy_command(
         let _ = server_jh.await;
     }
 
-    Ok((tx_hash.to_string(), prover_hash, verifier_hash))
+    Ok((
+        tx_hash.to_string(),
+        prover_prg_hash.to_string(),
+        verifier_prg_hash.to_string(),
+    ))
 }
 
 async fn send_transaction(client: &RpcClient, tx: &Transaction) -> Result<Hash, String> {

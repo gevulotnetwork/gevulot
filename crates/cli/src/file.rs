@@ -65,9 +65,9 @@ where
                 }
 
                 let file = path.to_string_lossy();
-                let (url, hash) = calculate_file_url_digest(&file, listen_addr.unwrap()); //unwrap tested just before.
+                let (url, url_hash) = calculate_file_url_digest(&file, listen_addr.unwrap()); //unwrap tested just before.
 
-                server_data.insert(hash, path.clone());
+                server_data.insert(url_hash, path.clone());
                 let (filename, checksum) = extract_hash_from_file_content(&path)
                     .and_then(|file_hash| {
                         path.file_name()
