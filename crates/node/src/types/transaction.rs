@@ -295,6 +295,7 @@ impl Transaction {
     pub fn compute_hash(&self) -> Hash {
         let mut hasher = Sha3_256::new();
         let mut buf = vec![];
+        hasher.update(self.author.serialize());
         self.payload.serialize_into(&mut buf);
         hasher.update(buf);
         hasher.update(self.nonce.to_be_bytes());
