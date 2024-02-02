@@ -47,7 +47,7 @@ impl File {
             .join(task_id_dst)
             .join(path);
 
-        tracing::debug!(
+        tracing::info!(
             "moving file from {:#?} to {:#?}",
             src_file_path,
             dst_file_path

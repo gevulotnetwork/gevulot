@@ -47,6 +47,7 @@ pub async fn download_file(
             let mut resp = None;
             for url in peer_urls {
                 if let Ok(val) = http_client.get(url.clone()).send().await {
+                    tracing::trace!("download_file from peer url:{url}");
                     resp = Some(val);
                     break;
                 }

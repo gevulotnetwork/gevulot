@@ -210,7 +210,11 @@ impl Scheduler {
                         None
                     }
                     _ => {
-                        tracing::error!("failed to compute next task for tx:{}: {}", tx.hash, e);
+                        tracing::error!(
+                            "workflow error, failed to compute next task for tx:{}: {}",
+                            tx.hash,
+                            e
+                        );
                         None
                     }
                 }
