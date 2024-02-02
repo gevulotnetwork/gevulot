@@ -182,12 +182,13 @@ impl GRPCClient {
             path: name.clone(),
         };
 
-        let path = match Path::new(&self.workspace)
-            .join(task_id)
-            .join(name.clone())
-            .into_os_string()
-            .into_string()
-        {
+        let file_path = Path::new(&self.workspace).join(task_id).join(name.clone());
+        if let Some(parent) = file_path.parent() {
+            if let Ok(false) = tokio::fs::try_exists(parent).await {
+                tokio::fs::create_dir_all(parent).await?;
+            }
+        }
+        let path = match file_path.into_os_string().into_string() {
             Ok(path) => path,
             Err(e) => panic!("failed to construct path for a file to write: {:?}", e),
         };
@@ -206,6 +207,7 @@ impl GRPCClient {
             .get_file(file_req)
             .await?
             .into_inner();
+
         let out_file = tokio::fs::File::create(path.clone()).await?;
         let mut writer = tokio::io::BufWriter::new(out_file);
 
@@ -226,7 +228,6 @@ impl GRPCClient {
                 }
             }
         }
-
         writer.flush().await?;
 
         println!("downloaded {} bytes for {}", &total_bytes, &name);
