@@ -52,7 +52,7 @@ fn start_logger(default_level: LevelFilter) {
     tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_span_events(FmtSpan::CLOSE)
-        .with_target(false)
+        .with_target(true)
         .init();
 
     // Comment above & uncomment below for tokio-console.
