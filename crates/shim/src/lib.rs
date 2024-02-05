@@ -181,6 +181,13 @@ impl GRPCClient {
             Err(e) => panic!("failed to construct path for a file to write: {:?}", e),
         };
 
+        // Ensure any necessary subdirectories exists.
+        if let Some(parent) = Path::new(&path).parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .expect("task file mkdir");
+        }
+
         let mut stream = self
             .client
             .lock()
