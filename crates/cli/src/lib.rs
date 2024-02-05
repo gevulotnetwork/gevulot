@@ -173,8 +173,8 @@ pub async fn run_deploy_command(
     )
     .await?;
 
-    let prover_data: FileData = file_data.swap_remove(0).into();
-    let verifier_data: FileData = file_data.swap_remove(0).into();
+    let prover_data: FileData = file_data.swap_remove(0);
+    let verifier_data: FileData = file_data.swap_remove(0);
 
     let prover_prg_data: ProgramMetadata = prover_data.into();
     let prover_prg_hash = prover_prg_data.hash;
