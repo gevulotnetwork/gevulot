@@ -307,6 +307,7 @@ async fn run(config: Arc<Config>) -> Result<()> {
         database.clone(),
         mempool.clone(),
         asset_mgr.clone(),
+        database.clone(), // AclWhitelist impl.
     )
     .await?;
 
