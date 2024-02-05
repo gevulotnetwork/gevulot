@@ -1,4 +1,4 @@
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, rc::Rc};
 
 use super::hash::Hash;
 use super::signature::Signature;
@@ -12,16 +12,14 @@ use thiserror::Error;
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub enum TransactionTree {
     Root {
-        children: Vec<Arc<TransactionTree>>,
+        children: Vec<Rc<TransactionTree>>,
         hash: Hash,
     },
     Node {
-        parent: Arc<TransactionTree>,
-        children: Vec<Arc<TransactionTree>>,
+        children: Vec<Rc<TransactionTree>>,
         hash: Hash,
     },
     Leaf {
-        parent: Arc<TransactionTree>,
         hash: Hash,
     },
 }
