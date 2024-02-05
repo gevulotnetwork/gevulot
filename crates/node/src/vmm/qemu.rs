@@ -214,9 +214,6 @@ impl Provider for Qemu {
             .args(["-m", &format!("{mem_req}M")])
             .args(["-device", "virtio-rng-pci"])
             .args(["-machine", "accel=kvm:tcg"])
-            .args(["-cpu", "host"])
-            .arg("-no-reboot")
-            .arg("-no-shutdown")
             .args(["-cpu", "max"])
             // IMAGE FILE
             .args([
