@@ -47,7 +47,7 @@ impl Task {
         })
     }
 
-    pub fn get_task_files_path<'a, 'b>(&'a self, workspace: &'b str) -> Vec<(&'a str, PathBuf)> {
+    pub fn get_task_files_path<'a>(&'a self, workspace: &str) -> Vec<(&'a str, PathBuf)> {
         self.files
             .iter()
             .map(|name| {
