@@ -1,6 +1,8 @@
 use clap::Parser;
 use clap::Subcommand;
 use gevulot_node::rpc_client::RpcClient;
+use gevulot_node::types::Hash;
+use gevulot_node::types::TransactionTree;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
@@ -92,6 +94,9 @@ enum ConfCommands {
         #[clap(short, long, value_name = "TASK ARRAY")]
         tasks: String,
     },
+    PrintTxTree {
+        hash: String,
+    },
     /// Calculate the Hash of the specified file.
     #[command(arg_required_else_help = true)]
     CalculateHash {
@@ -154,6 +159,39 @@ async fn main() {
                 Ok(tx_hash) => println!("The hash of the file is: {tx_hash}"),
                 Err(err) => println!("An error hash calculus Tx :{err}"),
             }
+        }
+        ConfCommands::PrintTxTree { hash } => {
+            let hash = Hash::from(hash);
+            match client.get_tx_tree(&hash).await {
+                Ok(tx_tree) => print_tx_tree(&tx_tree, 0),
+                Err(err) => println!("An error while fetching transaction tree: {err}"),
+            };
+        }
+    }
+}
+
+fn print_tx_tree(tree: &TransactionTree, indentation: u16) {
+    match tree {
+        TransactionTree::Root { children, hash } => {
+            println!("Root: {hash}");
+            children
+                .iter()
+                .for_each(|x| print_tx_tree(&x, indentation + 1));
+        }
+        TransactionTree::Node { children, hash } => {
+            println!(
+                "{}Node: {hash}",
+                (0..indentation).map(|_| "\t").collect::<String>()
+            );
+            children
+                .iter()
+                .for_each(|x| print_tx_tree(&x, indentation + 1));
+        }
+        TransactionTree::Leaf { hash } => {
+            println!(
+                "{}Leaf: {hash}",
+                (0..indentation).map(|_| "\t").collect::<String>()
+            );
         }
     }
 }
