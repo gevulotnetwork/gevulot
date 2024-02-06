@@ -12,7 +12,10 @@ use jsonrpsee::{
 use tokio::sync::RwLock;
 
 use crate::{
-    asset_manager::AssetManager, cli::Config, mempool::Mempool, storage::Database,
+    asset_manager::AssetManager,
+    cli::Config,
+    mempool::{AclWhitelist, Mempool},
+    storage::Database,
     types::Transaction,
 };
 
@@ -20,6 +23,7 @@ struct Context {
     database: Arc<Database>,
     mempool: Arc<RwLock<Mempool>>,
     asset_manager: Arc<AssetManager>,
+    acl_whitelist: Arc<dyn AclWhitelist>,
 }
 
 impl std::fmt::Debug for Context {
@@ -39,12 +43,14 @@ impl RpcServer {
         database: Arc<Database>,
         mempool: Arc<RwLock<Mempool>>,
         asset_manager: Arc<AssetManager>,
+        acl_whitelist: Arc<dyn AclWhitelist>,
     ) -> Result<Self> {
         let server = Server::builder().build(cfg.json_rpc_listen_addr).await?;
         let mut module = RpcModule::new(Context {
             database,
             mempool,
             asset_manager,
+            acl_whitelist,
         });
 
         module.register_async_method("sendTransaction", send_transaction)?;
@@ -82,13 +88,33 @@ async fn send_transaction(params: Params<'static>, ctx: Arc<Context>) -> RpcResp
         }
     };
 
-    if let Err(err) = ctx.mempool.write().await.add(tx.clone()).await {
-        tracing::error!("failed to persist transaction: {}", err);
+    // Secondly verify that author is whitelisted.
+    let whitelisted = match ctx.acl_whitelist.contains(&tx.author).await {
+        Ok(result) => result,
+        Err(err) => {
+            tracing::error!("error when authorizing transaction: {}", err);
+
+            // Technically following is not 100% correct, but when there is
+            // problem with authorizing a transaction, it cannot be passed
+            // through. The real nature of the problem must also not be exposed
+            // as it can reveal unexpected security issues.
+            return RpcResponse::Err(RpcError::Unauthorized);
+        }
+    };
+
+    if !whitelisted {
+        return RpcResponse::Err(RpcError::Unauthorized);
+    }
+
+    // Persist transaction in DB first.
+    if let Err(err) = ctx.database.add_transaction(&tx).await {
         return RpcResponse::Err(RpcError::InvalidRequest(
             "failed to persist transaction".to_string(),
         ));
     }
 
+    // Then add it to asset manager in order to download all necessary files
+    // involved.
     if let Err(err) = ctx.asset_manager.handle_transaction(&tx).await {
         tracing::error!(
             "failed to enqueue transaction for asset processing: {}",
@@ -96,6 +122,15 @@ async fn send_transaction(params: Params<'static>, ctx: Arc<Context>) -> RpcResp
         );
         return RpcResponse::Err(RpcError::InvalidRequest(
             "failed to enqueue transaction for asset processing".to_string(),
+        ));
+    }
+
+    // Finally add it to mempool to propagate it to P2P network and wait
+    // to be scheduled for execution.
+    if let Err(err) = ctx.mempool.write().await.add(tx.clone()).await {
+        tracing::error!("failed to persist transaction: {}", err);
+        return RpcResponse::Err(RpcError::InvalidRequest(
+            "failed to persist transaction".to_string(),
         ));
     }
 
@@ -432,9 +467,10 @@ mod tests {
             http_download_port: 0,
         });
 
+        let acl_whitelist = Arc::new(AlwaysGrantAclWhitelist {});
         let db = Arc::new(Database::new(&cfg.db_url).await.unwrap());
         let mempool = Arc::new(RwLock::new(
-            Mempool::new(db.clone(), Arc::new(AlwaysGrantAclWhitelist {}), None)
+            Mempool::new(db.clone(), acl_whitelist.clone(), None)
                 .await
                 .unwrap(),
         ));
@@ -444,8 +480,14 @@ mod tests {
             Arc::new(RwLock::new(std::collections::HashMap::new())),
         ));
 
-        RpcServer::run(cfg.clone(), db.clone(), mempool, asset_manager)
-            .await
-            .expect("rpc_server.run")
+        RpcServer::run(
+            cfg.clone(),
+            db.clone(),
+            mempool,
+            asset_manager,
+            acl_whitelist,
+        )
+        .await
+        .expect("rpc_server.run")
     }
 }

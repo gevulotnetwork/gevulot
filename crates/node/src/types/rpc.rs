@@ -12,6 +12,9 @@ pub enum RpcError {
 
     #[error("invalid request: {0}")]
     InvalidRequest(String),
+
+    #[error("unauthorized")]
+    Unauthorized,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
