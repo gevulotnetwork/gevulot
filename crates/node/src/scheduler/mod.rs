@@ -210,7 +210,11 @@ impl Scheduler {
                         None
                     }
                     _ => {
-                        tracing::error!("failed to compute next task for tx:{}: {}", tx.hash, e);
+                        tracing::error!(
+                            "workflow error, failed to compute next task for tx:{}: {}",
+                            tx.hash,
+                            e
+                        );
                         None
                     }
                 }
@@ -414,7 +418,7 @@ impl TaskManager for Scheduler {
 
             if let Err(err) = self.database.mark_tx_executed(&running_task.task.tx).await {
                 tracing::error!(
-                    "failed to update transaction.executed => true - tx.hash: {}",
+                    "failed to update transaction.executed => true - tx.hash: {} error:{err}",
                     &running_task.task.tx
                 );
             }

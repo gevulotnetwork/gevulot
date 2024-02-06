@@ -361,7 +361,11 @@ impl Reading for P2P {
         match bincode::deserialize(message.as_ref()) {
             Ok(protocol::Message::V0(msg)) => match msg {
                 protocol::MessageV0::Transaction(tx) => {
-                    tracing::debug!("received transaction {}", tx.hash);
+                    tracing::debug!(
+                        "received transaction {} author:{}",
+                        tx.hash,
+                        hex::encode(tx.author.serialize())
+                    );
                     self.recv_tx(tx).await;
                 }
                 protocol::MessageV0::DiagnosticsRequest(kind) => {

@@ -50,7 +50,7 @@ enum ConfCommands {
         /// url to get the verifier image. If provided the verifier will use this URL to get the verifier image. If not the cli tool starts a local HTTP server to serve the file to the node.
         #[clap(long = "verifierimgurl", value_name = "VERIFIER URL")]
         verifier_img_url: Option<String>,
-        /// Address the local http server use to listen for node file download request.
+        /// Address the local http server use by the node to download images.
         #[clap(
             short,
             long,
@@ -63,6 +63,14 @@ enum ConfCommands {
     /// Execute the list of task in the order one after the other.
     #[command(arg_required_else_help = true)]
     Exec {
+        /// Optional Address of the local http server use by the node to download input file.
+        #[clap(
+            short,
+            long,
+            default_value = "127.0.0.1:8080",
+            value_name = "LOCAL SERVER BIND ADDR"
+        )]
+        listen_addr: Option<SocketAddr>,
         /// array of Json task definition.
         /// Json format of the task data:
         /// [{
@@ -135,8 +143,8 @@ async fn main() {
                 Err(err) => println!("An error occurs during Prover / Verifier deployement :{err}"),
             }
         }
-        ConfCommands::Exec { tasks } => {
-            match gevulot_cli::run_exec_command(client, args.keyfile, tasks).await {
+        ConfCommands::Exec { tasks, listen_addr } => {
+            match gevulot_cli::run_exec_command(client, args.keyfile, tasks, listen_addr).await {
                 Ok(tx_hash) => println!("Programs send to execution correctly. Tx hash:{tx_hash}"),
                 Err(err) => println!("An error occurs during send execution Tx :{err}"),
             }

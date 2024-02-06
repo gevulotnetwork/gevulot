@@ -1,4 +1,6 @@
 use serde::{Deserialize, Serialize};
+use std::path::Path;
+use std::path::PathBuf;
 use uuid::Uuid;
 
 use super::hash::{deserialize_hash_from_json, Hash};
@@ -32,6 +34,13 @@ pub struct File {
     pub tx: Hash,
     pub name: String,
     pub url: String,
+}
+
+impl File {
+    pub fn get_file_relative_path(&self) -> PathBuf {
+        let file_name = Path::new(&self.name).file_name().unwrap();
+        PathBuf::new().join(self.tx.to_string()).join(file_name)
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize, sqlx::FromRow)]
