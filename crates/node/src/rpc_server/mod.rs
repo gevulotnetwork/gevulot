@@ -1,4 +1,4 @@
-use std::{net::SocketAddr, sync::Arc};
+use std::{net::SocketAddr, rc::Rc, sync::Arc};
 
 use eyre::Result;
 use gevulot_node::types::{
@@ -122,9 +122,77 @@ async fn get_transaction(params: Params<'static>, ctx: Arc<Context>) -> RpcRespo
 }
 
 #[tracing::instrument(level = "info")]
-async fn get_tx_tree(params: Params<'static>, ctx: Arc<Context>) -> RpcResponse<TransactionTree> {
+async fn get_tx_tree(
+    params: Params<'static>,
+    ctx: Arc<Context>,
+) -> RpcResponse<Rc<TransactionTree>> {
+    let tx_hash: Hash = match params.one() {
+        Ok(tx_hash) => tx_hash,
+        Err(e) => {
+            tracing::error!("failed to parse transaction: {}", e);
+            return RpcResponse::Err(RpcError::InvalidRequest(e.to_string()));
+        }
+    };
+
     tracing::info!("JSON-RPC: get_tx_tree()");
-    RpcResponse::Err(RpcError::NotFound("TODO".to_string()))
+
+    let txs = ctx
+        .database
+        .get_transaction_tree(&tx_hash)
+        .await
+        .expect("get_transaction_tree");
+
+    // Root element is the one without parent.
+    let root: Vec<Hash> = txs
+        .iter()
+        .filter_map(|x| if x.1.is_none() { Some(x.0) } else { None })
+        .collect();
+
+    if root.is_empty() {
+        return RpcResponse::Err(RpcError::NotFound(format!(
+            "no root tx found for {tx_hash}"
+        )));
+    } else if root.len() > 1 {
+        return RpcResponse::Err(RpcError::InvalidRequest(format!(
+            "more than one root elements found for {tx_hash}"
+        )));
+    }
+
+    RpcResponse::Ok(build_tx_tree(&root[0], txs))
+}
+
+// `build_tx_tree` builds recursively a `TransactionTree` starting from `hash`
+// and descending to its children. `txs` is a vector of
+// <Tx hash, Option<Parent tx hash>> tuples.
+fn build_tx_tree(hash: &Hash, txs: Vec<(Hash, Option<Hash>)>) -> Rc<TransactionTree> {
+    let children = txs
+        .iter()
+        .filter_map(|x| {
+            if let Some(leaf_hash) = x.1 {
+                if &leaf_hash == hash {
+                    return Some(build_tx_tree(&x.0, txs.clone()));
+                }
+            }
+            None
+        })
+        .collect();
+
+    let elem = txs.iter().find(|x| &x.0 == hash).unwrap();
+    let tree_elem = if elem.1.is_none() {
+        TransactionTree::Root {
+            children,
+            hash: *hash,
+        }
+    } else if children.is_empty() {
+        TransactionTree::Leaf { hash: *hash }
+    } else {
+        TransactionTree::Node {
+            children,
+            hash: *hash,
+        }
+    };
+
+    Rc::new(tree_elem)
 }
 
 #[cfg(test)]
@@ -137,6 +205,7 @@ mod tests {
         http_client::HttpClientBuilder,
     };
     use libsecp256k1::{PublicKey, SecretKey};
+    use rand::{rngs::StdRng, SeedableRng};
     use tracing_subscriber::{filter::LevelFilter, fmt::format::FmtSpan, EnvFilter};
 
     use crate::mempool;
@@ -175,6 +244,160 @@ mod tests {
             .expect("rpc request");
 
         dbg!(resp);
+    }
+
+    #[test]
+    fn test_build_tx_tree_as_expected() {
+        let rng = &mut StdRng::from_entropy();
+        let root = Hash::random(rng);
+        let node1 = Hash::random(rng);
+        let node2 = Hash::random(rng);
+        let leaf1 = Hash::random(rng);
+        let leaf2 = Hash::random(rng);
+        let leaf3 = Hash::random(rng);
+        let leaf4 = Hash::random(rng);
+
+        let txs = vec![
+            (root, None),
+            (node1, Some(root)),
+            (node2, Some(root)),
+            (leaf1, Some(node1)),
+            (leaf2, Some(node1)),
+            (leaf3, Some(node2)),
+            (leaf4, Some(node2)),
+        ];
+
+        let tree = build_tx_tree(&root, txs);
+        let (ref root_hash, root_children) = match *tree {
+            TransactionTree::Root { hash, ref children } => (hash, children),
+            ref elem => panic!("invalid element type for tree root: {:#?}", elem),
+        };
+
+        assert_eq!(root_hash, &root);
+        assert_eq!(root_children.len(), 2);
+
+        if let TransactionTree::Node { ref children, hash } = **root_children.first().unwrap() {
+            assert_eq!(hash, node1);
+            assert_eq!(children.len(), 2);
+
+            if let TransactionTree::Leaf { hash } = **children.first().unwrap() {
+                assert_eq!(hash, leaf1);
+            } else {
+                panic!("expected TransactionTree::Leaf, got {:#?}", children[0]);
+            }
+
+            if let TransactionTree::Leaf { hash } = **children.get(1).unwrap() {
+                assert_eq!(hash, leaf2);
+            } else {
+                panic!("expected TransactionTree::Leaf, got {:#?}", children[1]);
+            }
+        } else {
+            panic!(
+                "expected TransactionTree::Node, got {:#?}",
+                root_children[0]
+            );
+        }
+
+        if let TransactionTree::Node { ref children, hash } = **root_children.get(1).unwrap() {
+            assert_eq!(hash, node2);
+            assert_eq!(children.len(), 2);
+
+            if let TransactionTree::Leaf { hash } = **children.first().unwrap() {
+                assert_eq!(hash, leaf3);
+            } else {
+                panic!("expected TransactionTree::Leaf, got {:#?}", children[0]);
+            }
+
+            if let TransactionTree::Leaf { hash } = **children.get(1).unwrap() {
+                assert_eq!(hash, leaf4);
+            } else {
+                panic!("expected TransactionTree::Leaf, got {:#?}", children[1]);
+            }
+        } else {
+            panic!(
+                "expected TransactionTree::Node, got {:#?}",
+                root_children[1]
+            );
+        }
+    }
+
+    #[test]
+    fn test_build_tx_tree_just_root() {
+        let rng = &mut StdRng::from_entropy();
+        let root = Hash::random(rng);
+
+        let txs = vec![(root, None)];
+
+        let tree = build_tx_tree(&root, txs);
+        let (ref root_hash, root_children) = match *tree {
+            TransactionTree::Root { hash, ref children } => (hash, children),
+            ref elem => panic!("invalid element type for tree root: {:#?}", elem),
+        };
+
+        assert_eq!(root_hash, &root);
+        assert!(root_children.is_empty());
+    }
+
+    #[test]
+    fn test_build_tx_tree_one_node_one_leaf() {
+        let rng = &mut StdRng::from_entropy();
+        let root = Hash::random(rng);
+        let node1 = Hash::random(rng);
+        let leaf1 = Hash::random(rng);
+
+        let txs = vec![(root, None), (node1, Some(root)), (leaf1, Some(node1))];
+
+        let tree = build_tx_tree(&root, txs);
+        let (ref root_hash, root_children) = match *tree {
+            TransactionTree::Root { hash, ref children } => (hash, children),
+            ref elem => panic!("invalid element type for tree root: {:#?}", elem),
+        };
+
+        assert_eq!(root_hash, &root);
+        assert_eq!(root_children.len(), 1);
+
+        if let TransactionTree::Node { ref children, hash } = **root_children.first().unwrap() {
+            assert_eq!(hash, node1);
+            assert_eq!(children.len(), 1);
+
+            if let TransactionTree::Leaf { hash } = **children.first().unwrap() {
+                assert_eq!(hash, leaf1);
+            } else {
+                panic!("expected TransactionTree::Leaf, got {:#?}", children[0]);
+            }
+        } else {
+            panic!(
+                "expected TransactionTree::Node, got {:#?}",
+                root_children[0]
+            );
+        }
+    }
+
+    #[test]
+    fn test_build_tx_tree_root_and_leaf() {
+        let rng = &mut StdRng::from_entropy();
+        let root = Hash::random(rng);
+        let leaf1 = Hash::random(rng);
+
+        let txs = vec![(root, None), (leaf1, Some(root))];
+
+        let tree = build_tx_tree(&root, txs);
+        let (ref root_hash, root_children) = match *tree {
+            TransactionTree::Root { hash, ref children } => (hash, children),
+            ref elem => panic!("invalid element type for tree root: {:#?}", elem),
+        };
+
+        assert_eq!(root_hash, &root);
+        assert_eq!(root_children.len(), 1);
+
+        if let TransactionTree::Leaf { hash } = **root_children.first().unwrap() {
+            assert_eq!(hash, leaf1);
+        } else {
+            panic!(
+                "expected TransactionTree::Leaf, got {:#?}",
+                root_children[0]
+            );
+        }
     }
 
     fn start_logger(default_level: LevelFilter) {

@@ -387,6 +387,22 @@ impl Database {
         Ok(txs)
     }
 
+    pub async fn get_transaction_tree(&self, tx_hash: &Hash) -> Result<Vec<(Hash, Option<Hash>)>> {
+        let refs: Vec<(Hash, Option<Hash>)> = sqlx::query("
+            SELECT t.hash, NULL FROM transaction AS t JOIN proof AS p ON t.hash = p.parent JOIN verification AS v ON (t.hash = p.parent AND p.tx = v.parent) WHERE t.hash = $1 OR p.tx = $1 OR v.tx = $1
+        UNION
+            SELECT t.hash, p.parent FROM transaction AS t JOIN proof AS p on t.hash = p.tx WHERE p.parent IN (SELECT t.hash FROM transaction AS t JOIN proof AS p ON t.hash = p.parent JOIN verification AS v ON (t.hash = p.parent AND p.tx = v.parent) WHERE t.hash = $1 OR p.tx = $1 OR v.tx = $1)
+        UNION
+            SELECT t.hash, v.parent FROM transaction AS t JOIN verification AS v on t.hash = v.tx WHERE v.parent IN (SELECT p.tx FROM proof AS p WHERE p.parent IN (SELECT t.hash FROM transaction AS t JOIN proof AS p ON t.hash = p.parent JOIN verification AS v ON (t.hash = p.parent AND p.tx = v.parent) WHERE t.hash = $1 OR p.tx = $1 OR v.tx = $1))
+        ")
+            .bind(tx_hash)
+            .map(|row: sqlx::postgres::PgRow| (row.get(0), row.get(1)))
+            .fetch_all(&self.pool)
+            .await?;
+
+        Ok(refs)
+    }
+
     pub async fn add_transaction(&self, tx: &types::Transaction) -> Result<()> {
         let entity = entity::Transaction::from(tx);
 
@@ -567,11 +583,21 @@ impl Database {
 
         db_tx.commit().await.map_err(|e| e.into())
     }
+
+    async fn delete_program(&self, program_hash: &Hash) -> Result<()> {
+        sqlx::query("DELETE FROM program WHERE hash = $1")
+            .bind(program_hash)
+            .execute(&self.pool)
+            .await?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use libsecp256k1::{PublicKey, SecretKey};
+    use rand::{rngs::StdRng, Rng, SeedableRng};
 
     use crate::types::{
         transaction::{Payload, ProgramMetadata},
@@ -642,5 +668,181 @@ mod tests {
 
         assert!(read_tx.is_some());
         assert_eq!(tx, read_tx.unwrap());
+    }
+
+    #[ignore]
+    #[tokio::test]
+    async fn test_get_transaction_tree() {
+        let rng = &mut StdRng::from_entropy();
+        let database = Database::new("postgres://gevulot:gevulot@localhost/gevulot")
+            .await
+            .expect("failed to connect to db");
+
+        let key = SecretKey::random(rng);
+        let prover = Program {
+            hash: Hash::random(rng),
+            name: String::from("prover"),
+            image_file_name: String::from("prover.img"),
+            image_file_url: String::from("http://example.com/prover.img"),
+            image_file_checksum: String::from("nope"),
+            limits: Default::default(),
+        };
+
+        let verifier = Program {
+            hash: Hash::random(rng),
+            name: String::from("verifier"),
+            image_file_name: String::from("verifier.img"),
+            image_file_url: String::from("http://example.com/verifier.img"),
+            image_file_checksum: String::from("nope"),
+            limits: Default::default(),
+        };
+
+        let run_tx = Transaction::new(
+            Payload::Run {
+                workflow: types::transaction::Workflow::default(),
+            },
+            &key,
+        );
+        let proof1_tx = Transaction::new(
+            Payload::Proof {
+                parent: run_tx.hash,
+                prover: prover.hash,
+                proof: vec![1],
+            },
+            &key,
+        );
+        let proof2_tx = Transaction::new(
+            Payload::Proof {
+                parent: run_tx.hash,
+                prover: prover.hash,
+                proof: vec![2],
+            },
+            &key,
+        );
+        let proof3_tx = Transaction::new(
+            Payload::Proof {
+                parent: run_tx.hash,
+                prover: prover.hash,
+                proof: vec![3],
+            },
+            &key,
+        );
+        let proof4_tx = Transaction::new(
+            Payload::Proof {
+                parent: run_tx.hash,
+                prover: prover.hash,
+                proof: vec![4],
+            },
+            &key,
+        );
+
+        let verification1_tx = Transaction::new(
+            Payload::Verification {
+                parent: proof1_tx.hash,
+                verifier: verifier.hash,
+                verification: vec![1],
+            },
+            &key,
+        );
+        let verification2_tx = Transaction::new(
+            Payload::Verification {
+                parent: proof2_tx.hash,
+                verifier: verifier.hash,
+                verification: vec![2],
+            },
+            &key,
+        );
+        let verification3_tx = Transaction::new(
+            Payload::Verification {
+                parent: proof3_tx.hash,
+                verifier: verifier.hash,
+                verification: vec![3],
+            },
+            &key,
+        );
+        let verification4_tx = Transaction::new(
+            Payload::Verification {
+                parent: proof4_tx.hash,
+                verifier: verifier.hash,
+                verification: vec![4],
+            },
+            &key,
+        );
+
+        let txs = vec![
+            run_tx,
+            proof1_tx,
+            proof2_tx,
+            proof3_tx,
+            proof4_tx,
+            verification1_tx,
+            verification2_tx,
+            verification3_tx,
+            verification4_tx,
+        ];
+
+        let mut db_conn = database
+            .pool
+            .acquire()
+            .await
+            .expect("acquire DB connection from pool");
+        database
+            .add_program(&mut db_conn, &prover)
+            .await
+            .expect("add prover");
+        database
+            .add_program(&mut db_conn, &verifier)
+            .await
+            .expect("add verifier");
+
+        for tx in &txs {
+            database.add_transaction(tx).await.expect("add transaction");
+        }
+
+        // Pick random transaction from set.
+        let random_idx = rng.gen_range(0..txs.len());
+
+        // Fetch the whole tx tree. All transactions should be returned.
+        let results = database
+            .get_transaction_tree(&txs.get(random_idx).unwrap().hash)
+            .await;
+
+        assert!(results.is_ok());
+
+        let mut results = results.unwrap();
+
+        for tx in &txs {
+            let idx = results.iter().position(|x| x.0 == tx.hash);
+            if idx.is_none() {
+                panic!(
+                    "Couldn't find transaction {} from get_transaction_tree() results.",
+                    tx.hash
+                );
+            }
+
+            let idx = idx.unwrap();
+            results.remove(idx);
+        }
+
+        // After all transactions have been processed, no extra ones should be
+        // left in results.
+        assert!(results.is_empty());
+
+        // Cleanup
+        for tx in txs {
+            database
+                .delete_transaction(&tx.hash)
+                .await
+                .expect("delete transaction");
+        }
+
+        database
+            .delete_program(&prover.hash)
+            .await
+            .expect("delete program");
+        database
+            .delete_program(&verifier.hash)
+            .await
+            .expect("delete program");
     }
 }
