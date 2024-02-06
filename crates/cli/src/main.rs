@@ -176,7 +176,7 @@ fn print_tx_tree(tree: &TransactionTree, indentation: u16) {
             println!("Root: {hash}");
             children
                 .iter()
-                .for_each(|x| print_tx_tree(&x, indentation + 1));
+                .for_each(|x| print_tx_tree(x, indentation + 1));
         }
         TransactionTree::Node { children, hash } => {
             println!(
@@ -185,7 +185,7 @@ fn print_tx_tree(tree: &TransactionTree, indentation: u16) {
             );
             children
                 .iter()
-                .for_each(|x| print_tx_tree(&x, indentation + 1));
+                .for_each(|x| print_tx_tree(x, indentation + 1));
         }
         TransactionTree::Leaf { hash } => {
             println!(
