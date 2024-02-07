@@ -1,13 +1,28 @@
-use std::{collections::HashSet, rc::Rc};
-
+use super::file::AssetFile;
 use super::signature::Signature;
 use super::{hash::Hash, program::ResourceRequest};
+use crate::types::transaction;
+use async_trait::async_trait;
 use eyre::Result;
 use libsecp256k1::{sign, verify, Message, PublicKey, SecretKey};
 use num_bigint::BigInt;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
+use std::{collections::HashSet, rc::Rc};
 use thiserror::Error;
+
+#[async_trait]
+pub trait AclWhitelist: Send + Sync {
+    async fn contains(&self, key: &PublicKey) -> Result<bool, TransactionError>;
+}
+
+pub struct AlwaysGrantAclWhitelist;
+#[async_trait::async_trait]
+impl AclWhitelist for AlwaysGrantAclWhitelist {
+    async fn contains(&self, _key: &PublicKey) -> Result<bool, TransactionError> {
+        Ok(true)
+    }
+}
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub enum TransactionTree {
@@ -172,7 +187,71 @@ pub enum Payload {
 }
 
 impl Payload {
-    fn serialize_into(&self, buf: &mut Vec<u8>) {
+    pub fn get_asset_list(&self, tx_hash: Hash) -> Result<Vec<(AssetFile, Hash)>> {
+        match self {
+            transaction::Payload::Deploy {
+                prover, verifier, ..
+            } => Ok(vec![
+                AssetFile::try_from_prg_meta_data(prover, tx_hash).map_err(|err| {
+                    TransactionError::Validation(format!("Fail to get prover image file: {err}",))
+                })?,
+                AssetFile::try_from_prg_meta_data(verifier, tx_hash).map_err(|err| {
+                    TransactionError::Validation(
+                        format!("Fail to gfet verifier image file: {err}",),
+                    )
+                })?,
+            ]),
+            Payload::Run { workflow } => {
+                workflow
+                    .steps
+                    .iter()
+                    .flat_map(|step| &step.inputs)
+                    .filter_map(|input| {
+                        match input {
+                            ProgramData::Input {
+                                file_name,
+                                file_url,
+                                checksum,
+                            } => Some((file_name, file_url, checksum)),
+                            ProgramData::Output { .. } => {
+                                /* ProgramData::Output as input means it comes from another
+                                program execution -> skip this branch. */
+                                None
+                            }
+                        }
+                    })
+                    .map(|(file_name, file_url, checksum)| {
+                        //verify the url is valide.
+                        reqwest::Url::parse(&file_url)?;
+                        Ok((
+                            AssetFile {
+                                url: file_url.clone(),
+                                name: file_name.to_string(),
+                                tx: tx_hash,
+                                //                            checksum: checksum.to_string().into(),
+                            },
+                            checksum.to_string().into(),
+                        ))
+                    })
+                    .collect()
+            }
+            Payload::Proof {
+                parent,
+                prover,
+                proof,
+            } => todo!(),
+            Payload::Verification {
+                parent,
+                verifier,
+                verification,
+            } => todo!(),
+            // Other transaction types don't have external assets that would
+            // need processing.
+            _ => Ok(vec![]),
+        }
+    }
+
+    pub fn serialize_into(&self, buf: &mut Vec<u8>) {
         match self {
             Payload::Empty => {}
             Payload::Transfer { to, value } => {
@@ -231,6 +310,8 @@ impl Payload {
 pub enum TransactionError {
     #[error("validation: {0}")]
     Validation(String),
+    #[error("General error: {0}")]
+    General(String),
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -303,7 +384,7 @@ impl Transaction {
         (&hasher.finalize()[0..32]).into()
     }
 
-    pub fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<(), TransactionError> {
         if let Payload::Run { ref workflow } = self.payload {
             let mut programs = HashSet::new();
             for step in &workflow.steps {

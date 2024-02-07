@@ -150,6 +150,13 @@ pub enum PeerCommand {
 pub struct P2PBeaconConfig {
     #[arg(
         long,
+        long_help = "Directory where the node should store its data",
+        env = "GEVULOT_DATA_DIRECTORY", 
+        default_value_os_t = PathBuf::from("/var/lib/gevulot"),
+    )]
+    pub data_directory: PathBuf,
+    #[arg(
+        long,
         long_help = "P2P listen address",
         env = "GEVULOT_P2P_LISTEN_ADDR",
         default_value = "127.0.0.1:9999"
@@ -170,6 +177,14 @@ pub struct P2PBeaconConfig {
         default_value = "Pack my box with five dozen liquor jugs."
     )]
     pub p2p_psk_passphrase: String,
+
+    #[arg(
+        long,
+        long_help = "Port open to download transaction data between nodes. Use P2P interface to bind.",
+        env = "GEVULOT_HTTP_PORT",
+        default_value = "9995"
+    )]
+    pub http_download_port: u16,
 }
 
 #[derive(Debug, Subcommand)]

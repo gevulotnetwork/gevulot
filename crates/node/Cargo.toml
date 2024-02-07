@@ -17,6 +17,7 @@ clap = { version = "4", features = ["derive", "env", "string"] }
 console-subscriber = "0.2"
 ecies = {version = "0.2", default-features = false, features = ["pure"]}
 eyre = "0.6.8"
+futures = "0.3.30"
 futures-util = "0.3"
 hex = "0.4"
 home = "0.5"

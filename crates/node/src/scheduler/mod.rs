@@ -180,49 +180,33 @@ impl Scheduler {
         let mut mempool = self.mempool.write().await;
 
         // Check if next tx is ready for processing?
-        let tx = match mempool.peek() {
-            Some(tx) => {
-                if let Payload::Run { .. } = tx.payload {
-                    if self.database.has_assets_loaded(&tx.hash).await.unwrap() {
-                        mempool.next().unwrap()
-                    } else {
-                        // Assets are still downloading.
-                        // TODO: This can stall the whole processing pipeline!!
-                        // XXX: ....^.........^........^......^.......^........
-                        tracing::info!("assets for tx {} still loading", tx.hash);
-                        return None;
-                    }
-                } else {
-                    tracing::debug!("scheduling new task from tx {}", tx.hash);
-                    mempool.next().unwrap()
-                }
-            }
-            None => return None,
-        };
 
-        match self.workflow_engine.next_task(&tx).await {
-            Ok(res) => res,
-            Err(e) if e.is::<WorkflowError>() => {
-                let err = e.downcast_ref::<WorkflowError>();
-                match err {
-                    Some(WorkflowError::IncompatibleTransaction(_)) => {
-                        tracing::debug!("{}", e);
-                        None
-                    }
-                    _ => {
-                        tracing::error!(
-                            "workflow error, failed to compute next task for tx:{}: {}",
-                            tx.hash,
-                            e
-                        );
-                        None
+        match mempool.next() {
+            Some(tx) => match self.workflow_engine.next_task(&tx).await {
+                Ok(res) => res,
+                Err(e) if e.is::<WorkflowError>() => {
+                    let err = e.downcast_ref::<WorkflowError>();
+                    match err {
+                        Some(WorkflowError::IncompatibleTransaction(_)) => {
+                            tracing::debug!("{}", e);
+                            None
+                        }
+                        _ => {
+                            tracing::error!(
+                                "workflow error, failed to compute next task for tx:{}: {}",
+                                tx.hash,
+                                e
+                            );
+                            None
+                        }
                     }
                 }
-            }
-            Err(e) => {
-                tracing::error!("failed to compute next task for tx:{}: {}", tx.hash, e);
-                None
-            }
+                Err(e) => {
+                    tracing::error!("failed to compute next task for tx:{}: {}", tx.hash, e);
+                    None
+                }
+            },
+            None => None,
         }
     }
 

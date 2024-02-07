@@ -1,4 +1,4 @@
-use crate::cli::Config;
+use crate::types::file::AssetFile;
 use eyre::eyre;
 use eyre::Result;
 use futures_util::TryStreamExt;
@@ -11,6 +11,8 @@ use hyper::{Request, Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use std::net::SocketAddr;
 use std::path::Path;
+use std::path::PathBuf;
+use std::sync::Arc;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
@@ -18,17 +20,19 @@ use tokio::task::JoinHandle;
 use tokio_util::io::ReaderStream;
 
 /// download_file downloads file from the given `url` and saves it to file in `local_directory_path` + / + `file`.
-pub async fn download_file(
-    url: &str,
+pub async fn download_asset_file(
+    // url: &str,
     local_directory_path: &Path,
-    file: &str,
-    http_peer_list: Vec<(SocketAddr, Option<u16>)>,
+    // file: &str,
+    http_peer_list: &[(SocketAddr, Option<u16>)],
     http_client: &reqwest::Client,
-    file_hash: gevulot_node::types::Hash,
+    asset_file: AssetFile,
+    asset_checksum: gevulot_node::types::Hash,
+    // file_hash: gevulot_node::types::Hash,
 ) -> Result<()> {
-    tracing::trace!("download_file url:{url} local_directory_path:{local_directory_path:?} file:{file} file_hash:{file_hash} http_peer_list:{http_peer_list:?}");
-    let url = reqwest::Url::parse(url)?;
-    let mut resp = match http_client.get(url.clone()).send().await {
+    let local_relative_file_path = asset_file.get_relatif_path();
+    tracing::info!("download_file:{asset_file:?} local_directory_path:{local_directory_path:?} local_relative_file_path:{local_relative_file_path:?} http_peer_list:{http_peer_list:?}");
+    let mut resp = match http_client.get(asset_file.url).send().await {
         Ok(resp) => resp,
         Err(err) => {
             let peer_urls: Vec<reqwest::Url> = http_peer_list
@@ -39,7 +43,7 @@ pub async fn download_file(
                         let mut url = reqwest::Url::parse("http://localhost").unwrap(); //unwrap always succeed
                         url.set_ip_host(peer.ip()).unwrap(); //unwrap always succeed
                         url.set_port(Some(port)).unwrap(); //unwrap always succeed
-                        url.set_path(file); //unwrap always succeed
+                        url.set_path(&local_relative_file_path.to_str().unwrap()); //unwrap Path alway ok
                         url
                     })
                 })
@@ -53,13 +57,14 @@ pub async fn download_file(
                 }
             }
             resp.ok_or(eyre!(
-                "Download no host found to download the file: {file:?}"
+                "Download no host found to download the file: {}",
+                asset_file.name
             ))?
         }
     };
 
     if resp.status() == reqwest::StatusCode::OK {
-        let file_path = local_directory_path.join(file);
+        let file_path = local_directory_path.join(&local_relative_file_path);
         // Ensure any necessary subdirectories exists.
         if let Some(parent) = file_path.parent() {
             if let Ok(false) = tokio::fs::try_exists(parent).await {
@@ -84,17 +89,17 @@ pub async fn download_file(
         }
 
         fd.flush().await?;
-        let checksum: gevulot_node::types::Hash = (&hasher.finalize()).into();
-        if checksum != file_hash {
-            Err(eyre!("Download file: {:?}, bad checksum", file))
+        let checksum: crate::types::Hash = (&hasher.finalize()).into();
+        if checksum != asset_checksum {
+            Err(eyre!("Download file: {:?}, bad checksum", asset_file.name))
         } else {
             //rename to original name
             Ok(std::fs::rename(tmp_file_path, file_path)?)
         }
     } else {
         Err(eyre!(
-            "failed to download file from {}: response status: {}",
-            url,
+            "failed to download file: {:?} response status: {}",
+            asset_file.name,
             resp.status()
         ))
     }
@@ -102,13 +107,17 @@ pub async fn download_file(
 
 //start the local server and serve the specified file path.
 //Return the server task join handle.
-pub async fn serve_files(config: &Config) -> Result<JoinHandle<()>> {
-    let mut bind_addr = config.p2p_listen_addr;
-    bind_addr.set_port(config.http_download_port);
+pub async fn serve_files(
+    mut bind_addr: SocketAddr,
+    http_download_port: u16,
+    data_directory: Arc<PathBuf>,
+) -> Result<JoinHandle<()>> {
+    //   let mut bind_addr = config.p2p_listen_addr;
+    bind_addr.set_port(http_download_port);
     let listener = TcpListener::bind(bind_addr).await?;
 
     let jh = tokio::spawn({
-        let data_directory = config.data_directory.clone();
+        let data_directory = data_directory.clone();
         async move {
             tracing::info!(
                 "listening for http at {}",

@@ -1,3 +1,6 @@
+use crate::event_loop::P2pSender;
+use crate::event_loop::TxEventSender;
+use futures_util::Stream;
 use std::{
     collections::{BTreeSet, HashMap},
     io,
@@ -7,6 +10,8 @@ use std::{
 };
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
+use tokio::pin;
+use tokio_stream::StreamExt;
 
 use super::{noise, protocol};
 use bytes::{Bytes, BytesMut};
@@ -55,6 +60,9 @@ pub struct P2P {
     http_port: Option<u16>,
     nat_listen_addr: Option<SocketAddr>,
     psk: Vec<u8>,
+
+    //send Tx to the process loop
+    tx_sender: TxEventSender<P2pSender>,
 }
 
 impl Pea2Pea for P2P {
@@ -70,6 +78,9 @@ impl P2P {
         psk_passphrase: &str,
         http_port: Option<u16>,
         nat_listen_addr: Option<SocketAddr>,
+        peer_http_port_list: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>>,
+        tx_sender: TxEventSender<P2pSender>,
+        propagate_tx_stream: impl Stream<Item = Transaction> + std::marker::Send + 'static,
     ) -> Self {
         let config = Config {
             name: Some(name.into()),
@@ -95,6 +106,7 @@ impl P2P {
             peer_http_port_list: Default::default(),
             http_port,
             nat_listen_addr,
+            tx_sender,
         };
 
         // Enable node functionalities.
@@ -103,23 +115,53 @@ impl P2P {
         instance.enable_writing().await;
         instance.enable_disconnect().await;
 
+        //start new Tx stream loop
+        tokio::spawn({
+            let p2p = instance.clone();
+            async move {
+                pin!(propagate_tx_stream);
+                while let Some(tx) = propagate_tx_stream.next().await {
+                    let tx_hash = tx.hash;
+                    let msg = protocol::Message::V0(protocol::MessageV0::Transaction(tx));
+                    let bs = match bincode::serialize(&msg) {
+                        Ok(bs) => bs,
+                        Err(err) => {
+                            tracing::error!(
+                                "Tx:{tx_hash} not send because serialization fail:{err}",
+                            );
+                            continue;
+                        }
+                    };
+                    let bs = Bytes::from(bs);
+                    tracing::debug!("broadcasting transaction {}", tx_hash);
+                    if let Err(err) = p2p.broadcast(bs) {
+                        tracing::error!("Tx:{tx_hash} not send because :{err}");
+                    }
+                }
+            }
+        });
+
         instance
     }
 
-    pub async fn register_tx_handler(&self, tx_handler: Arc<dyn TxHandler>) {
-        let mut old_handler = self.tx_handler.write().await;
-        *old_handler = tx_handler;
-        tracing::debug!("new tx handler registered");
-    }
+    // pub async fn register_tx_handler(&self, tx_handler: Arc<dyn TxHandler>) {
+    //     let mut old_handler = self.tx_handler.write().await;
+    //     *old_handler = tx_handler;
+    //     tracing::debug!("new tx handler registered");
+    // }
 
     async fn recv_tx(&self, tx: Transaction) {
         tracing::debug!("submitting received tx to tx_handler");
-        let tx_handler = self.tx_handler.read().await;
-        if let Err(err) = tx_handler.recv_tx(tx).await {
-            tracing::error!("failed to handle incoming transaction: {}", err);
-        } else {
-            tracing::debug!("submitted received tx to tx_handler");
+        if let Err(err) = self.tx_sender.send_tx(tx) {
+            tracing::error!("P2P error during received Tx sending:{err}");
         }
+
+        // let tx_handler = self.tx_handler.read().await;
+        // if let Err(err) = tx_handler.recv_tx(tx).await {
+        //     tracing::error!("failed to handle incoming transaction: {}", err);
+        // } else {
+        //     tracing::debug!("submitted received tx to tx_handler");
+        // }
     }
 
     async fn build_handshake_msg(&self) -> protocol::Handshake {

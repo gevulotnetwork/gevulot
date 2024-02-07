@@ -1,16 +1,10 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 
-use std::{
-    io::{ErrorKind, Write},
-    net::ToSocketAddrs,
-    path::PathBuf,
-    sync::{Arc, Mutex},
-    thread::sleep,
-    time::Duration,
-};
-
-use asset_manager::AssetManager;
+use crate::event_loop::start_event_loop;
+use crate::event_loop::P2pSender;
+use crate::event_loop::RpcSender;
+use crate::event_loop::TxEventSender;
 use async_trait::async_trait;
 use clap::Parser;
 use cli::{
@@ -23,7 +17,19 @@ use libsecp256k1::{PublicKey, SecretKey};
 use pea2pea::Pea2Pea;
 use rand::{rngs::StdRng, SeedableRng};
 use sqlx::postgres::PgPoolOptions;
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::{
+    io::{ErrorKind, Write},
+    net::ToSocketAddrs,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    thread::sleep,
+    time::Duration,
+};
+use tokio::sync::mpsc;
 use tokio::sync::{Mutex as TMutex, RwLock};
+use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::transport::Server;
 use tracing_subscriber::{filter::LevelFilter, fmt::format::FmtSpan, EnvFilter};
 use types::{Hash, Transaction};
@@ -31,6 +37,7 @@ use workflow::WorkflowEngine;
 
 mod asset_manager;
 mod cli;
+mod event_loop;
 mod mempool;
 mod nanos;
 mod networking;
@@ -138,7 +145,10 @@ impl mempool::Storage for storage::Database {
     }
 
     async fn set(&self, tx: &Transaction) -> Result<()> {
-        self.add_transaction(tx).await
+        let tx_hash = tx.hash;
+        self.add_transaction(tx).await?;
+        self.add_asset(&tx_hash).await?;
+        self.mark_asset_complete(&tx_hash).await
     }
 
     async fn fill_deque(&self, deque: &mut std::collections::VecDeque<Transaction>) -> Result<()> {
@@ -157,47 +167,55 @@ impl workflow::TransactionStore for storage::Database {
     }
 }
 
-struct P2PTxHandler {
-    mempool: Arc<RwLock<Mempool>>,
-    database: Arc<Database>,
-}
+// struct P2PTxHandler {
+//     mempool: Arc<RwLock<Mempool>>,
+//     database: Arc<Database>,
+// }
 
-impl P2PTxHandler {
-    pub fn new(mempool: Arc<RwLock<Mempool>>, database: Arc<Database>) -> Self {
-        Self { mempool, database }
-    }
-}
+// impl P2PTxHandler {
+//     pub fn new(mempool: Arc<RwLock<Mempool>>, database: Arc<Database>) -> Self {
+//         Self { mempool, database }
+//     }
+// }
 
-#[async_trait::async_trait]
-impl networking::p2p::TxHandler for P2PTxHandler {
-    async fn recv_tx(&self, tx: Transaction) -> Result<()> {
-        // The transaction was received from P2P network so we can consider it
-        // propagated at this point.
-        let tx_hash = tx.hash;
-        let mut tx = tx;
-        tx.propagated = true;
+// #[async_trait::async_trait]
+// impl networking::p2p::TxHandler for P2PTxHandler {
+//     async fn recv_tx(&self, tx: Transaction) -> Result<()> {
+//         // The transaction was received from P2P network so we can consider it
+//         // propagated at this point.
+//         let tx_hash = tx.hash;
+//         let mut tx = tx;
+//         tx.propagated = true;
 
-        // Submit the tx to mempool.
-        self.mempool.write().await.add(tx).await?;
+//         // Submit the tx to mempool.
+//         self.mempool.write().await.add(tx).await?;
 
-        //TODO copy paste of the asset manager handle_transaction method.
-        //added because when a tx arrive from the p2p asset are not added.
-        //should be done in a better way.
-        self.database.add_asset(&tx_hash).await
-    }
-}
-
-#[async_trait::async_trait]
-impl mempool::AclWhitelist for Database {
-    async fn contains(&self, key: &PublicKey) -> Result<bool> {
-        let key = entity::PublicKey(*key);
-        self.acl_whitelist_has(&key).await
-    }
-}
+//         //TODO copy paste of the asset manager handle_transaction method.
+//         //added because when a tx arrive from the p2p asset are not added.
+//         //should be done in a better way.
+//         //        self.database.add_asset(&tx_hash).await
+//     }
+// }
 
 async fn run(config: Arc<Config>) -> Result<()> {
     let database = Arc::new(Database::new(&config.db_url).await?);
     let file_storage = Arc::new(storage::File::new(&config.data_directory));
+
+    let http_peer_list: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>> =
+        Default::default();
+
+    let mempool = Arc::new(RwLock::new(Mempool::new(database.clone()).await?));
+
+    //start Tx process event loop
+    let (txevent_loop_jh, tx_sender, p2p_stream) = start_event_loop(
+        config.data_directory.clone(),
+        config.p2p_listen_addr,
+        config.http_download_port,
+        http_peer_list.clone(),
+        database.clone(),
+        mempool.clone(),
+    )
+    .await?;
 
     let p2p = Arc::new(
         networking::P2P::new(
@@ -206,22 +224,19 @@ async fn run(config: Arc<Config>) -> Result<()> {
             &config.p2p_psk_passphrase,
             Some(config.http_download_port),
             config.p2p_advertised_listen_addr,
+            http_peer_list,
+            TxEventSender::<P2pSender>::build(tx_sender.clone()),
+            p2p_stream,
+            //database.clone()
         )
         .await,
     );
 
-    let mempool = Arc::new(RwLock::new(
-        Mempool::new(database.clone(), database.clone(), Some(p2p.clone())).await?,
-    ));
-
-    p2p.register_tx_handler(Arc::new(P2PTxHandler::new(
-        mempool.clone(),
-        database.clone(),
-    )))
-    .await;
-
-    //start http download manager
-    let download_jh = networking::download_manager::serve_files(&config).await?;
+    // p2p.register_tx_handler(Arc::new(P2PTxHandler::new(
+    //     mempool.clone(),
+    //     database.clone(),
+    // )))
+    // .await;
 
     // TODO(tuommaki): read total available resources from config / acquire system stats.
     let num_gpus = if config.gpu_devices.is_some() { 1 } else { 0 };
@@ -242,19 +257,19 @@ async fn run(config: Arc<Config>) -> Result<()> {
         resource_manager.clone(),
     );
 
-    let asset_mgr = Arc::new(AssetManager::new(
-        config.clone(),
-        database.clone(),
-        p2p.as_ref().peer_http_port_list.clone(),
-    ));
+    // let asset_mgr = Arc::new(AssetManager::new(
+    //     config.clone(),
+    //     database.clone(),
+    //     p2p.as_ref().peer_http_port_list.clone(),
+    // ));
 
     let node_key = read_node_key(&config.node_key_file)?;
 
     // Launch AssetManager's background processing.
-    tokio::spawn({
-        let asset_mgr = asset_mgr.clone();
-        async move { asset_mgr.run().await }
-    });
+    // tokio::spawn({
+    //     let asset_mgr = asset_mgr.clone();
+    //     async move { asset_mgr.run().await }
+    // });
 
     let workflow_engine = Arc::new(WorkflowEngine::new(database.clone(), file_storage.clone()));
 
@@ -305,14 +320,14 @@ async fn run(config: Arc<Config>) -> Result<()> {
     let rpc_server = rpc_server::RpcServer::run(
         config.clone(),
         database.clone(),
-        mempool.clone(),
-        asset_mgr.clone(),
-        database.clone(), // AclWhitelist impl.
+        //        mempool.clone(),
+        //        asset_mgr.clone(),
+        TxEventSender::<RpcSender>::build(tx_sender),
     )
     .await?;
 
-    if let Err(err) = download_jh.await {
-        tracing::info!("download_manager error:{err}");
+    if let Err(err) = txevent_loop_jh.await {
+        tracing::info!("Tx event loop error:{err}");
     }
     Ok(())
 }
@@ -322,6 +337,28 @@ async fn run(config: Arc<Config>) -> Result<()> {
 /// others, while it doesn't participate in the Gevulot's operational side
 /// in any other way - i.e. this won't handle transactions in any way.
 async fn p2p_beacon(config: P2PBeaconConfig) -> Result<()> {
+    let http_peer_list: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>> =
+        Default::default();
+    // //start Tx process event loop
+    // let (txevent_loop_jh, tx_sender, p2p_stream) = start_event_loop(
+    //     config.data_directory.clone(),
+    //     config.p2p_listen_addr,
+    //     config.http_download_port,
+    //     http_peer_list.clone(),
+    //     Arc::new(crate::types::transaction::AlwaysGrantAclWhitelist {}),
+    //     mempool.clone(),
+    // )
+    // .await?;
+
+    //build empty channel for P2P interface Transaction management.
+    //Indicate some domain conflict issue.
+    //P2P network should be started (peer domain) without Tx management (Node domain)
+    let (tx, mut rcv_tx_event_rx) = mpsc::unbounded_channel();
+    tokio::spawn(async move { while let Some(_) = rcv_tx_event_rx.recv().await {} });
+
+    let (_, p2p_recv) = mpsc::unbounded_channel::<Transaction>();
+    let p2p_stream = UnboundedReceiverStream::new(p2p_recv);
+
     let p2p = Arc::new(
         networking::P2P::new(
             "gevulot-network",
@@ -329,6 +366,9 @@ async fn p2p_beacon(config: P2PBeaconConfig) -> Result<()> {
             &config.p2p_psk_passphrase,
             None,
             config.p2p_advertised_listen_addr,
+            http_peer_list,
+            TxEventSender::<P2pSender>::build(tx),
+            p2p_stream,
         )
         .await,
     );

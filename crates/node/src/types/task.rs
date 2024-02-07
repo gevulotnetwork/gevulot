@@ -1,6 +1,5 @@
+use crate::types::file::AssetFile;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
-use std::path::PathBuf;
 use uuid::Uuid;
 
 use super::hash::{deserialize_hash_from_json, Hash};
@@ -29,21 +28,6 @@ pub enum TaskKind {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize, sqlx::FromRow)]
-pub struct File {
-    #[serde(skip_serializing, skip_deserializing)]
-    pub tx: Hash,
-    pub name: String,
-    pub url: String,
-}
-
-impl File {
-    pub fn get_file_relative_path(&self) -> PathBuf {
-        let file_name = Path::new(&self.name).file_name().unwrap();
-        PathBuf::new().join(self.tx.to_string()).join(file_name)
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize, sqlx::FromRow)]
 pub struct Task {
     pub id: TaskId,
     pub tx: Hash,
@@ -53,7 +37,7 @@ pub struct Task {
     pub program_id: Hash,
     pub args: Vec<String>,
     #[sqlx(skip)]
-    pub files: Vec<File>,
+    pub files: Vec<AssetFile>,
     #[serde(skip_deserializing)]
     pub serial: i32,
     #[serde(skip_deserializing)]

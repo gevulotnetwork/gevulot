@@ -1,3 +1,4 @@
+//TODO to be removed
 use crate::{
     cli::Config,
     storage::Database,
@@ -32,20 +33,20 @@ enum AssetManagerError {
 /// VM images for those programs. Similarly, Run transaction has associated
 /// input data which must be downloaded, but also built into workspace volume
 /// for execution.
-pub struct AssetManager {
+pub struct AssetManagerOld {
     config: Arc<Config>,
     database: Arc<Database>,
     http_client: reqwest::Client,
     http_peer_list: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>>,
 }
 
-impl AssetManager {
+impl AssetManagerOld {
     pub fn new(
         config: Arc<Config>,
         database: Arc<Database>,
         http_peer_list: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>>,
     ) -> Self {
-        AssetManager {
+        Self {
             config,
             database,
             http_client: reqwest::Client::new(),
@@ -58,14 +59,14 @@ impl AssetManager {
         loop {
             for tx_hash in self.database.get_incomplete_assets().await? {
                 if let Some(tx) = self.database.find_transaction(&tx_hash).await? {
-                    if let Err(err) = self.process_transaction(&tx).await {
-                        tracing::error!(
-                            "failed to process transaction (hash: {}) assets: {}",
-                            tx.hash,
-                            err
-                        );
-                        continue;
-                    }
+                    // if let Err(err) = self.process_transaction(&tx).await {
+                    //     tracing::error!(
+                    //         "failed to process transaction (hash: {}) assets: {}",
+                    //         tx.hash,
+                    //         err
+                    //     );
+                    //     continue;
+                    // }
 
                     self.database.mark_asset_complete(&tx_hash).await?;
                 } else {
@@ -87,109 +88,109 @@ impl AssetManager {
         self.database.add_asset(&tx.hash).await
     }
 
-    async fn process_transaction(&self, tx: &Transaction) -> Result<()> {
-        match tx.payload {
-            transaction::Payload::Deploy { .. } => self.process_deployment(tx).await,
-            transaction::Payload::Run { .. } => self.process_run(tx).await,
-            // Other transaction types don't have external assets that would
-            // need processing.
-            _ => Ok(()),
-        }
-    }
+    // async fn process_transaction(&self, tx: &Transaction) -> Result<()> {
+    //     match tx.payload {
+    //         transaction::Payload::Deploy { .. } => self.process_deployment(tx).await,
+    //         transaction::Payload::Run { .. } => self.process_run(tx).await,
+    //         // Other transaction types don't have external assets that would
+    //         // need processing.
+    //         _ => Ok(()),
+    //     }
+    // }
 
-    async fn process_deployment(&self, tx: &Transaction) -> Result<()> {
-        let (prover, verifier) = match tx.payload.clone() {
-            Payload::Deploy {
-                name: _,
-                prover,
-                verifier,
-            } => (Program::from(prover), Program::from(verifier)),
-            _ => return Err(AssetManagerError::IncompatibleTxPayload(tx.hash).into()),
-        };
+    // async fn process_deployment(&self, tx: &Transaction) -> Result<()> {
+    //     let (prover, verifier) = match tx.payload.clone() {
+    //         Payload::Deploy {
+    //             name: _,
+    //             prover,
+    //             verifier,
+    //         } => (Program::from(prover), Program::from(verifier)),
+    //         _ => return Err(AssetManagerError::IncompatibleTxPayload(tx.hash).into()),
+    //     };
 
-        self.process_program(&prover).await?;
-        self.process_program(&verifier).await?;
+    //     self.process_program(&prover).await?;
+    //     self.process_program(&verifier).await?;
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
-    async fn process_program(&self, program: &Program) -> Result<()> {
-        self.download_image(program).await
-    }
+    // async fn process_program(&self, program: &Program) -> Result<()> {
+    //     self.download_image(program).await
+    // }
 
-    async fn process_run(&self, tx: &Transaction) -> Result<()> {
-        let workflow = match tx.payload.clone() {
-            Payload::Run { workflow } => workflow,
-            _ => return Err(AssetManagerError::IncompatibleTxPayload(tx.hash).into()),
-        };
+    // async fn process_run(&self, tx: &Transaction) -> Result<()> {
+    //     let workflow = match tx.payload.clone() {
+    //         Payload::Run { workflow } => workflow,
+    //         _ => return Err(AssetManagerError::IncompatibleTxPayload(tx.hash).into()),
+    //     };
 
-        // TODO: Ideally the following would happen concurrently for each file...
-        for step in workflow.steps {
-            for input in step.inputs {
-                match input {
-                    ProgramData::Input {
-                        file_name,
-                        file_url,
-                        checksum,
-                    } => {
-                        let f = types::File {
-                            tx: tx.hash,
-                            name: file_name,
-                            url: file_url,
-                        };
-                        crate::networking::download_manager::download_file(
-                            &f.url,
-                            &self.config.data_directory,
-                            f.get_file_relative_path()
-                                .to_str()
-                                .ok_or(eyre!("Download bad file path: {:?}", f.name))?,
-                            self.get_peer_list().await,
-                            &self.http_client,
-                            checksum.into(),
-                        )
-                        .await?;
-                    }
-                    ProgramData::Output { .. } => {
-                        /* ProgramData::Output asinput means it comes from another
-                        program execution -> skip this branch. */
-                    }
-                }
-            }
-        }
+    //     // TODO: Ideally the following would happen concurrently for each file...
+    //     for step in workflow.steps {
+    //         for input in step.inputs {
+    //             match input {
+    //                 ProgramData::Input {
+    //                     file_name,
+    //                     file_url,
+    //                     checksum,
+    //                 } => {
+    //                     let f = types::File {
+    //                         tx: tx.hash,
+    //                         name: file_name,
+    //                         url: file_url,
+    //                     };
+    //                     crate::networking::download_manager::download_file(
+    //                         &f.url,
+    //                         &self.config.data_directory,
+    //                         f.get_file_relative_path()
+    //                             .to_str()
+    //                             .ok_or(eyre!("Download bad file path: {:?}", f.name))?,
+    //                         self.get_peer_list().await,
+    //                         &self.http_client,
+    //                         checksum.into(),
+    //                     )
+    //                     .await?;
+    //                 }
+    //                 ProgramData::Output { .. } => {
+    //                     /* ProgramData::Output asinput means it comes from another
+    //                     program execution -> skip this branch. */
+    //                 }
+    //             }
+    //         }
+    //     }
 
-        Ok(())
-    }
+    //     Ok(())
+    // }
 
-    /// download downloads file from the given `url` and saves it to file in `file_path`.
-    async fn download_image(&self, program: &Program) -> Result<()> {
-        let file_path = PathBuf::new()
-            .join("images")
-            .join(program.hash.to_string())
-            .join(&program.image_file_name);
-        tracing::info!(
-            "asset download url:{} file_path:{file_path:?} file_checksum:{}",
-            program.image_file_url,
-            program.image_file_checksum
-        );
-        crate::networking::download_manager::download_file(
-            &program.image_file_url,
-            &self.config.data_directory,
-            file_path
-                .to_str()
-                .ok_or(eyre!("Download bad file path: {:?}", file_path))?,
-            self.get_peer_list().await,
-            &self.http_client,
-            (&*program.image_file_checksum).into(),
-        )
-        .await
-    }
+    // /// download downloads file from the given `url` and saves it to file in `file_path`.
+    // async fn download_image(&self, program: &Program) -> Result<()> {
+    //     let file_path = PathBuf::new()
+    //         .join("images")
+    //         .join(program.hash.to_string())
+    //         .join(&program.image_file_name);
+    //     tracing::info!(
+    //         "asset download url:{} file_path:{file_path:?} file_checksum:{}",
+    //         program.image_file_url,
+    //         program.image_file_checksum
+    //     );
+    //     crate::networking::download_manager::download_file(
+    //         &program.image_file_url,
+    //         &self.config.data_directory,
+    //         file_path
+    //             .to_str()
+    //             .ok_or(eyre!("Download bad file path: {:?}", file_path))?,
+    //         self.get_peer_list().await,
+    //         &self.http_client,
+    //         (&*program.image_file_checksum).into(),
+    //     )
+    //     .await
+    // }
 
-    async fn get_peer_list(&self) -> Vec<(SocketAddr, Option<u16>)> {
-        self.http_peer_list
-            .read()
-            .await
-            .iter()
-            .map(|(a, p)| (*a, *p))
-            .collect()
-    }
+    // async fn get_peer_list(&self) -> Vec<(SocketAddr, Option<u16>)> {
+    //     self.http_peer_list
+    //         .read()
+    //         .await
+    //         .iter()
+    //         .map(|(a, p)| (*a, *p))
+    //         .collect()
+    // }
 }

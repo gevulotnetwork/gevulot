@@ -1,10 +1,11 @@
+use crate::types::file::AssetFile;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use eyre::Result;
 use gevulot_node::types::{
     transaction::{Payload, ProgramData, Workflow, WorkflowStep},
-    File, Hash, Task, TaskKind, Transaction,
+    Hash, Task, TaskKind, Transaction,
 };
 use thiserror::Error;
 use uuid::Uuid;
@@ -25,6 +26,9 @@ pub enum WorkflowError {
 
     #[error("transaction not found: {0}")]
     TransactionNotFound(Hash),
+
+    #[error("Program file definition error: {0}")]
+    FileDefinitionError(String),
 }
 
 #[async_trait]
@@ -204,9 +208,9 @@ impl WorkflowEngine {
                     cur_tx = parent;
                     continue;
                 }
-                _ => {
+                payload => {
                     tracing::debug!(
-                        "failed to find workflow for transaction {}: incompatible transaction",
+                        "Find parent failed to find workflow for transaction {}: incompatible transaction: {payload:?}",
                         cur_tx
                     );
                     return Err(WorkflowError::IncompatibleTransaction(cur_tx.to_string()).into());
@@ -249,9 +253,9 @@ impl WorkflowEngine {
                     tx_hash = parent;
                     continue;
                 }
-                _ => {
+                payload => {
                     tracing::debug!(
-                        "failed to find workflow for transaction {}: incompatible transaction",
+                        "failed to find workflow for transaction {}: incompatible transaction :{payload:?}",
                         &tx_hash
                     );
                     return Err(WorkflowError::IncompatibleTransaction(tx_hash.to_string()).into());
@@ -267,37 +271,41 @@ impl WorkflowEngine {
         kind: TaskKind,
     ) -> Result<Task> {
         let id = Uuid::new_v4();
-        let mut file_transfers = vec![];
+        let mut file_transfers: Vec<(Hash, String)> = vec![];
         let files = step
             .inputs
             .iter()
-            .map(|e| match e {
-                ProgramData::Input {
-                    file_name,
-                    file_url,
-                    ..
-                } => File {
-                    tx,
-                    name: file_name.clone(),
-                    url: file_url.clone(),
-                },
-                ProgramData::Output {
-                    source_program,
-                    file_name,
-                } => {
-                    // Make record of file that needs transfer from source tx to current tx's files.
-                    file_transfers.push((*source_program, file_name.clone()));
-
-                    File {
-                        tx,
-                        name: file_name.clone(),
-                        url: "".to_string(),
-                    }
-                }
+            .map(|e| {
+                AssetFile::try_from_prg_data(e, tx)
+                    .map_err(|err| WorkflowError::FileDefinitionError(err.to_string()).into())
             })
-            .collect();
+            //     match e {
+            //     ProgramData::Input {
+            //         file_name,
+            //         file_url,
+            //         ..
+            //     } => File {
+            //         tx,
+            //         name: file_name.clone(),
+            //         url: file_url.clone(),
+            //     },
+            //     ProgramData::Output {
+            //         source_program,
+            //         file_name,
+            //     } => {
+            //         // Make record of file that needs transfer from source tx to current tx's files.
+            //         file_transfers.push((*source_program, file_name.clone()));
+            //         File {
+            //             tx,
+            //             name: file_name.clone(),
+            //             url: "".to_string(),
+            //         }
+            //     }
+            // })
+            .collect::<Result<Vec<_>>>()?;
 
         // Process file transfers from source programs.
+        //TODO! move end task execution.
         for (source_program, file_name) in file_transfers {
             let source_tx = self
                 .find_parent_tx_for_program(&tx, &source_program)

@@ -1,15 +1,27 @@
-use std::time::Duration;
-
+use super::entity::{self};
+use crate::types::file::AssetFile;
+use crate::types::transaction;
+use crate::types::{self, transaction::ProgramData, Hash, Program, Task};
 use eyre::Result;
 use gevulot_node::types::program::ResourceRequest;
+use gevulot_node::types::transaction::TransactionError;
+use libsecp256k1::PublicKey;
 use sqlx::{self, postgres::PgPoolOptions, FromRow, Row};
+use std::time::Duration;
 use uuid::Uuid;
-
-use super::entity::{self};
-use crate::types::{self, transaction::ProgramData, File, Hash, Program, Task};
 
 const MAX_DB_CONNS: u32 = 64;
 const DB_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[async_trait::async_trait]
+impl transaction::AclWhitelist for Database {
+    async fn contains(&self, key: &PublicKey) -> Result<bool, TransactionError> {
+        let key = entity::PublicKey(*key);
+        self.acl_whitelist_has(&key)
+            .await
+            .map_err(|err| TransactionError::General(format!("Fail to query access list: {err}",)))
+    }
+}
 
 #[derive(Clone)]
 pub struct Database {
@@ -166,10 +178,11 @@ impl Database {
         // Fetch accompanied Files for the Task.
         match task {
             Some(mut task) => {
-                let mut files = sqlx::query_as::<_, File>("SELECT * FROM file WHERE task_id = $1")
-                    .bind(id)
-                    .fetch_all(&mut *tx)
-                    .await?;
+                let mut files =
+                    sqlx::query_as::<_, AssetFile>("SELECT * FROM file WHERE task_id = $1")
+                        .bind(id)
+                        .fetch_all(&mut *tx)
+                        .await?;
                 task.files.append(&mut files);
                 Ok(Some(task))
             }
@@ -186,7 +199,7 @@ impl Database {
             .await?;
 
         for task in &mut tasks {
-            let mut files = sqlx::query_as::<_, File>("SELECT * FROM file WHERE task_id = $1")
+            let mut files = sqlx::query_as::<_, AssetFile>("SELECT * FROM file WHERE task_id = $1")
                 .bind(task.id)
                 .fetch_all(&mut *tx)
                 .await?;

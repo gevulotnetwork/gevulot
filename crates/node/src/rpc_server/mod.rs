@@ -1,5 +1,8 @@
-use std::{net::SocketAddr, rc::Rc, sync::Arc};
+use crate::event_loop::RpcSender;
+use crate::event_loop::TxEventSender;
+use std::{net::SocketAddr, sync::Arc};
 
+use crate::{cli::Config, mempool::Mempool, storage::Database, types::Transaction};
 use eyre::Result;
 use gevulot_node::types::{
     rpc::{RpcError, RpcResponse},
@@ -11,19 +14,9 @@ use jsonrpsee::{
 };
 use tokio::sync::RwLock;
 
-use crate::{
-    asset_manager::AssetManager,
-    cli::Config,
-    mempool::{AclWhitelist, Mempool},
-    storage::Database,
-    types::Transaction,
-};
-
 struct Context {
     database: Arc<Database>,
-    mempool: Arc<RwLock<Mempool>>,
-    asset_manager: Arc<AssetManager>,
-    acl_whitelist: Arc<dyn AclWhitelist>,
+    tx_sender: TxEventSender<RpcSender>,
 }
 
 impl std::fmt::Debug for Context {
@@ -41,16 +34,12 @@ impl RpcServer {
     pub async fn run(
         cfg: Arc<Config>,
         database: Arc<Database>,
-        mempool: Arc<RwLock<Mempool>>,
-        asset_manager: Arc<AssetManager>,
-        acl_whitelist: Arc<dyn AclWhitelist>,
+        tx_sender: TxEventSender<RpcSender>,
     ) -> Result<Self> {
         let server = Server::builder().build(cfg.json_rpc_listen_addr).await?;
         let mut module = RpcModule::new(Context {
             database,
-            mempool,
-            asset_manager,
-            acl_whitelist,
+            tx_sender,
         });
 
         module.register_async_method("sendTransaction", send_transaction)?;
@@ -88,40 +77,10 @@ async fn send_transaction(params: Params<'static>, ctx: Arc<Context>) -> RpcResp
         }
     };
 
-    // Secondly verify that author is whitelisted.
-    let whitelisted = match ctx.acl_whitelist.contains(&tx.author).await {
-        Ok(result) => result,
-        Err(err) => {
-            tracing::error!("error when authorizing transaction: {}", err);
-
-            // Technically following is not 100% correct, but when there is
-            // problem with authorizing a transaction, it cannot be passed
-            // through. The real nature of the problem must also not be exposed
-            // as it can reveal unexpected security issues.
-            return RpcResponse::Err(RpcError::Unauthorized);
-        }
-    };
-
-    if !whitelisted {
-        return RpcResponse::Err(RpcError::Unauthorized);
-    }
-
-    // Persist transaction in DB first.
-    if let Err(err) = ctx.database.add_transaction(&tx).await {
+    if let Err(err) = ctx.tx_sender.send_tx(tx).await {
+        tracing::error!("failed to persist transaction: {}", err);
         return RpcResponse::Err(RpcError::InvalidRequest(
             "failed to persist transaction".to_string(),
-        ));
-    }
-
-    // Then add it to asset manager in order to download all necessary files
-    // involved.
-    if let Err(err) = ctx.asset_manager.handle_transaction(&tx).await {
-        tracing::error!(
-            "failed to enqueue transaction for asset processing: {}",
-            err
-        );
-        return RpcResponse::Err(RpcError::InvalidRequest(
-            "failed to enqueue transaction for asset processing".to_string(),
         ));
     }
 
@@ -246,14 +205,6 @@ mod tests {
     use crate::mempool;
 
     use super::*;
-
-    struct AlwaysGrantAclWhitelist;
-    #[async_trait::async_trait]
-    impl mempool::AclWhitelist for AlwaysGrantAclWhitelist {
-        async fn contains(&self, key: &PublicKey) -> Result<bool> {
-            Ok(true)
-        }
-    }
 
     #[ignore]
     #[tokio::test]
