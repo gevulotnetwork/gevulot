@@ -131,7 +131,7 @@ async fn main() {
             verifier_img_url,
             listen_addr,
         } => {
-            println!("Start prover / verifier deployement");
+            println!("Start prover / verifier deployment");
             match gevulot_cli::run_deploy_command(
                 client,
                 args.keyfile,
@@ -144,8 +144,8 @@ async fn main() {
             )
             .await
             {
-                Ok((tx_hash, prover_hash, verifier_hash)) => println!("Prover / Verifier deployed correctly. Prover hash:{prover_hash} Verifier hash:{verifier_hash}. Tx Hash:{tx_hash}"),
-                Err(err) => println!("An error occurs during Prover / Verifier deployement :{err}"),
+                Ok((tx_hash, prover_hash, verifier_hash)) => println!("Prover / Verifier deployed correctly.\nProver hash:{prover_hash}\nVerifier hash:{verifier_hash}.\nTx Hash:{tx_hash}"),
+                Err(err) => println!("An error occurs during Prover / Verifier deployment :{err}"),
             }
         }
         ConfCommands::Exec { tasks, listen_addr } => {
