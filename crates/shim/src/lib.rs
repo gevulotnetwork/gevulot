@@ -133,9 +133,13 @@ impl GRPCClient {
 
         let mut files = vec![];
         for file in task.files {
-            let path = self
-                .rt
-                .block_on(self.download_file(task.id.clone(), file))?;
+            let path = match self.rt.block_on(self.download_file(task.id.clone(), &file)) {
+                Ok(path) => path,
+                Err(err) => {
+                    println!("failed to download file {file} for task {}: {err}", task.id);
+                    return Err(err);
+                }
+            };
             files.push(path);
         }
         task.files = files;
@@ -176,16 +180,22 @@ impl GRPCClient {
 
     /// download_file asks gRPC server for file with a `name` and writes it to
     /// `workspace`.
-    async fn download_file(&self, task_id: TaskId, name: String) -> Result<String> {
+    async fn download_file(&self, task_id: TaskId, name: &str) -> Result<String> {
         let file_req = grpc::FileRequest {
             task_id: task_id.clone(),
-            path: name.clone(),
+            path: name.to_string(),
         };
 
-        let file_path = Path::new(&self.workspace).join(task_id).join(name.clone());
+        let file_path = Path::new(&self.workspace).join(task_id).join(name);
         if let Some(parent) = file_path.parent() {
             if let Ok(false) = tokio::fs::try_exists(parent).await {
-                tokio::fs::create_dir_all(parent).await?;
+                if let Err(err) = tokio::fs::create_dir_all(parent).await {
+                    println!(
+                        "failed to create directory: {}: {err}",
+                        parent.to_str().unwrap()
+                    );
+                    return Err(Box::new(err));
+                };
             }
         }
         let path = match file_path.into_os_string().into_string() {
