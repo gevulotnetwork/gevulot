@@ -1,6 +1,8 @@
-use super::file::AssetFile;
+use super::file::TxFile;
 use super::signature::Signature;
 use super::{hash::Hash, program::ResourceRequest};
+use crate::types::file::vec_txfile_to_bytes;
+use crate::types::file::AssetFile;
 use crate::types::transaction;
 use async_trait::async_trait;
 use eyre::Result;
@@ -8,7 +10,8 @@ use libsecp256k1::{sign, verify, Message, PublicKey, SecretKey};
 use num_bigint::BigInt;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
-use std::{collections::HashSet, rc::Rc};
+use std::path::Path;
+use std::{collections::HashSet, sync::Arc};
 use thiserror::Error;
 
 #[async_trait]
@@ -171,6 +174,7 @@ pub enum Payload {
         parent: Hash,
         prover: Hash,
         proof: Vec<u8>,
+        files: Vec<TxFile>,
     },
     ProofKey {
         parent: Hash,
@@ -180,6 +184,7 @@ pub enum Payload {
         parent: Hash,
         verifier: Hash,
         verification: Vec<u8>,
+        files: Vec<TxFile>,
     },
     Cancel {
         parent: Hash,
@@ -187,15 +192,15 @@ pub enum Payload {
 }
 
 impl Payload {
-    pub fn get_asset_list(&self, tx_hash: Hash) -> Result<Vec<(AssetFile, Hash)>> {
+    pub fn get_asset_list(&self, tx_hash: Hash) -> Result<Vec<AssetFile>> {
         match self {
             transaction::Payload::Deploy {
                 prover, verifier, ..
             } => Ok(vec![
-                AssetFile::try_from_prg_meta_data(prover, tx_hash).map_err(|err| {
+                AssetFile::try_from_prg_meta_data(prover).map_err(|err| {
                     TransactionError::Validation(format!("Fail to get prover image file: {err}",))
                 })?,
-                AssetFile::try_from_prg_meta_data(verifier, tx_hash).map_err(|err| {
+                AssetFile::try_from_prg_meta_data(verifier).map_err(|err| {
                     TransactionError::Validation(
                         format!("Fail to gfet verifier image file: {err}",),
                     )
@@ -223,28 +228,36 @@ impl Payload {
                     .map(|(file_name, file_url, checksum)| {
                         //verify the url is valide.
                         reqwest::Url::parse(&file_url)?;
-                        Ok((
-                            AssetFile {
-                                url: file_url.clone(),
-                                name: file_name.to_string(),
-                                tx: tx_hash,
-                                //                            checksum: checksum.to_string().into(),
-                            },
-                            checksum.to_string().into(),
-                        ))
+                        Ok(AssetFile {
+                            image: false,
+                            url: file_url.clone(),
+                            name: file_name.to_string(),
+                            tx: tx_hash,
+                            checksum: checksum.to_string().into(),
+                        })
                     })
                     .collect()
             }
-            Payload::Proof {
-                parent,
-                prover,
-                proof,
-            } => todo!(),
-            Payload::Verification {
-                parent,
-                verifier,
-                verification,
-            } => todo!(),
+            Payload::Proof { files, .. } | Payload::Verification { files, .. } => files
+                .iter()
+                .map(|file| {
+                    //get uuid from file name
+                    let uuid = Path::new(&file.name).file_name().unwrap();
+
+                    Ok(AssetFile {
+                        image: false,
+                        url: format!(
+                            "{}/{}/{}",
+                            file.url,
+                            tx_hash.to_string(),
+                            uuid.to_str().unwrap()
+                        ),
+                        name: file.name.to_string(),
+                        tx: tx_hash,
+                        checksum: file.checksum.to_string().into(),
+                    })
+                })
+                .collect(),
             // Other transaction types don't have external assets that would
             // need processing.
             _ => Ok(vec![]),
@@ -280,10 +293,13 @@ impl Payload {
                 parent,
                 prover,
                 proof,
+                files,
             } => {
                 buf.append(&mut parent.to_vec());
                 buf.append(&mut prover.to_vec());
                 buf.append(proof.clone().as_mut());
+                buf.append(proof.clone().as_mut());
+                buf.append(&mut vec_txfile_to_bytes(files).unwrap());
             }
             Payload::ProofKey { parent, key } => {
                 buf.append(&mut parent.to_vec());
@@ -293,10 +309,12 @@ impl Payload {
                 parent,
                 verifier,
                 verification,
+                files,
             } => {
                 buf.append(&mut parent.to_vec());
                 buf.append(&mut verifier.to_vec());
                 buf.append(verification.clone().as_mut());
+                buf.append(&mut vec_txfile_to_bytes(files).unwrap());
             }
             Payload::Cancel { parent } => {
                 buf.append(&mut parent.to_vec());

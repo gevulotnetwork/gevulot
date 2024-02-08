@@ -2,6 +2,7 @@ mod program_manager;
 mod resource_manager;
 
 use crate::storage::Database;
+use crate::types::file::{move_vmfile, TxFile, VmFile};
 use crate::types::TaskState;
 use crate::vmm::vm_server::grpc;
 use crate::vmm::{vm_server::TaskManager, VMId};
@@ -13,6 +14,8 @@ use libsecp256k1::SecretKey;
 pub use program_manager::ProgramManager;
 use rand::RngCore;
 pub use resource_manager::ResourceManager;
+use std::path::PathBuf;
+use uuid::Uuid;
 
 use std::time::Instant;
 use std::{
@@ -63,6 +66,8 @@ pub struct Scheduler {
     running_vms: Arc<Mutex<Vec<ProgramHandle>>>,
     #[allow(clippy::type_complexity)]
     task_queue: Arc<Mutex<HashMap<Hash, VecDeque<(Task, Instant)>>>>,
+    data_directory: PathBuf,
+    http_download_host: String,
 }
 
 impl Scheduler {
@@ -72,6 +77,8 @@ impl Scheduler {
         program_manager: ProgramManager,
         workflow_engine: Arc<WorkflowEngine>,
         node_key: SecretKey,
+        data_directory: PathBuf,
+        http_download_host: String,
     ) -> Self {
         Self {
             mempool,
@@ -84,6 +91,8 @@ impl Scheduler {
             running_tasks: Arc::new(Mutex::new(vec![])),
             running_vms: Arc::new(Mutex::new(vec![])),
             task_queue: Arc::new(Mutex::new(HashMap::new())),
+            data_directory,
+            http_download_host,
         }
     }
 
@@ -407,6 +416,76 @@ impl TaskManager for Scheduler {
                 );
             }
 
+            //move and build output files of the Tx execution
+            let executed_files: Vec<(VmFile, TxFile)> = result
+                .files
+                .iter()
+                .map(|file| {
+                    let vm_file = VmFile {
+                        task_id: running_task.task.tx,
+                        name: file.path.to_string(),
+                    };
+
+                    let uuid = Uuid::new_v4();
+                    //format file_name to keep the current filename and the uuid.
+                    //put uuid at the end so that the uuid is use to save the file.
+                    let new_file_name = format!("{}/{}", file.path, uuid);
+                    let dest = TxFile {
+                        //Real url will be calculated during download.
+                        url: self.http_download_host.clone(),
+                        name: new_file_name,
+                        checksum: file.checksum[..].into(),
+                    };
+                    (vm_file, dest)
+                })
+                .collect();
+
+            //Verify that all expected files has been generated.
+            // let executed_files: Vec<(VmFile, TxFile)> =
+            //     if let Ok(Some(tx)) = self.database.find_transaction(&running_task.task.tx).await {
+            //         if let Payload::Run { workflow } = tx.payload {
+            //             workflow
+            //                 .steps
+            //                 .iter()
+            //                 .flat_map(|step| &step.inputs)
+            //                 .filter_map(|input| {
+            //                     let ProgramData::Output {
+            //                         source_program,
+            //                         file_name,
+            //                     } = input
+            //                     else {
+            //                         return None;
+            //                     };
+            //                     let vm_file = VmFile {
+            //                         task_id: running_task.task.tx,
+            //                         name: file_name.to_string(),
+            //                     };
+
+            //                     let uuid = Uuid::new_v4();
+            //                     //format file_name to keep the current filename and the uuid.
+            //                     //put uuid at the end so that the uuid is use to save the file.
+            //                     let new_file_name = format!("{}/{}", file_name, uuid);
+            //                     let dest = TxFile {
+            //                         //Real url will be calculated during download.
+            //                         url: self.http_download_host.clone(),
+            //                         name: new_file_name,
+            //                         checksum: Hash::default(),
+            //                     };
+            //                     Some((vm_file, dest))
+            //                 })
+            //                 .collect()
+            //         } else {
+            //             vec![]
+            //         }
+            //     } else {
+            //         vec![]
+            //     };
+
+            let new_tx_files: Vec<TxFile> = executed_files
+                .iter()
+                .map(|(_, file)| file)
+                .cloned()
+                .collect();
             let nonce = rand::thread_rng().next_u64();
             let tx = match running_task.task.kind {
                 TaskKind::Proof => Transaction::new(
@@ -414,6 +493,7 @@ impl TaskManager for Scheduler {
                         parent: running_task.task.tx,
                         prover: program,
                         proof: result.data,
+                        files: new_tx_files,
                     },
                     &self.node_key,
                 ),
@@ -422,6 +502,7 @@ impl TaskManager for Scheduler {
                         parent: running_task.task.tx,
                         verifier: program,
                         verification: result.data,
+                        files: new_tx_files,
                     },
                     &self.node_key,
                 ),
@@ -435,6 +516,16 @@ impl TaskManager for Scheduler {
                     );
                 }
             };
+
+            //Move tx file from execution Tx path to new Tx path
+            for (source_file, dest_file) in executed_files {
+                let dest = dest_file.to_asset_file(tx.hash);
+                if let Err(err) = move_vmfile(&source_file, &dest, &self.data_directory).await {
+                    tracing::error!(
+                        "failed to move excution file from: {source_file:?} to: {dest:?} error: {err}",
+                    );
+                }
+            }
 
             let mut mempool = self.mempool.write().await;
             if let Err(err) = mempool.add(tx.clone()).await {

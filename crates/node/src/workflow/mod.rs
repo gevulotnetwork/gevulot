@@ -1,16 +1,13 @@
-use crate::types::file::AssetFile;
-use std::sync::Arc;
-
+use crate::types::file::TxFile;
 use async_trait::async_trait;
 use eyre::Result;
 use gevulot_node::types::{
-    transaction::{Payload, ProgramData, Workflow, WorkflowStep},
+    transaction::{Payload, Workflow, WorkflowStep},
     Hash, Task, TaskKind, Transaction,
 };
+use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
-
-use crate::storage;
 
 #[allow(clippy::enum_variant_names)]
 #[derive(Error, Debug, PartialEq)]
@@ -38,14 +35,14 @@ pub trait TransactionStore: Sync + Send {
 
 pub struct WorkflowEngine {
     tx_store: Arc<dyn TransactionStore>,
-    file_storage: Arc<storage::File>,
+    //    file_storage: Arc<storage::File>,
 }
 
 impl WorkflowEngine {
-    pub fn new(tx_store: Arc<dyn TransactionStore>, file_storage: Arc<storage::File>) -> Self {
+    pub fn new(tx_store: Arc<dyn TransactionStore>) -> Self {
         WorkflowEngine {
             tx_store,
-            file_storage,
+            //            file_storage,
         }
     }
 
@@ -73,6 +70,7 @@ impl WorkflowEngine {
                 parent,
                 prover,
                 proof,
+                ..
             } => {
                 tracing::debug!("creating next task from Proof tx {}", &cur_tx.hash);
 
@@ -123,6 +121,7 @@ impl WorkflowEngine {
                     parent,
                     prover,
                     proof,
+                    ..
                 } = proof_tx.payload
                 {
                     match workflow.steps.iter().position(|s| s.program == prover) {
@@ -271,13 +270,14 @@ impl WorkflowEngine {
         kind: TaskKind,
     ) -> Result<Task> {
         let id = Uuid::new_v4();
-        let mut file_transfers: Vec<(Hash, String)> = vec![];
+        let file_transfers: Vec<(Hash, String)> = vec![];
         let files = step
             .inputs
             .iter()
-            .map(|e| {
-                AssetFile::try_from_prg_data(e, tx)
+            .filter_map(|e| {
+                TxFile::try_from_prg_data(e)
                     .map_err(|err| WorkflowError::FileDefinitionError(err.to_string()).into())
+                    .transpose()
             })
             //     match e {
             //     ProgramData::Input {
@@ -304,18 +304,18 @@ impl WorkflowEngine {
             // })
             .collect::<Result<Vec<_>>>()?;
 
-        // Process file transfers from source programs.
-        //TODO! move end task execution.
-        for (source_program, file_name) in file_transfers {
-            let source_tx = self
-                .find_parent_tx_for_program(&tx, &source_program)
-                .await
-                .expect("output file dependency missing");
+        // // Process file transfers from source programs.
+        // //TODO! move end task execution.
+        // for (source_program, file_name) in file_transfers {
+        //     let source_tx = self
+        //         .find_parent_tx_for_program(&tx, &source_program)
+        //         .await
+        //         .expect("output file dependency missing");
 
-            self.file_storage
-                .move_task_file(&source_tx.to_string(), &tx.to_string(), &file_name)
-                .await?;
-        }
+        //     self.file_storage
+        //         .move_task_file(&source_tx.to_string(), &tx.to_string(), &file_name)
+        //         .await?;
+        // }
 
         Ok(Task {
             id,

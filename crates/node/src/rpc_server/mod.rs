@@ -1,8 +1,8 @@
-use crate::event_loop::RpcSender;
-use crate::event_loop::TxEventSender;
+use crate::txvalidation::RpcSender;
+use crate::txvalidation::TxEventSender;
 use std::{net::SocketAddr, sync::Arc};
 
-use crate::{cli::Config, mempool::Mempool, storage::Database, types::Transaction};
+use crate::{cli::Config, storage::Database, types::Transaction};
 use eyre::Result;
 use gevulot_node::types::{
     rpc::{RpcError, RpcResponse},
@@ -12,7 +12,6 @@ use jsonrpsee::{
     server::{RpcModule, Server, ServerHandle},
     types::Params,
 };
-use tokio::sync::RwLock;
 
 struct Context {
     database: Arc<Database>,

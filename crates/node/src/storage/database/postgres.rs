@@ -1,5 +1,5 @@
 use super::entity::{self};
-use crate::types::file::AssetFile;
+use crate::types::file::TxFile;
 use crate::types::transaction;
 use crate::types::{self, transaction::ProgramData, Hash, Program, Task};
 use eyre::Result;
@@ -149,11 +149,12 @@ impl Database {
 
         {
             let mut query_builder =
-                sqlx::QueryBuilder::new("INSERT INTO file ( task_id, name, url )");
+                sqlx::QueryBuilder::new("INSERT INTO file ( task_id, name, url, checksum )");
             query_builder.push_values(&t.files, |mut b, new_file| {
                 b.push_bind(t.id)
                     .push_bind(&new_file.name)
-                    .push_bind(&new_file.url);
+                    .push_bind(&new_file.url)
+                    .push_bind(&new_file.checksum);
             });
 
             let query = query_builder.build();
@@ -179,7 +180,7 @@ impl Database {
         match task {
             Some(mut task) => {
                 let mut files =
-                    sqlx::query_as::<_, AssetFile>("SELECT * FROM file WHERE task_id = $1")
+                    sqlx::query_as::<_, TxFile>("SELECT * FROM file WHERE task_id = $1")
                         .bind(id)
                         .fetch_all(&mut *tx)
                         .await?;
@@ -199,7 +200,7 @@ impl Database {
             .await?;
 
         for task in &mut tasks {
-            let mut files = sqlx::query_as::<_, AssetFile>("SELECT * FROM file WHERE task_id = $1")
+            let mut files = sqlx::query_as::<_, TxFile>("SELECT * FROM file WHERE task_id = $1")
                 .bind(task.id)
                 .fetch_all(&mut *tx)
                 .await?;
@@ -361,6 +362,13 @@ impl Database {
                     }
                 }
                 entity::transaction::Kind::Proof => {
+                    //get payload files
+                    let files =
+                        sqlx::query_as::<_, TxFile>("SELECT * FROM txfile WHERE tx_id = $1")
+                            .bind(tx_hash)
+                            .fetch_all(&mut *db_tx)
+                            .await?;
+
                     sqlx::query("SELECT parent, prover, proof FROM proof WHERE tx = $1")
                         .bind(tx_hash)
                         .map(
@@ -368,6 +376,7 @@ impl Database {
                                 parent: row.get(0),
                                 prover: row.get(1),
                                 proof: row.get(2),
+                                files: files.clone(), //to avoid file move.
                             },
                         )
                         .fetch_one(&mut *db_tx)
@@ -386,6 +395,12 @@ impl Database {
                         .await?
                 }
                 entity::transaction::Kind::Verification => {
+                    //get payload files
+                    let files =
+                        sqlx::query_as::<_, TxFile>("SELECT * FROM txfile WHERE tx_id = $1")
+                            .bind(tx_hash)
+                            .fetch_all(&mut *db_tx)
+                            .await?;
                     sqlx::query(
                         "SELECT parent, verifier, verification FROM verification WHERE tx = $1",
                     )
@@ -395,6 +410,7 @@ impl Database {
                             parent: row.get(0),
                             verifier: row.get(1),
                             verification: row.get(2),
+                            files: files.clone(), //to avoid file move.
                         },
                     )
                     .fetch_one(&mut *db_tx)
@@ -552,6 +568,7 @@ impl Database {
                 parent,
                 prover,
                 proof,
+                files,
             } => {
                 sqlx::query(
                     "INSERT INTO proof ( tx, parent, prover, proof ) VALUES ( $1, $2, $3, $4 ) ON CONFLICT (tx) DO NOTHING",
@@ -562,6 +579,25 @@ impl Database {
                 .bind(proof)
                 .execute(&mut *db_tx)
                 .await?;
+
+                //save payload files
+                if !files.is_empty() {
+                    let mut query_builder = sqlx::QueryBuilder::new(
+                        "INSERT INTO txfile ( tx_id, name, url, checksum )",
+                    );
+                    query_builder.push_values(files, |mut b, new_file| {
+                        b.push_bind(tx.hash)
+                            .push_bind(&new_file.name)
+                            .push_bind(&new_file.url)
+                            .push_bind(&new_file.checksum);
+                    });
+
+                    let query = query_builder.build();
+                    if let Err(err) = query.execute(&mut *db_tx).await {
+                        db_tx.rollback().await?;
+                        return Err(err.into());
+                    }
+                }
             }
 
             types::transaction::Payload::ProofKey { parent, key } => {
@@ -577,6 +613,7 @@ impl Database {
                 parent,
                 verifier,
                 verification,
+                files,
             } => {
                 sqlx::query(
                     "INSERT INTO verification ( tx, parent, verifier, verification ) VALUES ( $1, $2, $3, $4 ) ON CONFLICT (tx) DO NOTHING",
@@ -587,6 +624,25 @@ impl Database {
                 .bind(verification)
                 .execute(&mut *db_tx)
                 .await?;
+
+                //save payload files
+                if !files.is_empty() {
+                    let mut query_builder = sqlx::QueryBuilder::new(
+                        "INSERT INTO txfile ( tx_id, name, url, checksum )",
+                    );
+                    query_builder.push_values(files, |mut b, new_file| {
+                        b.push_bind(tx.hash)
+                            .push_bind(&new_file.name)
+                            .push_bind(&new_file.url)
+                            .push_bind(&new_file.checksum);
+                    });
+
+                    let query = query_builder.build();
+                    if let Err(err) = query.execute(&mut *db_tx).await {
+                        db_tx.rollback().await?;
+                        return Err(err.into());
+                    }
+                }
             }
             _ => { /* ignore for now */ }
         }

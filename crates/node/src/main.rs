@@ -1,10 +1,6 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 
-use crate::event_loop::start_event_loop;
-use crate::event_loop::P2pSender;
-use crate::event_loop::RpcSender;
-use crate::event_loop::TxEventSender;
 use async_trait::async_trait;
 use clap::Parser;
 use cli::{
@@ -37,13 +33,13 @@ use workflow::WorkflowEngine;
 
 mod asset_manager;
 mod cli;
-mod event_loop;
 mod mempool;
 mod nanos;
 mod networking;
 mod rpc_server;
 mod scheduler;
 mod storage;
+mod txvalidation;
 mod vmm;
 mod workflow;
 
@@ -199,7 +195,6 @@ impl workflow::TransactionStore for storage::Database {
 
 async fn run(config: Arc<Config>) -> Result<()> {
     let database = Arc::new(Database::new(&config.db_url).await?);
-    let file_storage = Arc::new(storage::File::new(&config.data_directory));
 
     let http_peer_list: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>> =
         Default::default();
@@ -207,7 +202,7 @@ async fn run(config: Arc<Config>) -> Result<()> {
     let mempool = Arc::new(RwLock::new(Mempool::new(database.clone()).await?));
 
     //start Tx process event loop
-    let (txevent_loop_jh, tx_sender, p2p_stream) = start_event_loop(
+    let (txevent_loop_jh, tx_sender, p2p_stream) = txvalidation::start_event_loop(
         config.data_directory.clone(),
         config.p2p_listen_addr,
         config.http_download_port,
@@ -225,7 +220,7 @@ async fn run(config: Arc<Config>) -> Result<()> {
             Some(config.http_download_port),
             config.p2p_advertised_listen_addr,
             http_peer_list,
-            TxEventSender::<P2pSender>::build(tx_sender.clone()),
+            txvalidation::TxEventSender::<txvalidation::P2pSender>::build(tx_sender.clone()),
             p2p_stream,
             //database.clone()
         )
@@ -271,7 +266,12 @@ async fn run(config: Arc<Config>) -> Result<()> {
     //     async move { asset_mgr.run().await }
     // });
 
-    let workflow_engine = Arc::new(WorkflowEngine::new(database.clone(), file_storage.clone()));
+    let workflow_engine = Arc::new(WorkflowEngine::new(database.clone()));
+    let download_url_prefix = format!(
+        "http://{}:{}",
+        config.p2p_listen_addr.to_string(),
+        config.http_download_port
+    );
 
     let scheduler = Arc::new(scheduler::Scheduler::new(
         mempool.clone(),
@@ -279,8 +279,11 @@ async fn run(config: Arc<Config>) -> Result<()> {
         program_manager,
         workflow_engine,
         node_key,
+        config.data_directory.clone(),
+        download_url_prefix,
     ));
 
+    let file_storage = Arc::new(storage::File::new(&config.data_directory));
     let vm_server =
         vmm::vm_server::VMServer::new(scheduler.clone(), provider, file_storage.clone());
 
@@ -322,7 +325,7 @@ async fn run(config: Arc<Config>) -> Result<()> {
         database.clone(),
         //        mempool.clone(),
         //        asset_mgr.clone(),
-        TxEventSender::<RpcSender>::build(tx_sender),
+        txvalidation::TxEventSender::<txvalidation::RpcSender>::build(tx_sender),
     )
     .await?;
 
@@ -367,7 +370,7 @@ async fn p2p_beacon(config: P2PBeaconConfig) -> Result<()> {
             None,
             config.p2p_advertised_listen_addr,
             http_peer_list,
-            TxEventSender::<P2pSender>::build(tx),
+            txvalidation::TxEventSender::<txvalidation::P2pSender>::build(tx),
             p2p_stream,
         )
         .await,

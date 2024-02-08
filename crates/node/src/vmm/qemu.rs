@@ -285,7 +285,7 @@ impl Provider for Qemu {
 
                 match Qmp::new(format!("localhost:{qmp_port}")).await {
                     Ok(c) => client = Some(c),
-                    Err(_) => {
+                    Err(err) => {
                         retry_count += 1;
                         sleep(Duration::from_millis(10)).await;
                     }

@@ -1,5 +1,5 @@
-use crate::event_loop::P2pSender;
-use crate::event_loop::TxEventSender;
+use crate::txvalidation::P2pSender;
+use crate::txvalidation::TxEventSender;
 use futures_util::Stream;
 use std::{
     collections::{BTreeSet, HashMap},

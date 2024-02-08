@@ -2,19 +2,12 @@
 use crate::{
     cli::Config,
     storage::Database,
-    types::{
-        transaction::{self, Transaction},
-        Hash, Program,
-    },
+    types::{transaction::Transaction, Hash},
 };
-use eyre::{eyre, Result};
-use gevulot_node::types::{
-    self,
-    transaction::{Payload, ProgramData},
-};
+use eyre::Result;
 use std::collections::HashMap;
 use std::net::SocketAddr;
-use std::{path::PathBuf, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use thiserror::Error;
 use tokio::time::sleep;
 

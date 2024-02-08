@@ -1,11 +1,11 @@
+use grpc::vm_service_client::VmServiceClient;
+use grpc::{FileChunk, FileData, FileMetadata};
+use sha3::{Digest, Sha3_256};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::time::Instant;
 use std::{path::Path, thread::sleep, time::Duration};
-
-use grpc::vm_service_client::VmServiceClient;
-use grpc::{FileChunk, FileData, FileMetadata};
 use tokio::io::AsyncReadExt;
 use tokio::runtime::Runtime;
 use tokio::{io::AsyncWriteExt, sync::Mutex};
@@ -208,6 +208,25 @@ impl GRPCClient {
                 id: result.id.clone(),
                 data: result.data.clone(),
                 files: result.files.clone(),
+                //TODO Add filecheckout.
+                // =======
+                //                 files: result
+                //                     .files
+                //                     .iter()
+                //                     .map(|f| {
+                //                         let data = std::fs::read(f).expect("result file read");
+                //                         let mut hasher = Sha3_256::new();
+                //                         hasher.update(&data);
+                //                         let checksum = hasher.finalize();
+
+                //                         grpc::File {
+                //                             path: f.to_string(),
+                //                             data,
+                //                             checksum: checksum.to_vec(),
+                //                         }
+                //                     })
+                //                     .collect(),
+                // >>>>>>> 0a0761b (correct file management. Work locally. Before remote test)
             })),
         };
 

@@ -27,8 +27,6 @@ pub async fn download_asset_file(
     http_peer_list: &[(SocketAddr, Option<u16>)],
     http_client: &reqwest::Client,
     asset_file: AssetFile,
-    asset_checksum: gevulot_node::types::Hash,
-    // file_hash: gevulot_node::types::Hash,
 ) -> Result<()> {
     let local_relative_file_path = asset_file.get_relatif_path();
     tracing::info!("download_file:{asset_file:?} local_directory_path:{local_directory_path:?} local_relative_file_path:{local_relative_file_path:?} http_peer_list:{http_peer_list:?}");
@@ -90,7 +88,7 @@ pub async fn download_asset_file(
 
         fd.flush().await?;
         let checksum: crate::types::Hash = (&hasher.finalize()).into();
-        if checksum != asset_checksum {
+        if checksum != asset_file.checksum {
             Err(eyre!("Download file: {:?}, bad checksum", asset_file.name))
         } else {
             //rename to original name
