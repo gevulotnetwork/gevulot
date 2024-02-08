@@ -1,21 +1,24 @@
 use std::fmt::Debug;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
 use eyre::Result;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{mpsc, Mutex};
 use tokio_stream::wrappers::ReceiverStream;
-use tonic::{Extensions, Request, Response, Status};
+use tonic::{Code, Extensions, Request, Response, Status, Streaming};
 
 use grpc::vm_service_server::VmService;
-use grpc::{FileRequest, Task, TaskRequest, TaskResultResponse};
+use grpc::{GetFileRequest, Task, TaskRequest, TaskResultResponse};
 
 use crate::storage;
 use crate::types::Hash;
-use crate::vmm::vm_server::grpc::file_response;
+use crate::vmm::vm_server::grpc::file_data;
 
-use self::grpc::{task_result_request, FileResponse, TaskResponse, TaskResultRequest};
+use self::grpc::{
+    FileChunk, FileData, FileMetadata, GenericResponse, TaskResponse, TaskResultRequest,
+};
 
 use super::VMId;
 
@@ -81,7 +84,7 @@ impl VMServer {
 
 #[tonic::async_trait]
 impl VmService for VMServer {
-    type GetFileStream = ReceiverStream<Result<FileResponse, Status>>;
+    type GetFileStream = ReceiverStream<Result<FileData, Status>>;
 
     #[tracing::instrument]
     async fn get_task(
@@ -89,10 +92,20 @@ impl VmService for VMServer {
         request: Request<TaskRequest>,
     ) -> Result<Response<TaskResponse>, Status> {
         tracing::info!("request for task: {:?}", request);
-        let mut program_registry = self.program_registry.lock().await;
-        let (program, vm_id) = program_registry
+        let (program, vm_id) = match self
+            .program_registry
+            .lock()
+            .await
             .find_by_req(request.extensions())
-            .unwrap_or_else(|| panic!("unknown VM: {:?}", request.remote_addr()));
+        {
+            Some(instance) => instance,
+            None => {
+                return Err(Status::new(
+                    Code::Unknown,
+                    format!("unknown VM address: {:?}", request.remote_addr()),
+                ));
+            }
+        };
 
         let reply = match self.task_source.get_task(program, vm_id).await {
             Some(task) => {
@@ -119,18 +132,20 @@ impl VmService for VMServer {
     #[tracing::instrument]
     async fn get_file(
         &self,
-        request: Request<FileRequest>,
+        request: Request<GetFileRequest>,
     ) -> Result<Response<Self::GetFileStream>, Status> {
         tracing::info!("request for file: {:?}", request);
 
         let req = request.into_inner();
 
-        // TODO(tuommaki): Handle following error in better way!
-        let mut file = self
+        let mut file = match self
             .file_storage
             .get_task_file(&req.task_id, &req.path)
             .await
-            .expect("failed to read file");
+        {
+            Ok(file) => file,
+            Err(err) => return Err(Status::new(Code::NotFound, "couldn't get task file")),
+        };
 
         let (tx, rx) = mpsc::channel(4);
         tokio::spawn({
@@ -142,8 +157,8 @@ impl VmService for VMServer {
                         Ok(0) => return Ok(()),
                         Ok(n) => {
                             if let Err(e) = tx
-                                .send(Ok(grpc::FileResponse {
-                                    result: Some(file_response::Result::Chunk(grpc::FileChunk {
+                                .send(Ok(grpc::FileData {
+                                    result: Some(file_data::Result::Chunk(grpc::FileChunk {
                                         data: buf[..n].to_vec(),
                                     })),
                                 }))
@@ -165,37 +180,139 @@ impl VmService for VMServer {
     }
 
     #[tracing::instrument]
-    async fn submit_result(
+    async fn submit_file(
         &self,
-        request: Request<TaskResultRequest>,
-    ) -> Result<Response<TaskResultResponse>, Status> {
-        let (program, vm_id) = self
+        request: Request<Streaming<FileData>>,
+    ) -> Result<Response<GenericResponse>, Status> {
+        let (program, vm_id) = match self
             .program_registry
             .lock()
             .await
             .find_by_req(request.extensions())
-            .unwrap_or_else(|| panic!("unknown VM: {:?}", request.remote_addr()));
+        {
+            Some(instance) => instance,
+            None => {
+                return Err(Status::new(
+                    Code::Unknown,
+                    format!("unknown VM address: {:?}", request.remote_addr()),
+                ));
+            }
+        };
+
+        let mut stream = request.into_inner();
+        let mut file: Option<tokio::io::BufWriter<tokio::fs::File>> = None;
+
+        while let Ok(Some(grpc::FileData { result: data })) = stream.message().await {
+            match data {
+                Some(grpc::file_data::Result::Metadata(FileMetadata { task_id, path })) => {
+                    let mut path = Path::new(&path);
+                    if path.is_absolute() {
+                        path = match path.strip_prefix("/") {
+                            Ok(path) => path,
+                            Err(err) => {
+                                tracing::error!(
+                                    "failed to strip '/' prefix from file path: {}",
+                                    err
+                                );
+                                return Err(Status::new(
+                                    Code::Internal,
+                                    "failed to strip '/' prefix from file path".to_string(),
+                                ));
+                            }
+                        };
+                    }
+
+                    let file_path = PathBuf::new()
+                        .join(self.file_storage.data_dir())
+                        .join(task_id)
+                        .join(path);
+
+                    // Ensure any necessary subdirectories exists.
+                    if let Some(parent) = file_path.parent() {
+                        tokio::fs::create_dir_all(parent)
+                            .await
+                            .expect("task file mkdir");
+                    }
+
+                    let fd = tokio::fs::File::create(file_path).await?;
+                    file = Some(tokio::io::BufWriter::new(fd));
+                }
+                Some(grpc::file_data::Result::Chunk(FileChunk { data })) => match file.as_mut() {
+                    Some(fd) => {
+                        if let Err(err) = fd.write_all(data.as_slice()).await {
+                            tracing::error!("error while writing to file: {}", err);
+                            return Err(Status::new(
+                                Code::Internal,
+                                "failed to write file".to_string(),
+                            ));
+                        } else {
+                            tracing::debug!("{} bytes received & written to file", data.len());
+                        }
+                    }
+                    None => {
+                        tracing::error!("received None from client on submit_file stream");
+                        return Err(Status::new(
+                            Code::InvalidArgument,
+                            "file data sent before metadata; aborting".to_string(),
+                        ));
+                    }
+                },
+                Some(grpc::file_data::Result::Error(code)) => {
+                    tracing::error!("error from client: {code}");
+                    return Err(Status::new(
+                        Code::Aborted,
+                        format!("file transfer aborted by client; error code: {code}"),
+                    ));
+                }
+                None => {
+                    tracing::error!("FileData message with None as a body");
+                    return Err(Status::new(
+                        Code::InvalidArgument,
+                        "file data sent without body".to_string(),
+                    ));
+                }
+            }
+        }
+
+        if file.is_some() {
+            if let Err(err) = file.unwrap().flush().await {
+                tracing::error!("failed to flush file: {}", err);
+                return Err(Status::new(
+                    Code::Internal,
+                    "failed to flush file writes".to_string(),
+                ));
+            };
+        }
+
+        Ok(Response::new(GenericResponse {
+            success: true,
+            message: String::from("file received"),
+        }))
+    }
+
+    #[tracing::instrument]
+    async fn submit_result(
+        &self,
+        request: Request<TaskResultRequest>,
+    ) -> Result<Response<TaskResultResponse>, Status> {
+        let (program, vm_id) = match self
+            .program_registry
+            .lock()
+            .await
+            .find_by_req(request.extensions())
+        {
+            Some(instance) => instance,
+            None => {
+                return Err(Status::new(
+                    Code::Unknown,
+                    format!("unknown VM address: {:?}", request.remote_addr()),
+                ));
+            }
+        };
 
         let result = request.into_inner().result;
 
         if let Some(result) = result {
-            if let task_result_request::Result::Task(ref result) = result {
-                // Save resulting files.
-                for file in result.files.clone() {
-                    if let Err(err) = self
-                        .file_storage
-                        .save_task_file(&result.id, &file.path, file.data)
-                        .await
-                    {
-                        tracing::error!(
-                            "failed to save task {} result file {}",
-                            result.id,
-                            file.path
-                        );
-                    }
-                }
-            }
-
             self.task_source.submit_result(program, vm_id, result).await;
         }
 

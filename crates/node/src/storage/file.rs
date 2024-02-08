@@ -13,6 +13,10 @@ impl File {
         }
     }
 
+    pub fn data_dir(&self) -> PathBuf {
+        self.data_dir.clone()
+    }
+
     pub async fn get_task_file(
         &self,
         task_id: &str,
