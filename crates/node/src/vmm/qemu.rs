@@ -324,6 +324,13 @@ impl Provider for Qemu {
                 .kill()
                 .expect("failed to kill VM");
 
+            qemu_vm_handle
+                .child
+                .as_mut()
+                .unwrap()
+                .wait()
+                .expect("failed to release VM resources");
+
             // GC ephemeral workspace volume.
             // XXX: This isn't async and will call out to `ops`.
             nanos::volume::delete(&qemu_vm_handle.workspace_volume_label)?;
