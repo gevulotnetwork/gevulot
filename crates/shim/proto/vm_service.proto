@@ -41,6 +41,11 @@ message GetFileRequest {
   string path = 2;
 }
 
+message File {
+  string path = 1;
+  bytes checksum = 3;
+}
+
 message FileMetadata {
   string task_id = 1;
   string path = 2;
@@ -65,7 +70,7 @@ message FileData {
 message TaskResult {
   string id = 1;
   bytes data = 2;
-  repeated string files = 3;
+  repeated File files = 3;
 }
 
 message TaskResultRequest {

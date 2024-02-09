@@ -126,14 +126,11 @@ pub struct VmFile {
 
 impl VmFile {
     pub fn get_vmrelatif_path(&self) -> PathBuf {
-        let name_path = Path::new(&self.name);
+        let mut file_path = Path::new(&self.name);
+        if file_path.is_absolute() {
+            file_path = file_path.strip_prefix("/").unwrap(); //unwrap tested in is_absolute
+        }
 
-        //remove root from the path because PathBuf push replace when using abs path.
-        let file_path = if name_path.is_absolute() {
-            &self.name[1..]
-        } else {
-            &self.name[..]
-        };
         let mut path = PathBuf::from(self.task_id.to_string());
         path.push(file_path);
         path

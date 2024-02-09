@@ -226,6 +226,7 @@ impl VmService for VMServer {
                         .join(self.file_storage.data_dir())
                         .join(task_id)
                         .join(path);
+                    tracing::trace!("VM submit_file saved in {file_path:#?}");
 
                     // Ensure any necessary subdirectories exists.
                     if let Some(parent) = file_path.parent() {
@@ -313,24 +314,6 @@ impl VmService for VMServer {
         let result = request.into_inner().result;
 
         if let Some(result) = result {
-            // if let task_result_request::Result::Task(ref result) = result {
-            //     // Save resulting files.
-            //     for file in result.files.clone() {
-            //         tracing::debug!("VM submit_result save file:{}", file.path);
-            //         if let Err(err) = self
-            //             .file_storage
-            //             .save_task_file(&result.id, &file.path, file.data)
-            //             .await
-            //         {
-            //             tracing::error!(
-            //                 "failed to save task {} result file {}",
-            //                 result.id,
-            //                 file.path
-            //             );
-            //         }
-            //     }
-            // }
-
             self.task_source.submit_result(program, vm_id, result).await;
         }
 

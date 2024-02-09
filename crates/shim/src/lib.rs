@@ -4,6 +4,7 @@ use sha3::{Digest, Sha3_256};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Instant;
 use std::{path::Path, thread::sleep, time::Duration};
 use tokio::io::AsyncReadExt;
@@ -154,9 +155,12 @@ impl GRPCClient {
         Ok(Some(task))
     }
 
-    fn submit_file(&mut self, task_id: TaskId, file_path: String) -> Result<()> {
+    fn submit_file(&mut self, task_id: TaskId, file_path: String) -> Result<Vec<u8>> {
+        let hasher = Arc::new(Mutex::new(Sha3_256::new()));
         self.rt.block_on(async {
+            let stream_hasher = Arc::clone(&hasher);
             let outbound = async_stream::stream! {
+
                 let fd = match tokio::fs::File::open(&file_path).await {
                     Ok(fd) => fd,
                     Err(err) => {
@@ -175,11 +179,12 @@ impl GRPCClient {
                 yield metadata;
 
                 let mut buf: [u8; DATA_STREAM_CHUNK_SIZE] = [0; DATA_STREAM_CHUNK_SIZE];
-
                 loop {
                     match file.read(&mut buf).await {
                         Ok(0) => return,
                         Ok(n) => {
+
+                            stream_hasher.lock().await.update(&buf[..n]);
                             yield FileData{ result: Some(grpc::file_data::Result::Chunk(FileChunk{ data: buf[..n].to_vec() }))};
                         },
                         Err(err) => {
@@ -194,39 +199,33 @@ impl GRPCClient {
                 println!("failed to submit file: {}", err);
             }
         });
+        let hasher = Arc::into_inner(hasher).unwrap().into_inner();
+        let hash = hasher.finalize().to_vec();
 
-        Ok(())
+        Ok(hash)
     }
 
     fn submit_result(&mut self, result: &TaskResult) -> Result<bool> {
-        for file in &result.files {
-            self.submit_file(result.id.clone(), file.clone())?;
-        }
+        let files = result
+            .files
+            .iter()
+            .map(|file| {
+                self.submit_file(result.id.clone(), file.clone())
+                    .map(|checksum| crate::grpc::File {
+                        path: file.to_string(),
+                        checksum,
+                    })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        // for file in &result.files {
+        //     let checksum = self.submit_file(result.id.clone(), file.clone())?;
+        // }
 
         let task_result_req = grpc::TaskResultRequest {
             result: Some(grpc::task_result_request::Result::Task(grpc::TaskResult {
                 id: result.id.clone(),
                 data: result.data.clone(),
-                files: result.files.clone(),
-                //TODO Add filecheckout.
-                // =======
-                //                 files: result
-                //                     .files
-                //                     .iter()
-                //                     .map(|f| {
-                //                         let data = std::fs::read(f).expect("result file read");
-                //                         let mut hasher = Sha3_256::new();
-                //                         hasher.update(&data);
-                //                         let checksum = hasher.finalize();
-
-                //                         grpc::File {
-                //                             path: f.to_string(),
-                //                             data,
-                //                             checksum: checksum.to_vec(),
-                //                         }
-                //                     })
-                //                     .collect(),
-                // >>>>>>> 0a0761b (correct file management. Work locally. Before remote test)
+                files: files,
             })),
         };
 
