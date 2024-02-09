@@ -1,5 +1,6 @@
 use crate::txvalidation::RpcSender;
 use crate::txvalidation::TxEventSender;
+use std::rc::Rc;
 use std::{net::SocketAddr, sync::Arc};
 
 use crate::{cli::Config, storage::Database, types::Transaction};
@@ -77,15 +78,6 @@ async fn send_transaction(params: Params<'static>, ctx: Arc<Context>) -> RpcResp
     };
 
     if let Err(err) = ctx.tx_sender.send_tx(tx).await {
-        tracing::error!("failed to persist transaction: {}", err);
-        return RpcResponse::Err(RpcError::InvalidRequest(
-            "failed to persist transaction".to_string(),
-        ));
-    }
-
-    // Finally add it to mempool to propagate it to P2P network and wait
-    // to be scheduled for execution.
-    if let Err(err) = ctx.mempool.write().await.add(tx.clone()).await {
         tracing::error!("failed to persist transaction: {}", err);
         return RpcResponse::Err(RpcError::InvalidRequest(
             "failed to persist transaction".to_string(),

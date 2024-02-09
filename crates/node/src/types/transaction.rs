@@ -11,7 +11,7 @@ use num_bigint::BigInt;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
 use std::path::Path;
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, rc::Rc};
 use thiserror::Error;
 
 #[async_trait]
