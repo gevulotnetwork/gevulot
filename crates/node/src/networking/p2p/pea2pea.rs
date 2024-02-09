@@ -54,7 +54,7 @@ pub struct P2P {
     // This mapping is needed for proper cleanup on OnDisconnect.
     peer_addr_mapping: Arc<tokio::sync::RwLock<HashMap<SocketAddr, SocketAddr>>>,
     peer_list: Arc<tokio::sync::RwLock<BTreeSet<SocketAddr>>>,
-
+    //contains corrected peers use for asset file download.
     pub peer_http_port_list: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>>,
 
     http_port: Option<u16>,

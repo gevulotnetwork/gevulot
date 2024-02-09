@@ -212,6 +212,7 @@ impl PropagateTx {
         p2p_sender: &UnboundedSender<Transaction>,
     ) -> Result<(), EventProcessError> {
         let tx: Transaction = self.0.content.into();
+        tracing::info!("Tx validation propagate tx:{}", tx.hash.to_string());
         p2p_sender.send(tx).map_err(|err| err.into())
     }
 }
@@ -221,6 +222,7 @@ pub struct NewTx(EventTx<ConsistentTxType>);
 impl NewTx {
     pub async fn process_event(self, mempool: &mut Mempool) -> Result<(), EventProcessError> {
         let tx: Transaction = self.0.content.into();
+        tracing::info!("Tx validation save tx:{}", tx.hash.to_string());
         mempool
             .add(tx)
             .map_err(|err| EventProcessError::SaveTxError(format!("{err}")))

@@ -163,36 +163,6 @@ impl workflow::TransactionStore for storage::Database {
     }
 }
 
-// struct P2PTxHandler {
-//     mempool: Arc<RwLock<Mempool>>,
-//     database: Arc<Database>,
-// }
-
-// impl P2PTxHandler {
-//     pub fn new(mempool: Arc<RwLock<Mempool>>, database: Arc<Database>) -> Self {
-//         Self { mempool, database }
-//     }
-// }
-
-// #[async_trait::async_trait]
-// impl networking::p2p::TxHandler for P2PTxHandler {
-//     async fn recv_tx(&self, tx: Transaction) -> Result<()> {
-//         // The transaction was received from P2P network so we can consider it
-//         // propagated at this point.
-//         let tx_hash = tx.hash;
-//         let mut tx = tx;
-//         tx.propagated = true;
-
-//         // Submit the tx to mempool.
-//         self.mempool.write().await.add(tx).await?;
-
-//         //TODO copy paste of the asset manager handle_transaction method.
-//         //added because when a tx arrive from the p2p asset are not added.
-//         //should be done in a better way.
-//         //        self.database.add_asset(&tx_hash).await
-//     }
-// }
-
 async fn run(config: Arc<Config>) -> Result<()> {
     let database = Arc::new(Database::new(&config.db_url).await?);
 
@@ -255,6 +225,8 @@ async fn run(config: Arc<Config>) -> Result<()> {
         config.http_download_port
     );
 
+    //TODO the exec result tx sender has to be added.
+    //TODO remove mempool.
     let scheduler = Arc::new(scheduler::Scheduler::new(
         mempool.clone(),
         database.clone(),

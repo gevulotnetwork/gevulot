@@ -517,6 +517,8 @@ impl TaskManager for Scheduler {
                 }
             };
 
+            tracing::info!("Submit result Tx created:{}", tx.hash.to_string());
+
             //Move tx file from execution Tx path to new Tx path
             for (source_file, dest_file) in executed_files {
                 let dest = dest_file.to_asset_file(tx.hash);
@@ -527,6 +529,7 @@ impl TaskManager for Scheduler {
                 }
             }
 
+            //TODO should be send to the validation process that verify, move the file and store it.
             let mut mempool = self.mempool.write().await;
             if let Err(err) = mempool.add(tx.clone()).await {
                 tracing::error!("failed to add transaction to mempool: {}", err);
