@@ -5,17 +5,24 @@ use std::time::Instant;
 use std::{path::Path, thread::sleep, time::Duration};
 
 use grpc::vm_service_client::VmServiceClient;
+use grpc::{FileChunk, FileData, FileMetadata};
+use tokio::io::AsyncReadExt;
 use tokio::runtime::Runtime;
 use tokio::{io::AsyncWriteExt, sync::Mutex};
 use tokio_stream::StreamExt;
 use tokio_vsock::VsockStream;
 use tonic::transport::{Channel, Endpoint, Uri};
+use tonic::Request;
 use tower::service_fn;
 use vsock::VMADDR_CID_HOST;
 
 mod grpc {
     tonic::include_proto!("vm_service");
 }
+
+/// DATA_STREAM_CHUNK_SIZE controls the chunk size for streaming byte
+/// transfers, e.g. when transferring the result file back to node.
+const DATA_STREAM_CHUNK_SIZE: usize = 4096;
 
 /// MOUNT_TIMEOUT is maximum amount of time to wait for workspace mount to be
 /// present in /proc/mounts.
@@ -143,20 +150,60 @@ impl GRPCClient {
         Ok(Some(task))
     }
 
+    fn submit_file(&mut self, task_id: TaskId, file_path: String) -> Result<()> {
+        self.rt.block_on(async {
+            let outbound = async_stream::stream! {
+                let fd = match tokio::fs::File::open(&file_path).await {
+                    Ok(fd) => fd,
+                    Err(err) => {
+                        println!("failed to open file {file_path}: {}", err);
+                        return;
+                    }
+                };
+
+                let mut file = tokio::io::BufReader::new(fd);
+
+                let metadata = FileData{ result: Some(grpc::file_data::Result::Metadata(FileMetadata {
+                    task_id,
+                    path: file_path,
+                }))};
+
+                yield metadata;
+
+                let mut buf: [u8; DATA_STREAM_CHUNK_SIZE] = [0; DATA_STREAM_CHUNK_SIZE];
+
+                loop {
+                    match file.read(&mut buf).await {
+                        Ok(0) => return,
+                        Ok(n) => {
+                            yield FileData{ result: Some(grpc::file_data::Result::Chunk(FileChunk{ data: buf[..n].to_vec() }))};
+                        },
+                        Err(err) => {
+                            println!("failed to read file: {}", err);
+                            yield FileData{ result: Some(grpc::file_data::Result::Error(1))};
+                        }
+                    }
+                }
+            };
+
+            if let Err(err) = self.client.lock().await.submit_file(Request::new(outbound)).await {
+                println!("failed to submit file: {}", err);
+            }
+        });
+
+        Ok(())
+    }
+
     fn submit_result(&mut self, result: &TaskResult) -> Result<bool> {
-        // TODO(tuommaki): Implement result file transformation!
+        for file in &result.files {
+            self.submit_file(result.id.clone(), file.clone())?;
+        }
+
         let task_result_req = grpc::TaskResultRequest {
             result: Some(grpc::task_result_request::Result::Task(grpc::TaskResult {
                 id: result.id.clone(),
                 data: result.data.clone(),
-                files: result
-                    .files
-                    .iter()
-                    .map(|f| grpc::File {
-                        path: f.to_string(),
-                        data: std::fs::read(f).expect("result file read"),
-                    })
-                    .collect(),
+                files: result.files.clone(),
             })),
         };
 
@@ -177,7 +224,7 @@ impl GRPCClient {
     /// download_file asks gRPC server for file with a `name` and writes it to
     /// `workspace`.
     async fn download_file(&self, task_id: TaskId, name: String) -> Result<String> {
-        let file_req = grpc::FileRequest {
+        let file_req = grpc::GetFileRequest {
             task_id: task_id.clone(),
             path: name.clone(),
         };
@@ -213,13 +260,17 @@ impl GRPCClient {
 
         let mut total_bytes = 0;
 
-        while let Some(Ok(grpc::FileResponse { result: resp })) = stream.next().await {
+        while let Some(Ok(grpc::FileData { result: resp })) = stream.next().await {
             match resp {
-                Some(grpc::file_response::Result::Chunk(file_chunk)) => {
+                Some(grpc::file_data::Result::Metadata(..)) => {
+                    // Ignore metadata as we already know it.
+                    continue;
+                }
+                Some(grpc::file_data::Result::Chunk(file_chunk)) => {
                     total_bytes += file_chunk.data.len();
                     writer.write_all(file_chunk.data.as_ref()).await?;
                 }
-                Some(grpc::file_response::Result::Error(err)) => {
+                Some(grpc::file_data::Result::Error(err)) => {
                     panic!("error while fetching file {}: {}", name, err)
                 }
                 None => {
