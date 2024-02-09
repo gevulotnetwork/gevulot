@@ -103,7 +103,7 @@ impl P2P {
             psk: psk.to_vec(),
             peer_list: Default::default(),
             peer_addr_mapping: Default::default(),
-            peer_http_port_list: Default::default(),
+            peer_http_port_list,
             http_port,
             nat_listen_addr,
             tx_sender,
@@ -498,6 +498,21 @@ mod tests {
             Arc::new(Sink::new(Arc::new(tx2))),
             Arc::new(Sink::new(Arc::new(tx3))),
         );
+        let http_peer_list1: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>> =
+            Default::default();
+        let (_, p2p_recv1) = mpsc::unbounded_channel::<Transaction>();
+        let p2p_stream1 = UnboundedReceiverStream::new(p2p_recv);
+
+        let http_peer_list2: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>> =
+            Default::default();
+        let (_, p2p_recv2) = mpsc::unbounded_channel::<Transaction>();
+        let p2p_stream2 = UnboundedReceiverStream::new(p2p_recv);
+
+        let http_peer_list3: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>> =
+            Default::default();
+        let (_, p2p_recv3) = mpsc::unbounded_channel::<Transaction>();
+        let p2p_stream3 = UnboundedReceiverStream::new(p2p_recv);
+
         let (peer1, peer2, peer3) = (
             P2P::new(
                 "peer1",
@@ -505,6 +520,9 @@ mod tests {
                 "secret passphrase",
                 None,
                 None,
+                http_peer_list1,
+                p2p_recv1,
+                p2p_stream1,
             )
             .await,
             P2P::new(
@@ -513,6 +531,9 @@ mod tests {
                 "secret passphrase",
                 Some(9995),
                 None,
+                http_peer_list2,
+                p2p_recv2,
+                p2p_stream2,
             )
             .await,
             P2P::new(
@@ -521,6 +542,9 @@ mod tests {
                 "secret passphrase",
                 Some(9995),
                 None,
+                http_peer_list3,
+                p2p_recv3,
+                p2p_stream3,
             )
             .await,
         );
@@ -589,6 +613,15 @@ mod tests {
             Arc::new(Sink::new(Arc::new(tx1))),
             Arc::new(Sink::new(Arc::new(tx2))),
         );
+        let http_peer_list1: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>> =
+            Default::default();
+        let (_, p2p_recv1) = mpsc::unbounded_channel::<Transaction>();
+        let p2p_stream1 = UnboundedReceiverStream::new(p2p_recv);
+
+        let http_peer_list2: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>> =
+            Default::default();
+        let (_, p2p_recv2) = mpsc::unbounded_channel::<Transaction>();
+        let p2p_stream2 = UnboundedReceiverStream::new(p2p_recv);
 
         let peer1 = P2P::new(
             "peer1",
@@ -596,6 +629,9 @@ mod tests {
             "secret passphrase",
             None,
             None,
+            http_peer_list1,
+            http_peer_list1,
+            p2p_recv1,
         )
         .await;
         peer1.node().start_listening().await.expect("peer1 listen");
@@ -608,6 +644,9 @@ mod tests {
                 "secret passphrase",
                 Some(8776),
                 None,
+                http_peer_list2,
+                http_peer_list2,
+                p2p_recv2,
             )
             .await;
             peer2.node().start_listening().await.expect("peer2 listen");

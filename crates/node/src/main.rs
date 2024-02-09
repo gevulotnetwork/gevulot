@@ -227,12 +227,6 @@ async fn run(config: Arc<Config>) -> Result<()> {
         .await,
     );
 
-    // p2p.register_tx_handler(Arc::new(P2PTxHandler::new(
-    //     mempool.clone(),
-    //     database.clone(),
-    // )))
-    // .await;
-
     // TODO(tuommaki): read total available resources from config / acquire system stats.
     let num_gpus = if config.gpu_devices.is_some() { 1 } else { 0 };
     let resource_manager = Arc::new(Mutex::new(scheduler::ResourceManager::new(
@@ -252,19 +246,7 @@ async fn run(config: Arc<Config>) -> Result<()> {
         resource_manager.clone(),
     );
 
-    // let asset_mgr = Arc::new(AssetManager::new(
-    //     config.clone(),
-    //     database.clone(),
-    //     p2p.as_ref().peer_http_port_list.clone(),
-    // ));
-
     let node_key = read_node_key(&config.node_key_file)?;
-
-    // Launch AssetManager's background processing.
-    // tokio::spawn({
-    //     let asset_mgr = asset_mgr.clone();
-    //     async move { asset_mgr.run().await }
-    // });
 
     let workflow_engine = Arc::new(WorkflowEngine::new(database.clone()));
     let download_url_prefix = format!(
@@ -342,16 +324,6 @@ async fn run(config: Arc<Config>) -> Result<()> {
 async fn p2p_beacon(config: P2PBeaconConfig) -> Result<()> {
     let http_peer_list: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>> =
         Default::default();
-    // //start Tx process event loop
-    // let (txevent_loop_jh, tx_sender, p2p_stream) = start_event_loop(
-    //     config.data_directory.clone(),
-    //     config.p2p_listen_addr,
-    //     config.http_download_port,
-    //     http_peer_list.clone(),
-    //     Arc::new(crate::types::transaction::AlwaysGrantAclWhitelist {}),
-    //     mempool.clone(),
-    // )
-    // .await?;
 
     //build empty channel for P2P interface Transaction management.
     //Indicate some domain conflict issue.
