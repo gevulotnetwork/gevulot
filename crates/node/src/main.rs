@@ -28,7 +28,7 @@ use tokio::sync::{Mutex as TMutex, RwLock};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::transport::Server;
 use tracing_subscriber::{filter::LevelFilter, fmt::format::FmtSpan, EnvFilter};
-use types::{Hash, Transaction};
+use types::{transaction::TxValdiated, Hash, Transaction};
 use workflow::WorkflowEngine;
 
 mod asset_manager;
@@ -136,18 +136,21 @@ fn generate_node_key(opts: NodeKeyOptions) -> Result<()> {
 
 #[async_trait]
 impl mempool::Storage for storage::Database {
-    async fn get(&self, hash: &Hash) -> Result<Option<Transaction>> {
+    async fn get(&self, hash: &Hash) -> Result<Option<Transaction<TxValdiated>>> {
         self.find_transaction(hash).await
     }
 
-    async fn set(&self, tx: &Transaction) -> Result<()> {
+    async fn set(&self, tx: &Transaction<TxValdiated>) -> Result<()> {
         let tx_hash = tx.hash;
         self.add_transaction(tx).await?;
         self.add_asset(&tx_hash).await?;
         self.mark_asset_complete(&tx_hash).await
     }
 
-    async fn fill_deque(&self, deque: &mut std::collections::VecDeque<Transaction>) -> Result<()> {
+    async fn fill_deque(
+        &self,
+        deque: &mut std::collections::VecDeque<Transaction<TxValdiated>>,
+    ) -> Result<()> {
         for t in self.get_unexecuted_transactions().await? {
             deque.push_back(t);
         }
@@ -158,7 +161,7 @@ impl mempool::Storage for storage::Database {
 
 #[async_trait]
 impl workflow::TransactionStore for storage::Database {
-    async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction>> {
+    async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction<TxValdiated>>> {
         self.find_transaction(tx_hash).await
     }
 }
@@ -235,6 +238,7 @@ async fn run(config: Arc<Config>) -> Result<()> {
         node_key,
         config.data_directory.clone(),
         download_url_prefix,
+        txvalidation::TxEventSender::<txvalidation::TxResultSender>::build(tx_sender.clone()),
     ));
 
     let file_storage = Arc::new(storage::File::new(&config.data_directory));
@@ -303,7 +307,7 @@ async fn p2p_beacon(config: P2PBeaconConfig) -> Result<()> {
     let (tx, mut rcv_tx_event_rx) = mpsc::unbounded_channel();
     tokio::spawn(async move { while let Some(_) = rcv_tx_event_rx.recv().await {} });
 
-    let (_, p2p_recv) = mpsc::unbounded_channel::<Transaction>();
+    let (_, p2p_recv) = mpsc::unbounded_channel::<Transaction<TxValdiated>>();
     let p2p_stream = UnboundedReceiverStream::new(p2p_recv);
 
     let p2p = Arc::new(

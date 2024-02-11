@@ -1,8 +1,6 @@
-use super::file::TxFile;
+use super::file::{Download, File, ProofVerif};
 use super::signature::Signature;
 use super::{hash::Hash, program::ResourceRequest};
-use crate::types::file::vec_txfile_to_bytes;
-use crate::types::file::AssetFile;
 use crate::types::transaction;
 use async_trait::async_trait;
 use eyre::Result;
@@ -10,7 +8,6 @@ use libsecp256k1::{sign, verify, Message, PublicKey, SecretKey};
 use num_bigint::BigInt;
 use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
-use std::path::Path;
 use std::{collections::HashSet, rc::Rc};
 use thiserror::Error;
 
@@ -174,7 +171,7 @@ pub enum Payload {
         parent: Hash,
         prover: Hash,
         proof: Vec<u8>,
-        files: Vec<TxFile>,
+        files: Vec<File<ProofVerif>>,
     },
     ProofKey {
         parent: Hash,
@@ -184,7 +181,7 @@ pub enum Payload {
         parent: Hash,
         verifier: Hash,
         verification: Vec<u8>,
-        files: Vec<TxFile>,
+        files: Vec<File<ProofVerif>>,
     },
     Cancel {
         parent: Hash,
@@ -192,19 +189,13 @@ pub enum Payload {
 }
 
 impl Payload {
-    pub fn get_asset_list(&self, tx_hash: Hash) -> Result<Vec<AssetFile>> {
+    pub fn get_asset_list(&self, tx_hash: Hash) -> Result<Vec<File<Download>>> {
         match self {
             transaction::Payload::Deploy {
                 prover, verifier, ..
             } => Ok(vec![
-                AssetFile::try_from_prg_meta_data(prover).map_err(|err| {
-                    TransactionError::Validation(format!("Fail to get prover image file: {err}",))
-                })?,
-                AssetFile::try_from_prg_meta_data(verifier).map_err(|err| {
-                    TransactionError::Validation(
-                        format!("Fail to gfet verifier image file: {err}",),
-                    )
-                })?,
+                File::<Download>::try_from_prg_meta_data(prover),
+                File::<Download>::try_from_prg_meta_data(verifier),
             ]),
             Payload::Run { workflow } => {
                 workflow
@@ -227,36 +218,19 @@ impl Payload {
                     })
                     .map(|(file_name, file_url, checksum)| {
                         //verify the url is valide.
-                        reqwest::Url::parse(&file_url)?;
-                        Ok(AssetFile {
-                            image: false,
-                            url: file_url.clone(),
-                            name: file_name.to_string(),
-                            tx: tx_hash,
-                            checksum: checksum.to_string().into(),
-                        })
+                        reqwest::Url::parse(file_url)?;
+                        Ok(File::<Download>::new(
+                            file_name.to_string(),
+                            file_url.clone(),
+                            checksum.to_string().into(),
+                            tx_hash,
+                        ))
                     })
                     .collect()
             }
             Payload::Proof { files, .. } | Payload::Verification { files, .. } => files
                 .iter()
-                .map(|file| {
-                    //get uuid from file name
-                    let uuid = Path::new(&file.name).file_name().unwrap();
-
-                    Ok(AssetFile {
-                        image: false,
-                        url: format!(
-                            "{}/{}/{}",
-                            file.url,
-                            tx_hash.to_string(),
-                            uuid.to_str().unwrap()
-                        ),
-                        name: file.name.to_string(),
-                        tx: tx_hash,
-                        checksum: file.checksum.to_string().into(),
-                    })
-                })
+                .map(|file| Ok(file.clone().into_download_file(tx_hash)))
                 .collect(),
             // Other transaction types don't have external assets that would
             // need processing.
@@ -299,7 +273,7 @@ impl Payload {
                 buf.append(&mut prover.to_vec());
                 buf.append(proof.clone().as_mut());
                 buf.append(proof.clone().as_mut());
-                buf.append(&mut vec_txfile_to_bytes(files).unwrap());
+                buf.append(&mut File::<ProofVerif>::vec_to_bytes(files).unwrap());
             }
             Payload::ProofKey { parent, key } => {
                 buf.append(&mut parent.to_vec());
@@ -314,7 +288,7 @@ impl Payload {
                 buf.append(&mut parent.to_vec());
                 buf.append(&mut verifier.to_vec());
                 buf.append(verification.clone().as_mut());
-                buf.append(&mut vec_txfile_to_bytes(files).unwrap());
+                buf.append(&mut File::<ProofVerif>::vec_to_bytes(files).unwrap());
             }
             Payload::Cancel { parent } => {
                 buf.append(&mut parent.to_vec());
@@ -333,7 +307,20 @@ pub enum TransactionError {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-pub struct Transaction {
+pub struct TxCreate;
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub enum TxReceive {
+    P2P,
+    RPC,
+    TXRESULT,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct TxValdiated;
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct Transaction<T> {
     pub author: PublicKey,
     pub hash: Hash,
     pub payload: Payload,
@@ -343,9 +330,22 @@ pub struct Transaction {
     pub propagated: bool,
     #[serde(skip_serializing, skip_deserializing)]
     pub executed: bool,
+    pub state: T,
 }
 
-impl Default for Transaction {
+impl<T> Transaction<T> {
+    pub fn compute_hash(&self) -> Hash {
+        let mut hasher = Sha3_256::new();
+        let mut buf = vec![];
+        hasher.update(self.author.serialize());
+        self.payload.serialize_into(&mut buf);
+        hasher.update(buf);
+        hasher.update(self.nonce.to_be_bytes());
+        (&hasher.finalize()[0..32]).into()
+    }
+}
+
+impl Default for Transaction<TxCreate> {
     fn default() -> Self {
         Self {
             author: PublicKey::from_secret_key(&SecretKey::default()),
@@ -355,11 +355,27 @@ impl Default for Transaction {
             signature: Signature::default(),
             propagated: false,
             executed: false,
+            state: TxCreate,
         }
     }
 }
 
-impl Transaction {
+impl Default for Transaction<TxValdiated> {
+    fn default() -> Self {
+        Self {
+            author: PublicKey::from_secret_key(&SecretKey::default()),
+            hash: Hash::default(),
+            payload: Payload::default(),
+            nonce: 0,
+            signature: Signature::default(),
+            propagated: false,
+            executed: false,
+            state: TxValdiated,
+        }
+    }
+}
+
+impl Transaction<TxCreate> {
     pub fn new(payload: Payload, signing_key: &SecretKey) -> Self {
         let author = PublicKey::from_secret_key(signing_key);
 
@@ -371,6 +387,7 @@ impl Transaction {
             signature: Signature::default(),
             propagated: false,
             executed: false,
+            state: TxCreate,
         };
 
         tx.sign(signing_key);
@@ -386,20 +403,25 @@ impl Transaction {
         self.signature = sig.into();
     }
 
+    pub fn into_received(self, state: TxReceive) -> Transaction<TxReceive> {
+        Transaction {
+            author: self.author,
+            hash: self.hash,
+            payload: self.payload,
+            nonce: self.nonce,
+            signature: self.signature,
+            propagated: self.propagated,
+            executed: self.executed,
+            state,
+        }
+    }
+}
+
+impl Transaction<TxReceive> {
     pub fn verify(&self) -> bool {
         let hash = self.compute_hash();
         let msg: Message = hash.into();
         verify(&msg, &self.signature.into(), &self.author)
-    }
-
-    pub fn compute_hash(&self) -> Hash {
-        let mut hasher = Sha3_256::new();
-        let mut buf = vec![];
-        hasher.update(self.author.serialize());
-        self.payload.serialize_into(&mut buf);
-        hasher.update(buf);
-        hasher.update(self.nonce.to_be_bytes());
-        (&hasher.finalize()[0..32]).into()
     }
 
     pub fn validate(&self) -> Result<(), TransactionError> {
@@ -410,8 +432,7 @@ impl Transaction {
                     return Err(TransactionError::Validation(format!(
                         "multiple programs in workflow: {}",
                         &step.program
-                    ))
-                    .into());
+                    )));
                 }
             }
         }
@@ -419,8 +440,7 @@ impl Transaction {
         if !self.verify() {
             return Err(TransactionError::Validation(String::from(
                 "signature verification failed",
-            ))
-            .into());
+            )));
         }
 
         Ok(())
@@ -439,6 +459,7 @@ mod tests {
         let sk = SecretKey::random(&mut StdRng::from_entropy());
 
         let tx = Transaction::new(Payload::Empty, &sk);
+        let tx = tx.into_received(TxReceive::P2P);
         assert!(tx.verify());
     }
 
@@ -452,6 +473,7 @@ mod tests {
         tx.nonce += 1;
 
         // Verify must return false.
+        let tx = tx.into_received(TxReceive::TXRESULT);
         assert!(!tx.verify());
     }
 
@@ -466,31 +488,20 @@ mod tests {
         };
 
         let sk = SecretKey::random(&mut StdRng::from_entropy());
-        let tx = Transaction {
-            author: PublicKey::from_secret_key(&sk),
-            hash: Hash::default(),
-            payload: Payload::Run { workflow },
-            nonce: 0,
-            signature: Signature::default(),
-            propagated: false,
-            executed: false,
-        };
+        let mut tx = Transaction::<TxCreate>::default();
+        tx.author = PublicKey::from_secret_key(&sk);
+        tx.payload = Payload::Run { workflow };
+        tx.signature = Signature::default();
 
+        let tx = tx.into_received(TxReceive::RPC);
         assert!(tx.validate().is_err());
     }
 
     #[test]
     fn test_tx_validations_verifies_signature() {
-        let tx = Transaction {
-            author: PublicKey::from_secret_key(&SecretKey::default()),
-            hash: Hash::default(),
-            payload: Payload::Empty,
-            nonce: 0,
-            signature: Signature::default(),
-            propagated: false,
-            executed: false,
-        };
+        let tx = Transaction::<TxCreate>::default();
 
+        let tx = tx.into_received(TxReceive::RPC);
         assert!(tx.validate().is_err());
     }
 }

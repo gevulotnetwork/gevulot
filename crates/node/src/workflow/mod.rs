@@ -1,8 +1,8 @@
-use crate::types::file::TxFile;
+use crate::types::file::DbFile;
 use async_trait::async_trait;
 use eyre::Result;
 use gevulot_node::types::{
-    transaction::{Payload, Workflow, WorkflowStep},
+    transaction::{Payload, TxValdiated, Workflow, WorkflowStep},
     Hash, Task, TaskKind, Transaction,
 };
 use std::sync::Arc;
@@ -30,7 +30,7 @@ pub enum WorkflowError {
 
 #[async_trait]
 pub trait TransactionStore: Sync + Send {
-    async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction>>;
+    async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction<TxValdiated>>>;
 }
 
 pub struct WorkflowEngine {
@@ -46,7 +46,7 @@ impl WorkflowEngine {
         }
     }
 
-    pub async fn next_task(&self, cur_tx: &Transaction) -> Result<Option<Task>> {
+    pub async fn next_task(&self, cur_tx: &Transaction<TxValdiated>) -> Result<Option<Task>> {
         let workflow = self.workflow_for_transaction(&cur_tx.hash).await?;
 
         match &cur_tx.payload {
@@ -275,7 +275,7 @@ impl WorkflowEngine {
             .inputs
             .iter()
             .filter_map(|e| {
-                TxFile::try_from_prg_data(e)
+                DbFile::try_from_prg_data(e)
                     .map_err(|err| WorkflowError::FileDefinitionError(err.to_string()).into())
                     .transpose()
             })

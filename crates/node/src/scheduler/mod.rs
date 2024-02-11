@@ -2,7 +2,9 @@ mod program_manager;
 mod resource_manager;
 
 use crate::storage::Database;
-use crate::types::file::{move_vmfile, TxFile, VmFile};
+use crate::txvalidation::TxEventSender;
+use crate::txvalidation::TxResultSender;
+use crate::types::file::{move_vmfile, File, ProofVerif, Vm};
 use crate::types::TaskState;
 use crate::vmm::vm_server::grpc;
 use crate::vmm::{vm_server::TaskManager, VMId};
@@ -68,6 +70,7 @@ pub struct Scheduler {
     task_queue: Arc<Mutex<HashMap<Hash, VecDeque<(Task, Instant)>>>>,
     data_directory: PathBuf,
     http_download_host: String,
+    tx_sender: TxEventSender<TxResultSender>,
 }
 
 impl Scheduler {
@@ -79,6 +82,7 @@ impl Scheduler {
         node_key: SecretKey,
         data_directory: PathBuf,
         http_download_host: String,
+        tx_sender: TxEventSender<TxResultSender>,
     ) -> Self {
         Self {
             mempool,
@@ -93,6 +97,7 @@ impl Scheduler {
             task_queue: Arc::new(Mutex::new(HashMap::new())),
             data_directory,
             http_download_host,
+            tx_sender,
         }
     }
 
@@ -417,30 +422,30 @@ impl TaskManager for Scheduler {
             }
 
             //move and build output files of the Tx execution
-            let executed_files: Vec<(VmFile, TxFile)> = result
+            let executed_files: Vec<(File<Vm>, File<ProofVerif>)> = result
                 .files
-                .iter()
+                .into_iter()
                 .map(|file| {
-                    let vm_file = VmFile {
-                        task_id: running_task.task.tx,
-                        name: file.path.to_string(),
-                    };
+                    let vm_file = File::<Vm>::new(
+                        file.path.to_string(),
+                        file.checksum[..].into(),
+                        running_task.task.tx,
+                    );
 
                     let uuid = Uuid::new_v4();
                     //format file_name to keep the current filename and the uuid.
                     //put uuid at the end so that the uuid is use to save the file.
                     let new_file_name = format!("{}/{}", file.path, uuid);
-                    let dest = TxFile {
-                        //Real url will be calculated during download.
-                        url: self.http_download_host.clone(),
-                        name: new_file_name,
-                        checksum: file.checksum[..].into(),
-                    };
+                    let dest = File::<ProofVerif>::new(
+                        file.path,
+                        self.http_download_host.clone(),
+                        file.checksum[..].into(),
+                    );
                     (vm_file, dest)
                 })
                 .collect();
 
-            //Verify that all expected files has been generated.
+            //TODO ? -Verify that all expected files has been generated.
             // let executed_files: Vec<(VmFile, TxFile)> =
             //     if let Ok(Some(tx)) = self.database.find_transaction(&running_task.task.tx).await {
             //         if let Payload::Run { workflow } = tx.payload {
@@ -481,13 +486,13 @@ impl TaskManager for Scheduler {
             //         vec![]
             //     };
 
-            let new_tx_files: Vec<TxFile> = executed_files
+            let new_tx_files: Vec<File<ProofVerif>> = executed_files
                 .iter()
                 .map(|(_, file)| file)
                 .cloned()
                 .collect();
             let nonce = rand::thread_rng().next_u64();
-            let tx = match running_task.task.kind {
+            let mut tx = match running_task.task.kind {
                 TaskKind::Proof => Transaction::new(
                     Payload::Proof {
                         parent: running_task.task.tx,
@@ -517,25 +522,27 @@ impl TaskManager for Scheduler {
                 }
             };
 
+            //TODO Add tx execution in the state need some Higher Kind type.
+            tx.executed = true;
+
             tracing::info!("Submit result Tx created:{}", tx.hash.to_string());
 
             //Move tx file from execution Tx path to new Tx path
             for (source_file, dest_file) in executed_files {
-                let dest = dest_file.to_asset_file(tx.hash);
-                if let Err(err) = move_vmfile(&source_file, &dest, &self.data_directory).await {
+                if let Err(err) =
+                    move_vmfile(&source_file, &dest_file, &self.data_directory, tx.hash).await
+                {
                     tracing::error!(
-                        "failed to move excution file from: {source_file:?} to: {dest:?} error: {err}",
+                        "failed to move excution file from: {source_file:?} to: {dest_file:?} error: {err}",
                     );
                 }
             }
 
-            //TODO should be send to the validation process that verify, move the file and store it.
-            let mut mempool = self.mempool.write().await;
-            if let Err(err) = mempool.add(tx.clone()).await {
-                tracing::error!("failed to add transaction to mempool: {}", err);
+            //send tx to validation process.
+            if let Err(err) = self.tx_sender.send_tx(tx).await {
+                tracing::error!("failed to send Tx result to validation process: {}", err);
             } else {
-                dbg!(tx);
-                tracing::info!("successfully added new tx to mempool from task result");
+                tracing::info!("successfully sent new tx to tx validation from task result");
             }
 
             tracing::debug!("terminating VM {} running program {}", vm_id, program);

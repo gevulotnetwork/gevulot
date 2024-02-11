@@ -15,8 +15,10 @@ use tokio_stream::StreamExt;
 
 use super::{noise, protocol};
 use bytes::{Bytes, BytesMut};
-use eyre::Result;
-use gevulot_node::types::Transaction;
+use gevulot_node::types::{
+    transaction::{TxCreate, TxValdiated},
+    Transaction,
+};
 use parking_lot::RwLock;
 use pea2pea::{
     protocols::{Handshake, OnDisconnect, Reading, Writing},
@@ -24,31 +26,31 @@ use pea2pea::{
 };
 use sha3::{Digest, Sha3_256};
 
-#[async_trait::async_trait]
-pub trait TxHandler: Send + Sync {
-    async fn recv_tx(&self, tx: Transaction) -> Result<()>;
-}
+// #[async_trait::async_trait]
+// pub trait TxHandler: Send + Sync {
+//     async fn recv_tx(&self, tx: Transaction) -> Result<()>;
+// }
 
-#[async_trait::async_trait]
-pub trait TxChannel: Send + Sync {
-    async fn send_tx(&self, tx: &Transaction) -> Result<()>;
-}
+// #[async_trait::async_trait]
+// pub trait TxChannel: Send + Sync {
+//     async fn send_tx(&self, tx: &Transaction) -> Result<()>;
+// }
 
-struct BlackholeTxHandler;
-#[async_trait::async_trait]
-impl TxHandler for BlackholeTxHandler {
-    async fn recv_tx(&self, tx: Transaction) -> Result<()> {
-        tracing::debug!("submitting received tx to black hole");
-        Ok(())
-    }
-}
+// struct BlackholeTxHandler;
+// #[async_trait::async_trait]
+// impl TxHandler for BlackholeTxHandler {
+//     async fn recv_tx(&self, tx: Transaction) -> Result<()> {
+//         tracing::debug!("submitting received tx to black hole");
+//         Ok(())
+//     }
+// }
 
 // NOTE: This P2P implementation is originally from `pea2pea` Noise handshake example.
 #[derive(Clone)]
 pub struct P2P {
     node: Node,
     noise_states: Arc<RwLock<HashMap<SocketAddr, noise::State>>>,
-    tx_handler: Arc<tokio::sync::RwLock<Arc<dyn TxHandler>>>,
+    //tx_handler: Arc<tokio::sync::RwLock<Arc<dyn TxHandler>>>,
 
     // Peer connection map: <(P2P TCP connection's peer address) , (peer's advertised address in peer_list)>.
     // This mapping is needed for proper cleanup on OnDisconnect.
@@ -80,7 +82,7 @@ impl P2P {
         nat_listen_addr: Option<SocketAddr>,
         peer_http_port_list: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>>,
         tx_sender: TxEventSender<P2pSender>,
-        propagate_tx_stream: impl Stream<Item = Transaction> + std::marker::Send + 'static,
+        propagate_tx_stream: impl Stream<Item = Transaction<TxValdiated>> + std::marker::Send + 'static,
     ) -> Self {
         let config = Config {
             name: Some(name.into()),
@@ -99,7 +101,7 @@ impl P2P {
         let instance = Self {
             node,
             noise_states: Default::default(),
-            tx_handler: Arc::new(tokio::sync::RwLock::new(Arc::new(BlackholeTxHandler {}))),
+            //tx_handler: Arc::new(tokio::sync::RwLock::new(Arc::new(BlackholeTxHandler {}))),
             psk: psk.to_vec(),
             peer_list: Default::default(),
             peer_addr_mapping: Default::default(),
@@ -150,7 +152,7 @@ impl P2P {
     //     tracing::debug!("new tx handler registered");
     // }
 
-    async fn recv_tx(&self, tx: Transaction) {
+    async fn recv_tx(&self, tx: Transaction<TxCreate>) {
         tracing::debug!("submitting received tx to tx_handler");
         if let Err(err) = self.tx_sender.send_tx(tx) {
             tracing::error!("P2P error during received Tx sending:{err}");
@@ -408,6 +410,16 @@ impl Reading for P2P {
                         tx.hash,
                         hex::encode(tx.author.serialize())
                     );
+                    let tx: Transaction<TxCreate> = Transaction {
+                        author: tx.author,
+                        hash: tx.hash,
+                        payload: tx.payload,
+                        nonce: tx.nonce,
+                        signature: tx.signature,
+                        propagated: tx.propagated,
+                        executed: tx.executed,
+                        state: TxCreate,
+                    };
                     self.recv_tx(tx).await;
                 }
                 protocol::MessageV0::DiagnosticsRequest(kind) => {
@@ -424,17 +436,17 @@ impl Reading for P2P {
     }
 }
 
-#[async_trait::async_trait]
-impl TxChannel for P2P {
-    async fn send_tx(&self, tx: &Transaction) -> Result<()> {
-        let msg = protocol::Message::V0(protocol::MessageV0::Transaction(tx.clone()));
-        let bs = Bytes::from(bincode::serialize(&msg)?);
+// #[async_trait::async_trait]
+// impl TxChannel for P2P {
+//     async fn send_tx(&self, tx: &Transaction) -> Result<()> {
+//         let msg = protocol::Message::V0(protocol::MessageV0::Transaction(tx.clone()));
+//         let bs = Bytes::from(bincode::serialize(&msg)?);
 
-        tracing::debug!("broadcasting transaction {}", tx.hash);
-        self.broadcast(bs)?;
-        Ok(())
-    }
-}
+//         tracing::debug!("broadcasting transaction {}", tx.hash);
+//         self.broadcast(bs)?;
+//         Ok(())
+//     }
+// }
 impl Writing for P2P {
     type Message = Bytes;
     type Codec = noise::Codec;

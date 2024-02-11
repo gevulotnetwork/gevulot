@@ -5,6 +5,7 @@ use crate::{
     types::{transaction::Transaction, Hash},
 };
 use eyre::Result;
+use gevulot_node::types::transaction::TxValdiated;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::{sync::Arc, time::Duration};
@@ -77,7 +78,7 @@ impl AssetManagerOld {
 
     /// handle_transaction admits transaction into `AssetManager` for further
     /// processing.
-    pub async fn handle_transaction(&self, tx: &Transaction) -> Result<()> {
+    pub async fn handle_transaction(&self, tx: &Transaction<TxValdiated>) -> Result<()> {
         self.database.add_asset(&tx.hash).await
     }
 

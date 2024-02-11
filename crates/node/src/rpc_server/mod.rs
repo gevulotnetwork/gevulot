@@ -3,7 +3,14 @@ use crate::txvalidation::TxEventSender;
 use std::rc::Rc;
 use std::{net::SocketAddr, sync::Arc};
 
-use crate::{cli::Config, storage::Database, types::Transaction};
+use crate::{
+    cli::Config,
+    storage::Database,
+    types::{
+        transaction::{TxCreate, TxValdiated},
+        Transaction,
+    },
+};
 use eyre::Result;
 use gevulot_node::types::{
     rpc::{RpcError, RpcResponse},
@@ -69,7 +76,7 @@ async fn send_transaction(params: Params<'static>, ctx: Arc<Context>) -> RpcResp
     tracing::info!("JSON-RPC: send_transaction()");
 
     // Real logic
-    let tx: Transaction = match params.one() {
+    let tx: Transaction<TxCreate> = match params.one() {
         Ok(tx) => tx,
         Err(e) => {
             tracing::error!("failed to parse transaction: {}", e);
@@ -88,7 +95,10 @@ async fn send_transaction(params: Params<'static>, ctx: Arc<Context>) -> RpcResp
 }
 
 #[tracing::instrument(level = "info")]
-async fn get_transaction(params: Params<'static>, ctx: Arc<Context>) -> RpcResponse<Transaction> {
+async fn get_transaction(
+    params: Params<'static>,
+    ctx: Arc<Context>,
+) -> RpcResponse<Transaction<TxValdiated>> {
     let tx_hash: Hash = match params.one() {
         Ok(tx_hash) => tx_hash,
         Err(e) => {

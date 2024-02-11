@@ -29,8 +29,8 @@ pub struct Transaction {
     pub executed: bool,
 }
 
-impl From<&types::Transaction> for Transaction {
-    fn from(value: &types::Transaction) -> Self {
+impl From<&types::Transaction<transaction::TxValdiated>> for Transaction {
+    fn from(value: &types::Transaction<transaction::TxValdiated>) -> Self {
         let kind = match value.payload {
             transaction::Payload::Empty => Kind::Empty,
             transaction::Payload::Transfer { .. } => Kind::Transfer,
@@ -56,8 +56,8 @@ impl From<&types::Transaction> for Transaction {
     }
 }
 
-impl From<Transaction> for types::Transaction {
-    fn from(value: Transaction) -> types::Transaction {
+impl From<Transaction> for types::Transaction<transaction::TxValdiated> {
+    fn from(value: Transaction) -> types::Transaction<transaction::TxValdiated> {
         types::Transaction {
             author: value.author.into(),
             hash: value.hash,
@@ -68,6 +68,7 @@ impl From<Transaction> for types::Transaction {
             signature: value.signature,
             propagated: value.propagated,
             executed: value.executed,
+            state: transaction::TxValdiated,
         }
     }
 }

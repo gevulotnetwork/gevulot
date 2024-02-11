@@ -1,5 +1,8 @@
-use crate::txvalidation::event::{EventTx, RcvTx, SourceTxType};
-use crate::types::Transaction;
+use crate::txvalidation::event::{EventTx, RcvTx};
+use crate::types::{
+    transaction::{TxCreate, TxReceive, TxValdiated},
+    Transaction,
+};
 use crate::Mempool;
 use futures_util::Stream;
 use futures_util::TryFutureExt;
@@ -26,9 +29,12 @@ pub enum EventProcessError {
     #[error("Fail to rcv Tx from the channel: {0}")]
     RcvChannelError(#[from] tokio::sync::oneshot::error::RecvError),
     #[error("Fail to send the Tx on the channel: {0}")]
-    SendChannelError(#[from] tokio::sync::mpsc::error::SendError<(RcvTx, Option<CallbackSender>)>),
+    SendChannelError(
+        #[from]
+        tokio::sync::mpsc::error::SendError<(Transaction<TxReceive>, Option<CallbackSender>)>,
+    ),
     #[error("Fail to send the Tx on the channel: {0}")]
-    PropagateTxError(#[from] tokio::sync::mpsc::error::SendError<Transaction>),
+    PropagateTxError(#[from] tokio::sync::mpsc::error::SendError<Transaction<TxValdiated>>),
     #[error("validation fail: {0}")]
     ValidateError(String),
     #[error("Tx asset fail to download because {0}")]
@@ -49,47 +55,43 @@ pub struct TxResultSender;
 //use to send a tx to the event process.
 #[derive(Debug, Clone)]
 pub struct TxEventSender<T> {
-    sender: UnboundedSender<(RcvTx, Option<CallbackSender>)>,
+    sender: UnboundedSender<(Transaction<TxReceive>, Option<CallbackSender>)>,
     _marker: PhantomData<T>,
 }
 
 //Manage send from the p2p source
 impl TxEventSender<P2pSender> {
-    pub fn build(sender: UnboundedSender<(RcvTx, Option<CallbackSender>)>) -> Self {
+    pub fn build(
+        sender: UnboundedSender<(Transaction<TxReceive>, Option<CallbackSender>)>,
+    ) -> Self {
         TxEventSender {
             sender,
             _marker: PhantomData,
         }
     }
 
-    pub fn send_tx(&self, tx: Transaction) -> Result<(), EventProcessError> {
-        let event = EventTx {
-            content: tx.into(),
-            tx_type: SourceTxType::P2P,
-        };
+    pub fn send_tx(&self, tx: Transaction<TxCreate>) -> Result<(), EventProcessError> {
         self.sender
-            .send((RcvTx(event), None))
+            .send((tx.into_received(TxReceive::P2P), None))
             .map_err(|err| err.into())
     }
 }
 
 //Manage send from the RPC source
 impl TxEventSender<RpcSender> {
-    pub fn build(sender: UnboundedSender<(RcvTx, Option<CallbackSender>)>) -> Self {
+    pub fn build(
+        sender: UnboundedSender<(Transaction<TxReceive>, Option<CallbackSender>)>,
+    ) -> Self {
         TxEventSender {
             sender,
             _marker: PhantomData,
         }
     }
 
-    pub async fn send_tx(&self, tx: Transaction) -> Result<(), EventProcessError> {
+    pub async fn send_tx(&self, tx: Transaction<TxCreate>) -> Result<(), EventProcessError> {
         let (sender, rx) = oneshot::channel();
-        let event = EventTx {
-            content: tx.into(),
-            tx_type: SourceTxType::RPC,
-        };
         self.sender
-            .send((RcvTx(event), Some(sender)))
+            .send((tx.into_received(TxReceive::RPC), Some(sender)))
             .map_err(|err| EventProcessError::from(err))?;
         rx.await?
     }
@@ -97,21 +99,19 @@ impl TxEventSender<RpcSender> {
 
 //Manage send from the Tx result execution source
 impl TxEventSender<TxResultSender> {
-    pub fn build(sender: UnboundedSender<(RcvTx, Option<CallbackSender>)>) -> Self {
+    pub fn build(
+        sender: UnboundedSender<(Transaction<TxReceive>, Option<CallbackSender>)>,
+    ) -> Self {
         TxEventSender {
             sender,
             _marker: PhantomData,
         }
     }
 
-    pub async fn send_tx(&self, tx: Transaction) -> Result<(), EventProcessError> {
+    pub async fn send_tx(&self, tx: Transaction<TxCreate>) -> Result<(), EventProcessError> {
         let (sender, rx) = oneshot::channel();
-        let event = EventTx {
-            content: tx.into(),
-            tx_type: SourceTxType::TXRESULT,
-        };
         self.sender
-            .send((RcvTx(event), Some(sender)))
+            .send((tx.into_received(TxReceive::TXRESULT), Some(sender)))
             .map_err(|err| EventProcessError::from(err))?;
         rx.await?
     }
@@ -130,9 +130,9 @@ pub async fn start_event_loop(
 ) -> eyre::Result<(
     JoinHandle<()>,
     //channel use to send RcvTx event to the processing
-    UnboundedSender<(RcvTx, Option<CallbackSender>)>,
+    UnboundedSender<(Transaction<TxReceive>, Option<CallbackSender>)>,
     //output stream use to propagate Tx.
-    impl Stream<Item = Transaction>,
+    impl Stream<Item = Transaction<TxValdiated>>,
 )> {
     let local_directory_path = Arc::new(local_directory_path);
     //start http download manager
@@ -140,15 +140,19 @@ pub async fn start_event_loop(
         download_manager::serve_files(bind_addr, http_download_port, local_directory_path.clone())
             .await?;
 
-    let (tx, mut rcv_tx_event_rx) = mpsc::unbounded_channel::<(RcvTx, Option<CallbackSender>)>();
+    let (tx, mut rcv_tx_event_rx) =
+        mpsc::unbounded_channel::<(Transaction<TxReceive>, Option<CallbackSender>)>();
 
-    let (p2p_sender, p2p_recv) = mpsc::unbounded_channel::<Transaction>();
+    let (p2p_sender, p2p_recv) = mpsc::unbounded_channel::<Transaction<TxValdiated>>();
     let p2p_stream = UnboundedReceiverStream::new(p2p_recv);
     let jh = tokio::spawn({
         let local_directory_path = local_directory_path.clone();
 
         async move {
-            while let Some((event, callback)) = rcv_tx_event_rx.recv().await {
+            while let Some((tx, callback)) = rcv_tx_event_rx.recv().await {
+                //create new event with the Tx
+                let event: EventTx<RcvTx> = tx.into();
+
                 //process RcvTx(EventTx<SourceTxType>) event
                 let http_peer_list = convert_peer_list_to_vec(&http_peer_list).await;
 

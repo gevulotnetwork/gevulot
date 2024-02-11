@@ -8,13 +8,13 @@ use std::path::PathBuf;
 
 //describe file data for a Tx
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize, sqlx::FromRow)]
-pub struct TxFile {
+pub struct DbFile {
     pub name: String,
     pub url: String,
     pub checksum: Hash,
 }
 
-impl TxFile {
+impl DbFile {
     pub fn try_from_prg_data(
         value: &transaction::ProgramData,
     ) -> Result<Option<Self>, &'static str> {
@@ -23,9 +23,9 @@ impl TxFile {
                 file_name,
                 file_url,
                 checksum,
-            } => Some(TxFile {
-                url: file_url.clone(),
+            } => Some(DbFile {
                 name: file_name.clone(),
+                url: file_url.clone(),
                 checksum: checksum.clone().into(),
             }),
             transaction::ProgramData::Output {
@@ -39,65 +39,146 @@ impl TxFile {
 
         Ok(file)
     }
-
-    pub fn to_asset_file(self, tx_hash: Hash) -> AssetFile {
-        AssetFile::from_txfile(self, tx_hash)
-    }
 }
 
-pub fn vec_txfile_to_bytes(vec: &[TxFile]) -> Result<Vec<u8>, bincode::Error> {
-    bincode::serialize(vec)
-}
-
-//describe file data to calculate the file path for read/write
-#[derive(Clone, Debug)]
-pub struct AssetFile {
-    //true if the file is an image.
-    pub image: bool,
-    pub tx: Hash,
+//describe file data for a Tx
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+pub struct File<E> {
     pub name: String,
     pub url: String,
     pub checksum: Hash,
+    pub extention: E,
 }
 
-impl AssetFile {
-    fn from_txfile(file: TxFile, tx_hash: Hash) -> Self {
-        AssetFile {
-            image: false,
-            url: file.url,
-            name: file.name,
-            tx: tx_hash,
-            checksum: file.checksum,
+impl<E> File<E> {
+    pub fn build(name: String, url: String, checksum: Hash, extention: E) -> Self {
+        File {
+            name,
+            url,
+            checksum,
+            extention,
         }
+    }
+}
+
+//File type
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+pub struct Tx;
+
+impl File<Tx> {
+    pub fn new(name: String, url: String, checksum: Hash) -> Self {
+        File::build(name, url, checksum, Tx)
+    }
+
+    pub fn to_asset_file(self, tx_hash: Hash) -> File<Download> {
+        File::<Download>::from_txfile(self, tx_hash)
+    }
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+pub struct Download(Hash);
+//Asset file use download and install the file data locally.
+impl File<Download> {
+    pub fn new(name: String, url: String, checksum: Hash, tx_hash: Hash) -> Self {
+        File::build(name, url, checksum, Download(tx_hash))
+    }
+
+    fn from_txfile(file: File<Tx>, tx_hash: Hash) -> Self {
+        File::<Download>::new(file.name, file.url, file.checksum, tx_hash)
     }
 
     pub fn get_relatif_path(&self) -> PathBuf {
         let file_name = Path::new(&self.name).file_name().unwrap();
-        let mut path = if self.image {
-            PathBuf::from("images").join(self.tx.to_string())
-        } else {
-            PathBuf::from(self.tx.to_string())
-        };
+        let mut path = PathBuf::from(self.extention.0.to_string());
         path.push(file_name);
         path
     }
 
-    pub fn try_from_prg_meta_data(
-        value: &transaction::ProgramMetadata,
-    ) -> Result<Self, &'static str> {
-        Ok(AssetFile {
-            image: true,
-            url: value.image_file_url.clone(),
-            name: value.name.clone(),
-            tx: value.hash,
-            checksum: value.image_file_checksum.clone().into(),
-        })
+    pub fn try_from_prg_meta_data(value: &transaction::ProgramMetadata) -> Self {
+        File::<Download>::new(
+            value.name.clone(),
+            value.image_file_url.clone(),
+            value.image_file_checksum.clone().into(),
+            value.hash,
+        )
     }
 }
 
-pub async fn move_vmfile(source: &VmFile, dest: &AssetFile, base_path: &Path) -> Result<()> {
-    let src_file_path = base_path.to_path_buf().join(&source.get_vmrelatif_path());
-    let dst_file_path = base_path.to_path_buf().join(&dest.get_relatif_path());
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+pub struct ProofVerif;
+impl File<ProofVerif> {
+    pub fn new(path: String, http_download_host: String, checksum: Hash) -> Self {
+        let uuid = uuid::Uuid::new_v4();
+        //format file_name to keep the current filename and the uuid.
+        //put uuid at the end so that the uuid is use to save the file.
+        let new_file_name = format!("{}/{}", path, uuid);
+
+        File::build(new_file_name, http_download_host, checksum, ProofVerif)
+    }
+
+    pub fn into_download_file(self, tx_hash: Hash) -> File<Download> {
+        //get uuid from file name
+        let uuid = Path::new(&self.name).file_name().unwrap();
+        File::<Download>::new(
+            self.name.to_string(),
+            format!("{}/{}/{}", self.url, tx_hash, uuid.to_str().unwrap()),
+            self.checksum.to_string().into(),
+            tx_hash,
+        )
+    }
+
+    pub fn get_relatif_path(&self, tx_hash: Hash) -> PathBuf {
+        let mut file_path = Path::new(&self.name);
+        if file_path.is_absolute() {
+            file_path = file_path.strip_prefix("/").unwrap(); //unwrap tested in is_absolute
+        }
+
+        let mut path = PathBuf::from(tx_hash.to_string());
+        path.push(file_path);
+        path
+    }
+
+    pub fn vec_to_bytes(vec: &[File<ProofVerif>]) -> Result<Vec<u8>, bincode::Error> {
+        bincode::serialize(vec)
+    }
+}
+
+impl From<DbFile> for File<ProofVerif> {
+    fn from(file: DbFile) -> Self {
+        File::<ProofVerif>::new(file.name, file.url, file.checksum)
+    }
+}
+
+//describe a file generated by the VM
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+pub struct Vm(Hash);
+impl File<Vm> {
+    pub fn new(path: String, checksum: Hash, task_tx: Hash) -> Self {
+        File::build(path, String::new(), checksum, Vm(task_tx))
+    }
+
+    pub fn get_relatif_path(&self) -> PathBuf {
+        let mut file_path = Path::new(&self.name);
+        if file_path.is_absolute() {
+            file_path = file_path.strip_prefix("/").unwrap(); //unwrap tested in is_absolute
+        }
+
+        let mut path = PathBuf::from(self.extention.0.to_string());
+        path.push(file_path);
+        path
+    }
+}
+
+pub async fn move_vmfile(
+    source: &File<Vm>,
+    dest: &File<ProofVerif>,
+    base_path: &Path,
+    proofverif_tx_hash: Hash,
+) -> Result<()> {
+    let src_file_path = base_path.to_path_buf().join(source.get_relatif_path());
+    let dst_file_path = base_path
+        .to_path_buf()
+        .join(dest.get_relatif_path(proofverif_tx_hash));
 
     tracing::debug!(
         "moving file from {:#?} to {:#?}",
@@ -117,22 +198,18 @@ pub async fn move_vmfile(source: &VmFile, dest: &AssetFile, base_path: &Path) ->
         .map_err(|e| e.into())
 }
 
-//describe file data to calculate the file path for read/write
-#[derive(Clone, Debug)]
-pub struct VmFile {
-    pub task_id: Hash,
-    pub name: String,
-}
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+pub struct Image(Hash);
+impl File<Image> {
+    pub fn new(name: String, url: String, checksum: Hash, tx_hash: Hash) -> Self {
+        File::build(name, url, checksum, Image(tx_hash))
+    }
 
-impl VmFile {
-    pub fn get_vmrelatif_path(&self) -> PathBuf {
-        let mut file_path = Path::new(&self.name);
-        if file_path.is_absolute() {
-            file_path = file_path.strip_prefix("/").unwrap(); //unwrap tested in is_absolute
-        }
-
-        let mut path = PathBuf::from(self.task_id.to_string());
-        path.push(file_path);
+    pub fn get_relatif_path(&self) -> PathBuf {
+        let file_name = Path::new(&self.name).file_name().unwrap();
+        let mut path = PathBuf::from("images");
+        path.push(self.extention.0.to_string());
+        path.push(file_name);
         path
     }
 }

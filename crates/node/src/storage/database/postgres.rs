@@ -1,7 +1,11 @@
 use super::entity::{self};
-use crate::types::file::TxFile;
+use crate::types::file::DbFile;
 use crate::types::transaction;
-use crate::types::{self, transaction::ProgramData, Hash, Program, Task};
+use crate::types::{
+    self,
+    transaction::{ProgramData, TxValdiated},
+    Hash, Program, Task,
+};
 use eyre::Result;
 use gevulot_node::types::program::ResourceRequest;
 use gevulot_node::types::transaction::TransactionError;
@@ -180,7 +184,7 @@ impl Database {
         match task {
             Some(mut task) => {
                 let mut files =
-                    sqlx::query_as::<_, TxFile>("SELECT * FROM file WHERE task_id = $1")
+                    sqlx::query_as::<_, DbFile>("SELECT * FROM file WHERE task_id = $1")
                         .bind(id)
                         .fetch_all(&mut *tx)
                         .await?;
@@ -200,7 +204,7 @@ impl Database {
             .await?;
 
         for task in &mut tasks {
-            let mut files = sqlx::query_as::<_, TxFile>("SELECT * FROM file WHERE task_id = $1")
+            let mut files = sqlx::query_as::<_, DbFile>("SELECT * FROM file WHERE task_id = $1")
                 .bind(task.id)
                 .fetch_all(&mut *tx)
                 .await?;
@@ -263,7 +267,10 @@ impl Database {
     // transaction related operations. They are implemented naively on purpose
     // for now to maintain initial flexibility in development. Later on, these
     // queries here are easy low hanging fruits for optimizations.
-    pub async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<types::Transaction>> {
+    pub async fn find_transaction(
+        &self,
+        tx_hash: &Hash,
+    ) -> Result<Option<types::Transaction<TxValdiated>>> {
         let mut db_tx = self.pool.begin().await?;
 
         let entity =
@@ -364,7 +371,7 @@ impl Database {
                 entity::transaction::Kind::Proof => {
                     //get payload files
                     let files =
-                        sqlx::query_as::<_, TxFile>("SELECT * FROM txfile WHERE tx_id = $1")
+                        sqlx::query_as::<_, DbFile>("SELECT * FROM txfile WHERE tx_id = $1")
                             .bind(tx_hash)
                             .fetch_all(&mut *db_tx)
                             .await?;
@@ -376,7 +383,7 @@ impl Database {
                                 parent: row.get(0),
                                 prover: row.get(1),
                                 proof: row.get(2),
-                                files: files.clone(), //to avoid file move.
+                                files: files.clone().into_iter().map(|file| file.into()).collect(),
                             },
                         )
                         .fetch_one(&mut *db_tx)
@@ -397,7 +404,7 @@ impl Database {
                 entity::transaction::Kind::Verification => {
                     //get payload files
                     let files =
-                        sqlx::query_as::<_, TxFile>("SELECT * FROM txfile WHERE tx_id = $1")
+                        sqlx::query_as::<_, DbFile>("SELECT * FROM txfile WHERE tx_id = $1")
                             .bind(tx_hash)
                             .fetch_all(&mut *db_tx)
                             .await?;
@@ -410,7 +417,7 @@ impl Database {
                             parent: row.get(0),
                             verifier: row.get(1),
                             verification: row.get(2),
-                            files: files.clone(), //to avoid file move.
+                            files: files.clone().into_iter().map(|file| file.into()).collect(),
                         },
                     )
                     .fetch_one(&mut *db_tx)
@@ -419,7 +426,7 @@ impl Database {
                 _ => types::transaction::Payload::Empty,
             };
 
-            let mut tx: types::transaction::Transaction = entity.into();
+            let mut tx: types::transaction::Transaction<TxValdiated> = entity.into();
             tx.payload = payload;
             Ok(Some(tx))
         } else {
@@ -427,7 +434,7 @@ impl Database {
         }
     }
 
-    pub async fn get_transactions(&self) -> Result<Vec<types::Transaction>> {
+    pub async fn get_transactions(&self) -> Result<Vec<types::Transaction<TxValdiated>>> {
         let mut db_tx = self.pool.begin().await?;
         let refs: Vec<Hash> = sqlx::query("SELECT hash FROM transaction")
             .map(|row: sqlx::postgres::PgRow| row.get(0))
@@ -445,7 +452,9 @@ impl Database {
         Ok(txs)
     }
 
-    pub async fn get_unexecuted_transactions(&self) -> Result<Vec<types::Transaction>> {
+    pub async fn get_unexecuted_transactions(
+        &self,
+    ) -> Result<Vec<types::Transaction<TxValdiated>>> {
         let mut db_tx = self.pool.begin().await?;
         let refs: Vec<Hash> = sqlx::query("SELECT hash FROM transaction WHERE executed IS false")
             .map(|row: sqlx::postgres::PgRow| row.get(0))
@@ -479,7 +488,7 @@ impl Database {
         Ok(refs)
     }
 
-    pub async fn add_transaction(&self, tx: &types::Transaction) -> Result<()> {
+    pub async fn add_transaction(&self, tx: &types::Transaction<TxValdiated>) -> Result<()> {
         let entity = entity::Transaction::from(tx);
 
         let mut db_tx = self.pool.begin().await?;

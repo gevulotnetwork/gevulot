@@ -1,20 +1,15 @@
+use crate::types::{transaction::TxValdiated, Hash, Transaction};
 use async_trait::async_trait;
 use eyre::Result;
 use std::collections::VecDeque;
 use std::sync::Arc;
 use thiserror::Error;
-use tokio::sync::RwLock;
-
-use crate::{
-    networking,
-    types::{Hash, Transaction},
-};
 
 #[async_trait]
 pub trait Storage: Send + Sync {
-    async fn get(&self, hash: &Hash) -> Result<Option<Transaction>>;
-    async fn set(&self, tx: &Transaction) -> Result<()>;
-    async fn fill_deque(&self, deque: &mut VecDeque<Transaction>) -> Result<()>;
+    async fn get(&self, hash: &Hash) -> Result<Option<Transaction<TxValdiated>>>;
+    async fn set(&self, tx: &Transaction<TxValdiated>) -> Result<()>;
+    async fn fill_deque(&self, deque: &mut VecDeque<Transaction<TxValdiated>>) -> Result<()>;
 }
 
 #[allow(clippy::enum_variant_names)]
@@ -30,7 +25,7 @@ pub struct Mempool {
     //    acl_whitelist: Arc<dyn AclWhitelist>,
     // TODO: This should be refactored to PubSub channel abstraction later on.
     //    tx_chan: Option<Arc<dyn networking::p2p::TxChannel>>,
-    deque: VecDeque<Transaction>,
+    deque: VecDeque<Transaction<TxValdiated>>,
 }
 
 impl Mempool {
@@ -50,16 +45,16 @@ impl Mempool {
         })
     }
 
-    pub fn next(&mut self) -> Option<Transaction> {
+    pub fn next(&mut self) -> Option<Transaction<TxValdiated>> {
         // TODO(tuommaki): Should storage reflect the POP in state?
         self.deque.pop_front()
     }
 
-    pub fn peek(&self) -> Option<&Transaction> {
+    pub fn peek(&self) -> Option<&Transaction<TxValdiated>> {
         self.deque.front()
     }
 
-    pub async fn add(&mut self, tx: Transaction) -> Result<()> {
+    pub async fn add(&mut self, tx: Transaction<TxValdiated>) -> Result<()> {
         self.storage.set(&tx).await?;
         self.deque.push_back(tx);
         Ok(())
@@ -70,11 +65,11 @@ impl Mempool {
     }
 }
 
-pub struct P2PTxHandler(Arc<RwLock<Mempool>>);
+// pub struct P2PTxHandler(Arc<RwLock<Mempool>>);
 
-#[async_trait::async_trait]
-impl networking::p2p::TxHandler for P2PTxHandler {
-    async fn recv_tx(&self, tx: Transaction) -> Result<()> {
-        self.0.write().await.add(tx).await
-    }
-}
+// #[async_trait::async_trait]
+// impl networking::p2p::TxHandler for P2PTxHandler {
+//     async fn recv_tx(&self, tx: Transaction<TxValdiated>) -> Result<()> {
+//         self.0.write().await.add(tx).await
+//     }
+// }

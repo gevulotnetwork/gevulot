@@ -1,4 +1,4 @@
-use crate::types::file::TxFile;
+use crate::types::file::DbFile;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -37,7 +37,7 @@ pub struct Task {
     pub program_id: Hash,
     pub args: Vec<String>,
     #[sqlx(skip)]
-    pub files: Vec<TxFile>,
+    pub files: Vec<DbFile>,
     #[serde(skip_deserializing)]
     pub serial: i32,
     #[serde(skip_deserializing)]

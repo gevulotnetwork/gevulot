@@ -5,7 +5,11 @@ use jsonrpsee::{
     http_client::{HttpClient, HttpClientBuilder},
 };
 
-use crate::types::{rpc::RpcResponse, transaction::TransactionTree, Hash, Transaction};
+use crate::types::{
+    rpc::RpcResponse,
+    transaction::{TransactionTree, TxCreate, TxValdiated},
+    Hash, Transaction,
+};
 
 pub struct RpcClient {
     client: HttpClient,
@@ -22,13 +26,13 @@ impl RpcClient {
     pub async fn get_transaction(
         &self,
         tx_hash: &Hash,
-    ) -> Result<Option<Transaction>, Box<dyn Error>> {
+    ) -> Result<Option<Transaction<TxValdiated>>, Box<dyn Error>> {
         let mut params = ArrayParams::new();
         params.insert(tx_hash).expect("rpc params");
 
         let resp = self
             .client
-            .request::<RpcResponse<Transaction>, ArrayParams>("getTransaction", params)
+            .request::<RpcResponse<Transaction<TxValdiated>>, ArrayParams>("getTransaction", params)
             .await
             .expect("rpc request");
 
@@ -38,7 +42,7 @@ impl RpcClient {
         }
     }
 
-    pub async fn send_transaction(&self, tx: &Transaction) -> Result<(), Box<dyn Error>> {
+    pub async fn send_transaction(&self, tx: &Transaction<TxCreate>) -> Result<(), Box<dyn Error>> {
         let mut params = ArrayParams::new();
         params.insert(tx).expect("rpc params");
 

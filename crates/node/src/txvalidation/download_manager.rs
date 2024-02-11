@@ -1,4 +1,4 @@
-use crate::types::file::AssetFile;
+use crate::types::file::{Download, File};
 use eyre::eyre;
 use eyre::Result;
 use futures_util::TryStreamExt;
@@ -13,7 +13,6 @@ use std::net::SocketAddr;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
@@ -26,7 +25,7 @@ pub async fn download_asset_file(
     // file: &str,
     http_peer_list: &[(SocketAddr, Option<u16>)],
     http_client: &reqwest::Client,
-    asset_file: AssetFile,
+    asset_file: File<Download>,
 ) -> Result<()> {
     let local_relative_file_path = asset_file.get_relatif_path();
     tracing::info!("download_file:{asset_file:?} local_directory_path:{local_directory_path:?} local_relative_file_path:{local_relative_file_path:?} http_peer_list:{http_peer_list:?}");
@@ -162,7 +161,7 @@ async fn server_process_file(
 
     let mut file_path = data_directory.join(file_digest);
 
-    let file = match File::open(&file_path).await {
+    let file = match tokio::fs::File::open(&file_path).await {
         Ok(file) => file,
         Err(_) => {
             //try to see if the file is currently being updated.
