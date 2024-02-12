@@ -1,7 +1,8 @@
 use std::time::Duration;
 
 use eyre::Result;
-use sqlx::{self, postgres::PgPoolOptions, Row};
+use gevulot_node::types::program::ResourceRequest;
+use sqlx::{self, postgres::PgPoolOptions, FromRow, Row};
 use uuid::Uuid;
 
 use super::entity::{self};
@@ -27,16 +28,29 @@ impl Database {
     }
 
     pub async fn add_program(&self, db_conn: &mut sqlx::PgConnection, p: &Program) -> Result<()> {
+        let mut db_tx = self.pool.begin().await?;
+
         sqlx::query(
-            "INSERT INTO program ( hash, name, image_file_name, image_file_url, image_file_checksum ) VALUES ( $1, $2, $3, $4, $5 ) ON CONFLICT (hash) DO NOTHING RETURNING *")
+            "INSERT INTO program ( hash, name, image_file_name, image_file_url, image_file_checksum ) VALUES ( $1, $2, $3, $4, $5 ) ON CONFLICT (hash) DO NOTHING")
             .bind(p.hash)
             .bind(&p.name)
             .bind(&p.image_file_name)
             .bind(&p.image_file_url)
             .bind(&p.image_file_checksum)
-        .execute(db_conn)
+        .execute(&mut *db_tx)
         .await?;
-        Ok(())
+
+        if let Some(ref program_resource_requirements) = p.limits {
+            sqlx::query("INSERT INTO program_resource_requirements ( program_hash, memory, cpus, gpus ) VALUES ( $1, $2, $3, $4 ) ON CONFLICT (program_hash) DO NOTHING")
+                .bind(p.hash)
+                .bind(program_resource_requirements.mem as i64)
+                .bind(program_resource_requirements.cpus as i64)
+                .bind(program_resource_requirements.gpus as i64)
+            .execute(&mut *db_tx)
+            .await?;
+        }
+
+        db_tx.commit().await.map_err(|e| e.into())
     }
 
     pub async fn find_program(&self, hash: impl AsRef<Hash>) -> Result<Option<Program>> {
@@ -55,8 +69,24 @@ impl Database {
         hash: impl AsRef<Hash>,
     ) -> Result<Program> {
         // non-macro query_as used because of sqlx limitations with enums.
-        let program = sqlx::query_as::<_, Program>("SELECT * FROM program WHERE hash = $1")
+        let program = sqlx::query("SELECT * FROM program LEFT JOIN program_resource_requirements AS prr ON prr.program_hash = program.hash WHERE hash = $1")
             .bind(hash.as_ref())
+            .try_map(|row: sqlx::postgres::PgRow| {
+                let mut prg = Program::from_row(&row)?;
+                prg.limits = match ResourceRequest::from_row(&row) {
+                    Ok(rr) => Some(rr),
+                    Err(_) => {
+                        // If program doesn't have specific entry for resource
+                        // requirements, the fields are NULL, which causes an
+                        // error due to lack of Option<> in `ResourceRequest`.
+                        // This is a compromise between sound core data types
+                        // in the program & perfect mapping with the DB.
+                        None
+                    }
+                };
+
+                Ok(prg)
+            })
             .fetch_one(db_conn)
             .await?;
 
@@ -64,9 +94,26 @@ impl Database {
     }
 
     pub async fn get_programs(&self) -> Result<Vec<Program>> {
-        let programs = sqlx::query_as::<_, Program>("SELECT * FROM program")
+        let programs = sqlx::query("SELECT * FROM program LEFT JOIN program_resource_requirements AS prr ON prr.program_hash = program.hash")
+            .try_map(|row: sqlx::postgres::PgRow| {
+                let mut prg = Program::from_row(&row)?;
+                prg.limits = match ResourceRequest::from_row(&row) {
+                    Ok(rr) => Some(rr),
+                    Err(err) => {
+                        // If program doesn't have specific entry for resource
+                        // requirements, the fields are NULL, which causes an
+                        // error due to lack of Option<> in `ResourceRequest`.
+                        // This is a compromise between sound core data types
+                        // in the program & perfect mapping with the DB.
+                        None
+                    }
+                };
+
+                Ok(prg)
+            })
             .fetch_all(&self.pool)
             .await?;
+
         Ok(programs)
     }
 
@@ -81,7 +128,7 @@ impl Database {
         .bind(&t.args)
         .bind(&t.state)
         .bind(t.program_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         {
             tx.rollback().await?;
@@ -629,6 +676,7 @@ mod tests {
                     image_file_checksum:
                         "ebc81c06a5ae263d0d4e4efcb06e668b3b786ccc83cb738de5aabb9b966668db"
                             .to_string(),
+                    resource_requirements: None,
                 },
                 verifier: ProgramMetadata {
                     name: "test verifier".to_string(),
@@ -641,6 +689,7 @@ mod tests {
                     image_file_checksum:
                         "ebc81c06a5ae263d0d4e4efcb06e668b3b786ccc83cb738de5aabb9b966668aa"
                             .to_string(),
+                    resource_requirements: None,
                 },
             },
             nonce: 64,
@@ -844,5 +893,172 @@ mod tests {
             .delete_program(&verifier.hash)
             .await
             .expect("delete program");
+    }
+
+    #[ignore]
+    #[tokio::test]
+    async fn test_programs_with_resource_requirements() {
+        let rng = &mut StdRng::from_entropy();
+        let database = Database::new("postgres://gevulot:gevulot@localhost/gevulot")
+            .await
+            .expect("failed to connect to db");
+
+        let prg = Program {
+            hash: Hash::random(rng),
+            name: String::from("prover"),
+            image_file_name: String::from("prover.img"),
+            image_file_url: String::from("http://example.com/prover.img"),
+            image_file_checksum: String::from("nope"),
+            limits: Some(ResourceRequest {
+                mem: 53912,
+                cpus: 13,
+                gpus: 3,
+            }),
+        };
+
+        let mut db_conn = database.pool.acquire().await.expect("acquire db conn");
+
+        database
+            .add_program(&mut db_conn, &prg)
+            .await
+            .expect("add program");
+
+        let p = database
+            .get_program(&mut db_conn, prg.hash)
+            .await
+            .expect("get program");
+
+        // Cleanup before final assertions (that can fail).
+        database
+            .delete_program(&prg.hash)
+            .await
+            .expect("delete program");
+
+        assert_eq!(p.hash, prg.hash);
+        assert_eq!(p.name, prg.name);
+        assert_eq!(p.image_file_name, prg.image_file_name);
+        assert_eq!(p.image_file_url, prg.image_file_url);
+        assert_eq!(p.image_file_checksum, prg.image_file_checksum);
+        assert_eq!(p.limits, prg.limits);
+    }
+
+    #[ignore]
+    #[tokio::test]
+    async fn test_programs_without_resource_requirements() {
+        let rng = &mut StdRng::from_entropy();
+        let database = Database::new("postgres://gevulot:gevulot@localhost/gevulot")
+            .await
+            .expect("failed to connect to db");
+
+        let prg = Program {
+            hash: Hash::random(rng),
+            name: String::from("prover"),
+            image_file_name: String::from("prover.img"),
+            image_file_url: String::from("http://example.com/prover.img"),
+            image_file_checksum: String::from("nope"),
+            limits: None,
+        };
+
+        let mut db_conn = database.pool.acquire().await.expect("acquire db conn");
+
+        database
+            .add_program(&mut db_conn, &prg)
+            .await
+            .expect("add program");
+
+        let p = database
+            .get_program(&mut db_conn, prg.hash)
+            .await
+            .expect("get program");
+
+        // Cleanup before final assertions (that can fail).
+        database
+            .delete_program(&prg.hash)
+            .await
+            .expect("delete program");
+
+        assert_eq!(p.hash, prg.hash);
+        assert_eq!(p.name, prg.name);
+        assert_eq!(p.image_file_name, prg.image_file_name);
+        assert_eq!(p.image_file_url, prg.image_file_url);
+        assert_eq!(p.image_file_checksum, prg.image_file_checksum);
+        assert_eq!(p.limits, None);
+    }
+
+    #[ignore]
+    #[tokio::test]
+    async fn test_programs_with_and_without_resource_requirements() {
+        let rng = &mut StdRng::from_entropy();
+        let database = Database::new("postgres://gevulot:gevulot@localhost/gevulot")
+            .await
+            .expect("failed to connect to db");
+
+        let prg1 = Program {
+            hash: Hash::random(rng),
+            name: String::from("prover"),
+            image_file_name: String::from("prover.img"),
+            image_file_url: String::from("http://example.com/prover.img"),
+            image_file_checksum: String::from("nope"),
+            limits: Some(ResourceRequest {
+                mem: 53912,
+                cpus: 13,
+                gpus: 3,
+            }),
+        };
+
+        let prg2 = Program {
+            hash: Hash::random(rng),
+            name: String::from("prover"),
+            image_file_name: String::from("prover.img"),
+            image_file_url: String::from("http://example.com/prover.img"),
+            image_file_checksum: String::from("nope"),
+            limits: None,
+        };
+
+        let mut db_conn = database.pool.acquire().await.expect("acquire db conn");
+
+        database
+            .add_program(&mut db_conn, &prg1)
+            .await
+            .expect("add program #1");
+
+        database
+            .add_program(&mut db_conn, &prg2)
+            .await
+            .expect("add program #2");
+
+        let programs = database.get_programs().await.expect("get programs");
+
+        // Cleanup before final assertions (that can fail).
+        database
+            .delete_program(&prg1.hash)
+            .await
+            .expect("delete program");
+        database
+            .delete_program(&prg2.hash)
+            .await
+            .expect("delete program");
+
+        // Assertions.
+        for p in programs {
+            // Compare program hash for specific assertion path because
+            // `programs` will contain artifacts from other tests as well,
+            // due to concurrency.
+            if p.hash == prg1.hash {
+                assert_eq!(p.hash, prg1.hash);
+                assert_eq!(p.name, prg1.name);
+                assert_eq!(p.image_file_name, prg1.image_file_name);
+                assert_eq!(p.image_file_url, prg1.image_file_url);
+                assert_eq!(p.image_file_checksum, prg1.image_file_checksum);
+                assert_eq!(p.limits, prg1.limits);
+            } else if p.hash == prg2.hash {
+                assert_eq!(p.hash, prg2.hash);
+                assert_eq!(p.name, prg2.name);
+                assert_eq!(p.image_file_name, prg2.image_file_name);
+                assert_eq!(p.image_file_url, prg2.image_file_url);
+                assert_eq!(p.image_file_checksum, prg2.image_file_checksum);
+                assert_eq!(p.limits, None);
+            }
+        }
     }
 }
