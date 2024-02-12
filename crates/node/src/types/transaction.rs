@@ -258,6 +258,17 @@ pub enum TransactionError {
     General(String),
 }
 
+// Transaction definition.
+// Type state are use to define the different state of a Tx.
+//
+// Tx are defined in 3 domains: Validation, Execution, Storage.
+// Currently the same definition is used but different type should be defined  (TODO).
+// Only the validation type state are defined.
+// TxCreate : identify a Tx that has just been created.
+// TxReceive: Identify a Tx that has been received. Determine the received source.
+// TxValdiated: Identify a Tx that has been validated. Pass all the validation process.
+// The validation suppose the Tx has been propagated. Currently there's no notification during the propagation (TODO).
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct TxCreate;
 

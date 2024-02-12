@@ -61,6 +61,7 @@ pub async fn download_asset_file(
     };
 
     if resp.status() == reqwest::StatusCode::OK {
+        tracing::trace!("download_file:{} started.", asset_file.name);
         let file_path = local_directory_path.join(&local_relative_file_path);
         // Ensure any necessary subdirectories exists.
         if let Some(parent) = file_path.parent() {
@@ -80,13 +81,38 @@ pub async fn download_asset_file(
         //create the Hasher to verify the Hash
         let mut hasher = blake3::Hasher::new();
 
-        while let Some(chunk) = resp.chunk().await? {
-            hasher.update(&chunk);
-            fd.write_all(&chunk).await?;
+        loop {
+            match tokio::time::timeout(tokio::time::Duration::from_secs(5), resp.chunk()).await {
+                Ok(Ok(Some(chunk))) => {
+                    hasher.update(&chunk);
+                    fd.write_all(&chunk).await?;
+                }
+                Ok(Ok(None)) => break,
+                Ok(Err(_)) => {
+                    tracing::error!("download_file:{:?} connection timeout.", asset_file.name);
+                    return Err(eyre!(
+                        "Download file: {:?}, connection timeout",
+                        asset_file.name
+                    ));
+                }
+                Err(err) => {
+                    tracing::error!("download_file:{:?} http error:{err}.", asset_file.name);
+                    return Err(eyre!(
+                        "Download file: {:?}, http error:{err}",
+                        asset_file.name
+                    ));
+                }
+            }
         }
+
+        // while let Some(chunk) = resp.chunk().await? {
+        //     hasher.update(&chunk);
+        //     fd.write_all(&chunk).await?;
+        // }
 
         fd.flush().await?;
         let checksum: crate::types::Hash = (&hasher.finalize()).into();
+        tracing::trace!("download_file:{} Ended.", asset_file.name);
         if checksum != asset_file.checksum {
             Err(eyre!("Download file: {:?}, bad checksum", asset_file.name))
         } else {
