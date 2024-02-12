@@ -447,12 +447,14 @@ impl Transaction<TxReceive> {
                     .collect()
             }
             Payload::Proof { files, .. } | Payload::Verification { files, .. } => {
-                //generated file during execution has already been moved. No Download.
                 tracing::trace!(
-                    "Payload::Proof tx:{} is_from_tx_exec_result:{}",
+                    "Payload::Proof tx:{} is_from_tx_exec_result:{} files.len:{}",
                     self.hash.to_string(),
-                    self.state.is_from_tx_exec_result()
+                    self.state.is_from_tx_exec_result(),
+                    files.len(),
                 );
+
+                //generated file during execution has already been moved. No Download.
                 if self.state.is_from_tx_exec_result() {
                     Ok(vec![])
                 } else {

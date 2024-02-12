@@ -119,13 +119,10 @@ impl File<ProofVerif> {
     }
 
     pub fn get_relatif_path(&self, tx_hash: Hash) -> PathBuf {
-        let mut file_path = Path::new(&self.name);
-        if file_path.is_absolute() {
-            file_path = file_path.strip_prefix("/").unwrap(); //unwrap tested in is_absolute
-        }
-
+        //get uuid from file name
+        let uuid = Path::new(&self.name).file_name().unwrap();
         let mut path = PathBuf::from(tx_hash.to_string());
-        path.push(file_path);
+        path.push(uuid);
         path
     }
 
