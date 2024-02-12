@@ -224,7 +224,7 @@ async fn run(config: Arc<Config>) -> Result<()> {
     let workflow_engine = Arc::new(WorkflowEngine::new(database.clone()));
     let download_url_prefix = format!(
         "http://{}:{}",
-        config.p2p_listen_addr.to_string(),
+        config.p2p_listen_addr.ip().to_string(),
         config.http_download_port
     );
 
