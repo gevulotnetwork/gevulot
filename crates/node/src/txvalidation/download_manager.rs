@@ -114,29 +114,15 @@ pub async fn download_asset_file(
             }
         }
 
-        // while let Some(chunk) = resp.chunk().await? {
-        //     hasher.update(&chunk);
-        //     fd.write_all(&chunk).await?;
-        // }
-
         fd.flush().await?;
-        let vec_hash = hasher.finalize();
-        tracing::trace!(
-            "download_file:{} Ended vec_hash:{:?}.",
-            asset_file.name,
-            vec_hash
-        );
-
-        let checksum: crate::types::Hash = (&vec_hash).into();
+        let checksum: crate::types::Hash = (&hasher.finalize()).into();
         tracing::trace!("download_file:{} Ended.", asset_file.name);
         if checksum != asset_file.checksum {
-            //TODO desactivate checksum verification for now
-            Ok(std::fs::rename(tmp_file_path, file_path)?)
-            // Err(eyre!(
-            //     "download_file:{:?} bad checksum checksum:{checksum}  set_file.checksum:{}.",
-            //     asset_file.name,
-            //     asset_file.checksum
-            // ))
+            Err(eyre!(
+                "download_file:{:?} bad checksum checksum:{checksum}  set_file.checksum:{}.",
+                asset_file.name,
+                asset_file.checksum
+            ))
         } else {
             //rename to original name
             Ok(std::fs::rename(tmp_file_path, file_path)?)

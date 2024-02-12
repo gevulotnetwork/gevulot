@@ -1,6 +1,5 @@
 use grpc::vm_service_client::VmServiceClient;
 use grpc::{FileChunk, FileData, FileMetadata};
-use sha3::{Digest, Sha3_256};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
@@ -155,8 +154,8 @@ impl GRPCClient {
         Ok(Some(task))
     }
 
-    fn submit_file(&mut self, task_id: TaskId, file_path: String) -> Result<Vec<u8>> {
-        let hasher = Arc::new(Mutex::new(Sha3_256::new()));
+    fn submit_file(&mut self, task_id: TaskId, file_path: String) -> Result<[u8; 32]> {
+        let hasher = Arc::new(Mutex::new(blake3::Hasher::new()));
         self.rt.block_on(async {
             let stream_hasher = Arc::clone(&hasher);
             let outbound = async_stream::stream! {
@@ -200,7 +199,7 @@ impl GRPCClient {
             }
         });
         let hasher = Arc::into_inner(hasher).unwrap().into_inner();
-        let hash = hasher.finalize().to_vec();
+        let hash = hasher.finalize().into();
 
         Ok(hash)
     }
@@ -213,7 +212,7 @@ impl GRPCClient {
                 self.submit_file(result.id.clone(), file.clone())
                     .map(|checksum| crate::grpc::File {
                         path: file.to_string(),
-                        checksum,
+                        checksum: checksum.to_vec(),
                     })
             })
             .collect::<Result<Vec<_>>>()?;

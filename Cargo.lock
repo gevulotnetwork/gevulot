@@ -1202,8 +1202,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "async-stream",
+ "blake3",
  "prost 0.11.9",
- "sha3",
  "tokio",
  "tokio-stream",
  "tokio-vsock",
