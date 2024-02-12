@@ -53,9 +53,11 @@ pub async fn download_asset_file(
             let mut resp = None;
             for url in peer_urls {
                 if let Ok(val) = http_client.get(url.clone()).send().await {
-                    tracing::trace!("download_file from peer url:{url}");
-                    resp = Some(val);
-                    break;
+                    if let reqwest::StatusCode::OK = val.status() {
+                        tracing::trace!("download_file from peer url:{url}");
+                        resp = Some(val);
+                        break;
+                    }
                 }
             }
             resp.ok_or(eyre!(
