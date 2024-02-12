@@ -407,7 +407,7 @@ impl Transaction<TxReceive> {
         Ok(())
     }
 
-    pub fn get_asset_list(&self, tx_hash: Hash) -> Result<Vec<File<Download>>> {
+    pub fn get_asset_list(&self) -> Result<Vec<File<Download>>> {
         match &self.payload {
             transaction::Payload::Deploy {
                 prover, verifier, ..
@@ -441,19 +441,24 @@ impl Transaction<TxReceive> {
                             file_name.to_string(),
                             file_url.clone(),
                             checksum.to_string().into(),
-                            tx_hash,
+                            self.hash,
                         ))
                     })
                     .collect()
             }
             Payload::Proof { files, .. } | Payload::Verification { files, .. } => {
                 //generated file during execution has already been moved. No Download.
+                tracing::trace!(
+                    "Payload::Proof tx:{} is_from_tx_exec_result:{}",
+                    self.hash.to_string(),
+                    self.state.is_from_tx_exec_result()
+                );
                 if self.state.is_from_tx_exec_result() {
                     Ok(vec![])
                 } else {
                     files
                         .iter()
-                        .map(|file| Ok(file.clone().into_download_file(tx_hash)))
+                        .map(|file| Ok(file.clone().into_download_file(self.hash)))
                         .collect()
                 }
             }

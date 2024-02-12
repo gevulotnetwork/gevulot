@@ -112,9 +112,8 @@ impl EventTx<DownloadTx> {
         local_directory_path: &PathBuf,
         http_peer_list: Vec<(SocketAddr, Option<u16>)>,
     ) -> Result<(EventTx<NewTx>, Option<EventTx<PropagateTx>>), EventProcessError> {
-        let tx_hash = self.tx.hash;
         let http_client = reqwest::Client::new();
-        let asset_file_list = self.tx.get_asset_list(tx_hash).map_err(|err| {
+        let asset_file_list = self.tx.get_asset_list().map_err(|err| {
             EventProcessError::DownloadAssetError(format!(
                 "Asset file param conversion error:{err}"
             ))
