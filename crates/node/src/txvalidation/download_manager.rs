@@ -29,9 +29,14 @@ pub async fn download_asset_file(
 ) -> Result<()> {
     let local_relative_file_path = asset_file.get_relatif_path();
     tracing::info!("download_file:{asset_file:?} local_directory_path:{local_directory_path:?} local_relative_file_path:{local_relative_file_path:?} http_peer_list:{http_peer_list:?}");
-    let mut resp = match http_client.get(asset_file.url).send().await {
-        Ok(resp) => resp,
-        Err(err) => {
+    let mut resp = match tokio::time::timeout(
+        tokio::time::Duration::from_secs(5),
+        http_client.get(asset_file.url).send(),
+    )
+    .await
+    {
+        Ok(Ok(resp)) => resp,
+        Ok(Err(err)) => {
             let peer_urls: Vec<reqwest::Url> = http_peer_list
                 .iter()
                 .filter_map(|(peer, port)| {
@@ -57,6 +62,13 @@ pub async fn download_asset_file(
                 "Download no host found to download the file: {}",
                 asset_file.name
             ))?
+        }
+        Err(err) => {
+            tracing::error!("download_file:{:?} request send timeout.", asset_file.name);
+            return Err(eyre!(
+                "Download file: {:?}, request send timeout.",
+                asset_file.name
+            ));
         }
     };
 
