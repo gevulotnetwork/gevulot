@@ -129,6 +129,7 @@ impl Workflow {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub enum Payload {
     #[default]
