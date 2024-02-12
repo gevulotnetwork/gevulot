@@ -64,7 +64,6 @@ pub async fn download_asset_file(
             ))?
         }
         Err(err) => {
-            tracing::error!("download_file:{:?} request send timeout.", asset_file.name);
             return Err(eyre!(
                 "Download file: {:?}, request send timeout.",
                 asset_file.name
@@ -101,14 +100,12 @@ pub async fn download_asset_file(
                 }
                 Ok(Ok(None)) => break,
                 Ok(Err(_)) => {
-                    tracing::error!("download_file:{:?} connection timeout.", asset_file.name);
                     return Err(eyre!(
                         "Download file: {:?}, connection timeout",
                         asset_file.name
                     ));
                 }
                 Err(err) => {
-                    tracing::error!("download_file:{:?} http error:{err}.", asset_file.name);
                     return Err(eyre!(
                         "Download file: {:?}, http error:{err}",
                         asset_file.name
@@ -126,7 +123,11 @@ pub async fn download_asset_file(
         let checksum: crate::types::Hash = (&hasher.finalize()).into();
         tracing::trace!("download_file:{} Ended.", asset_file.name);
         if checksum != asset_file.checksum {
-            Err(eyre!("Download file: {:?}, bad checksum", asset_file.name))
+            Err(eyre!(
+                "download_file:{:?} bad checksum checksum:{checksum}  set_file.checksum:{}.",
+                asset_file.name,
+                asset_file.checksum
+            ))
         } else {
             //rename to original name
             Ok(std::fs::rename(tmp_file_path, file_path)?)

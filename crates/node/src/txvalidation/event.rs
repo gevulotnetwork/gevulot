@@ -136,6 +136,7 @@ impl EventTx<DownloadTx> {
             .map(|res| res)
             .collect::<Result<Vec<_>, _>>()
             .map_err(|err| {
+                tracing::error!("Error during Tx file download:{err}");
                 EventProcessError::DownloadAssetError(format!("Exwecution error:{err}"))
             })?;
         let newtx: EventTx<NewTx> = self.clone().into();
