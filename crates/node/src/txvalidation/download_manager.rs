@@ -120,7 +120,14 @@ pub async fn download_asset_file(
         // }
 
         fd.flush().await?;
-        let checksum: crate::types::Hash = (&hasher.finalize()).into();
+        let vec_hash = hasher.finalize();
+        tracing::trace!(
+            "download_file:{} Ended vec_hash:{:?}.",
+            asset_file.name,
+            vec_hash
+        );
+
+        let checksum: crate::types::Hash = (&vec_hash).into();
         tracing::trace!("download_file:{} Ended.", asset_file.name);
         if checksum != asset_file.checksum {
             //TODO desactivate checksum verification for now
