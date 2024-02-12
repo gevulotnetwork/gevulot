@@ -1,4 +1,5 @@
-use super::file::{Download, File, ProofVerif};
+use super::file::{Download, File, Image, ProofVerif};
+use super::hash::Hash;
 use super::signature::Signature;
 use super::{hash::Hash, program::ResourceRequest};
 use crate::types::transaction;
@@ -189,55 +190,6 @@ pub enum Payload {
 }
 
 impl Payload {
-    pub fn get_asset_list(&self, tx_hash: Hash) -> Result<Vec<File<Download>>> {
-        match self {
-            transaction::Payload::Deploy {
-                prover, verifier, ..
-            } => Ok(vec![
-                File::<Download>::try_from_prg_meta_data(prover),
-                File::<Download>::try_from_prg_meta_data(verifier),
-            ]),
-            Payload::Run { workflow } => {
-                workflow
-                    .steps
-                    .iter()
-                    .flat_map(|step| &step.inputs)
-                    .filter_map(|input| {
-                        match input {
-                            ProgramData::Input {
-                                file_name,
-                                file_url,
-                                checksum,
-                            } => Some((file_name, file_url, checksum)),
-                            ProgramData::Output { .. } => {
-                                /* ProgramData::Output as input means it comes from another
-                                program execution -> skip this branch. */
-                                None
-                            }
-                        }
-                    })
-                    .map(|(file_name, file_url, checksum)| {
-                        //verify the url is valide.
-                        reqwest::Url::parse(file_url)?;
-                        Ok(File::<Download>::new(
-                            file_name.to_string(),
-                            file_url.clone(),
-                            checksum.to_string().into(),
-                            tx_hash,
-                        ))
-                    })
-                    .collect()
-            }
-            Payload::Proof { files, .. } | Payload::Verification { files, .. } => files
-                .iter()
-                .map(|file| Ok(file.clone().into_download_file(tx_hash)))
-                .collect(),
-            // Other transaction types don't have external assets that would
-            // need processing.
-            _ => Ok(vec![]),
-        }
-    }
-
     pub fn serialize_into(&self, buf: &mut Vec<u8>) {
         match self {
             Payload::Empty => {}
@@ -314,6 +266,15 @@ pub enum TxReceive {
     P2P,
     RPC,
     TXRESULT,
+}
+
+impl TxReceive {
+    fn is_from_tx_exec_result(&self) -> bool {
+        match self {
+            TxReceive::TXRESULT => true,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -444,6 +405,62 @@ impl Transaction<TxReceive> {
         }
 
         Ok(())
+    }
+
+    pub fn get_asset_list(&self, tx_hash: Hash) -> Result<Vec<File<Download>>> {
+        match &self.payload {
+            transaction::Payload::Deploy {
+                prover, verifier, ..
+            } => Ok(vec![
+                File::<Image>::try_from_prg_meta_data(prover).into(),
+                File::<Image>::try_from_prg_meta_data(verifier).into(),
+            ]),
+            Payload::Run { workflow } => {
+                workflow
+                    .steps
+                    .iter()
+                    .flat_map(|step| &step.inputs)
+                    .filter_map(|input| {
+                        match input {
+                            ProgramData::Input {
+                                file_name,
+                                file_url,
+                                checksum,
+                            } => Some((file_name, file_url, checksum)),
+                            ProgramData::Output { .. } => {
+                                /* ProgramData::Output as input means it comes from another
+                                program execution -> skip this branch. */
+                                None
+                            }
+                        }
+                    })
+                    .map(|(file_name, file_url, checksum)| {
+                        //verify the url is valide.
+                        reqwest::Url::parse(file_url)?;
+                        Ok(File::<Download>::new(
+                            file_name.to_string(),
+                            file_url.clone(),
+                            checksum.to_string().into(),
+                            tx_hash,
+                        ))
+                    })
+                    .collect()
+            }
+            Payload::Proof { files, .. } | Payload::Verification { files, .. } => {
+                //generated file during execution has already been moved. No Download.
+                if self.state.is_from_tx_exec_result() {
+                    Ok(vec![])
+                } else {
+                    files
+                        .iter()
+                        .map(|file| Ok(file.clone().into_download_file(tx_hash)))
+                        .collect()
+                }
+            }
+            // Other transaction types don't have external assets that would
+            // need processing.
+            _ => Ok(vec![]),
+        }
     }
 }
 

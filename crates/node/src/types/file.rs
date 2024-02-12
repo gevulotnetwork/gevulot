@@ -76,11 +76,11 @@ impl File<Tx> {
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
-pub struct Download(Hash);
+pub struct Download(String);
 //Asset file use download and install the file data locally.
 impl File<Download> {
     pub fn new(name: String, url: String, checksum: Hash, tx_hash: Hash) -> Self {
-        File::build(name, url, checksum, Download(tx_hash))
+        File::build(name, url, checksum, Download(tx_hash.to_string()))
     }
 
     fn from_txfile(file: File<Tx>, tx_hash: Hash) -> Self {
@@ -89,18 +89,9 @@ impl File<Download> {
 
     pub fn get_relatif_path(&self) -> PathBuf {
         let file_name = Path::new(&self.name).file_name().unwrap();
-        let mut path = PathBuf::from(self.extention.0.to_string());
+        let mut path = PathBuf::from(&self.extention.0);
         path.push(file_name);
         path
-    }
-
-    pub fn try_from_prg_meta_data(value: &transaction::ProgramMetadata) -> Self {
-        File::<Download>::new(
-            value.name.clone(),
-            value.image_file_url.clone(),
-            value.image_file_checksum.clone().into(),
-            value.hash,
-        )
     }
 }
 
@@ -201,15 +192,30 @@ pub async fn move_vmfile(
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct Image(Hash);
 impl File<Image> {
-    pub fn new(name: String, url: String, checksum: Hash, tx_hash: Hash) -> Self {
-        File::build(name, url, checksum, Image(tx_hash))
-    }
+    // pub fn new(name: String, url: String, checksum: Hash, tx_hash: Hash) -> Self {
+    //     File::build(name, url, checksum, Image(tx_hash))
+    // }
 
-    pub fn get_relatif_path(&self) -> PathBuf {
-        let file_name = Path::new(&self.name).file_name().unwrap();
-        let mut path = PathBuf::from("images");
-        path.push(self.extention.0.to_string());
-        path.push(file_name);
-        path
+    pub fn try_from_prg_meta_data(value: &transaction::ProgramMetadata) -> Self {
+        File::build(
+            value.name.clone(),
+            value.image_file_url.clone(),
+            value.image_file_checksum.clone().into(),
+            Image(value.hash),
+        )
+    }
+}
+
+impl From<File<Image>> for File<Download> {
+    fn from(file: File<Image>) -> Self {
+        //image file has the image directory happened at the beginning.
+        let mut extention = PathBuf::from("images");
+        extention.push(file.extention.0.to_string());
+        File::build(
+            file.name,
+            file.url,
+            file.checksum,
+            Download(extention.to_str().unwrap().to_string()),
+        )
     }
 }

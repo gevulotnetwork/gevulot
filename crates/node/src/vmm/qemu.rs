@@ -141,6 +141,7 @@ impl Provider for Qemu {
         // TODO:
         //  - Builder to construct QEMU flags
         //  - Handle GPUs
+        // - verify the file exist before lauching. Avoid to panic the node because Qemu break.
 
         let img_file = Path::new(&self.config.data_directory)
             .join(IMAGES_DIR)

@@ -279,43 +279,7 @@ impl WorkflowEngine {
                     .map_err(|err| WorkflowError::FileDefinitionError(err.to_string()).into())
                     .transpose()
             })
-            //     match e {
-            //     ProgramData::Input {
-            //         file_name,
-            //         file_url,
-            //         ..
-            //     } => File {
-            //         tx,
-            //         name: file_name.clone(),
-            //         url: file_url.clone(),
-            //     },
-            //     ProgramData::Output {
-            //         source_program,
-            //         file_name,
-            //     } => {
-            //         // Make record of file that needs transfer from source tx to current tx's files.
-            //         file_transfers.push((*source_program, file_name.clone()));
-            //         File {
-            //             tx,
-            //             name: file_name.clone(),
-            //             url: "".to_string(),
-            //         }
-            //     }
-            // })
             .collect::<Result<Vec<_>>>()?;
-
-        // // Process file transfers from source programs.
-        // //TODO! move end task execution.
-        // for (source_program, file_name) in file_transfers {
-        //     let source_tx = self
-        //         .find_parent_tx_for_program(&tx, &source_program)
-        //         .await
-        //         .expect("output file dependency missing");
-
-        //     self.file_storage
-        //         .move_task_file(&source_tx.to_string(), &tx.to_string(), &file_name)
-        //         .await?;
-        // }
 
         Ok(Task {
             id,

@@ -492,7 +492,7 @@ impl TaskManager for Scheduler {
                 .cloned()
                 .collect();
             let nonce = rand::thread_rng().next_u64();
-            let mut tx = match running_task.task.kind {
+            let tx = match running_task.task.kind {
                 TaskKind::Proof => Transaction::new(
                     Payload::Proof {
                         parent: running_task.task.tx,
@@ -521,9 +521,6 @@ impl TaskManager for Scheduler {
                     );
                 }
             };
-
-            //TODO Add tx execution in the state need some Higher Kind type.
-            tx.executed = true;
 
             tracing::info!("Submit result Tx created:{}", tx.hash.to_string());
 
