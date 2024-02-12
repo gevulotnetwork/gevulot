@@ -65,7 +65,7 @@ impl ProgramManager {
             None => return Err(ProgramError::ProgramNotFound(id.to_string()).into()),
         };
 
-        let req = limits.unwrap_or(program.limits.clone());
+        let req = limits.unwrap_or(program.limits.unwrap_or(ResourceRequest::default()));
         let resource_allocation =
             ResourceManager::try_allocate(self.resource_manager.clone(), &req)?;
         let vm_handle = self.vm_provider.lock().await.start_vm(program, req).await?;

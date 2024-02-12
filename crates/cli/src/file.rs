@@ -32,6 +32,7 @@ impl From<FileData> for ProgramMetadata {
             image_file_name: data.filename,
             image_file_url: data.url,
             image_file_checksum: data.checksum.to_string(),
+            resource_requirements: None,
         };
         progdata.update_hash();
         progdata

@@ -1,7 +1,7 @@
 use std::{collections::HashSet, rc::Rc};
 
-use super::hash::Hash;
 use super::signature::Signature;
+use super::{hash::Hash, program::ResourceRequest};
 use eyre::Result;
 use libsecp256k1::{sign, verify, Message, PublicKey, SecretKey};
 use num_bigint::BigInt;
@@ -40,8 +40,10 @@ pub struct ProgramMetadata {
     pub hash: Hash,
     pub image_file_name: String,
     pub image_file_url: String,
-    // Image file checksum is BLAKE3 hash of the file.
+    /// Image file checksum is BLAKE3 hash of the file.
     pub image_file_checksum: String,
+    /// Program resource requirements for execution.
+    pub resource_requirements: Option<ResourceRequest>,
 }
 
 impl ProgramMetadata {
@@ -127,6 +129,7 @@ impl Workflow {
     }
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub enum Payload {
     #[default]
