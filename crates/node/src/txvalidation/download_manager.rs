@@ -74,7 +74,6 @@ pub async fn download_asset_file(
     };
 
     if resp.status() == reqwest::StatusCode::OK {
-        tracing::trace!("download_file:{} started.", asset_file.name);
         let file_path = local_directory_path.join(&local_relative_file_path);
         // Ensure any necessary subdirectories exists.
         if let Some(parent) = file_path.parent() {
@@ -118,7 +117,6 @@ pub async fn download_asset_file(
 
         fd.flush().await?;
         let checksum: crate::types::Hash = (&hasher.finalize()).into();
-        tracing::trace!("download_file:{} Ended.", asset_file.name);
         if checksum != asset_file.checksum {
             Err(eyre!(
                 "download_file:{:?} bad checksum checksum:{checksum}  set_file.checksum:{}.",

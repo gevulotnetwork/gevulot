@@ -521,8 +521,6 @@ impl TaskManager for Scheduler {
                     );
                 }
             };
-
-            tracing::trace!("Submit result exec files:{}", executed_files.len());
             tracing::info!("Submit result Tx created:{}", tx.hash.to_string());
 
             //Move tx file from execution Tx path to new Tx path

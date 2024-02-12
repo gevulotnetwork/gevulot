@@ -47,7 +47,11 @@ impl WorkflowEngine {
     }
 
     pub async fn next_task(&self, cur_tx: &Transaction<TxValdiated>) -> Result<Option<Task>> {
-        let workflow = self.workflow_for_transaction(&cur_tx.hash).await?;
+        let workflow = match self.workflow_for_transaction(&cur_tx.hash).await? {
+            Some(w) => w,
+            //no workflow assocaited return.
+            None => return Ok(None),
+        };
 
         match &cur_tx.payload {
             Payload::Run { workflow } => {
@@ -218,7 +222,7 @@ impl WorkflowEngine {
         }
     }
 
-    async fn workflow_for_transaction(&self, tx_hash: &Hash) -> Result<Workflow> {
+    async fn workflow_for_transaction(&self, tx_hash: &Hash) -> Result<Option<Workflow>> {
         let mut tx_hash = *tx_hash;
 
         tracing::debug!("finding workflow for transaction {}", tx_hash);
@@ -235,12 +239,14 @@ impl WorkflowEngine {
             match tx.unwrap().payload {
                 Payload::Run { workflow } => {
                     tracing::debug!("workflow found for transaction {}", tx_hash);
-                    return Ok(workflow);
+                    return Ok(Some(workflow));
                 }
                 Payload::Proof { parent, .. } => {
-                    tracing::debug!("finding workflow from parent {} of {}", &parent, tx_hash);
-                    tx_hash = parent;
-                    continue;
+                    return Ok(None);
+                    // tracing::debug!("finding workflow from parent {} of {}", &parent, tx_hash);
+                    //if we return the parent Tx it's reexecuted an generate a duplicate key value violates unique constraint error in the db
+                    // tx_hash = parent;
+                    // continue;
                 }
                 Payload::ProofKey { parent, .. } => {
                     tracing::debug!("finding workflow from parent {} of {}", &parent, tx_hash);
@@ -248,16 +254,19 @@ impl WorkflowEngine {
                     continue;
                 }
                 Payload::Verification { parent, .. } => {
-                    tracing::debug!("finding workflow from parent {} of {}", &parent, tx_hash);
-                    tx_hash = parent;
-                    continue;
+                    return Ok(None);
+                    //if we return the parent Tx it's reexecuted an generate a duplicate key value violates unique constraint error in the db
+                    // tracing::debug!("finding workflow from parent {} of {}", &parent, tx_hash);
+                    // tx_hash = parent;
+                    // continue;
                 }
                 payload => {
-                    tracing::debug!(
-                        "failed to find workflow for transaction {}: incompatible transaction :{payload:?}",
-                        &tx_hash
-                    );
-                    return Err(WorkflowError::IncompatibleTransaction(tx_hash.to_string()).into());
+                    return Ok(None);
+                    // tracing::debug!(
+                    //     "failed to find workflow for transaction {}: incompatible transaction :{payload:?}",
+                    //     &tx_hash
+                    // );
+                    // return Err(WorkflowError::IncompatibleTransaction(tx_hash.to_string()).into());
                 }
             }
         }

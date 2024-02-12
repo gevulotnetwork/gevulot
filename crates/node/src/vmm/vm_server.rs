@@ -226,7 +226,6 @@ impl VmService for VMServer {
                         .join(self.file_storage.data_dir())
                         .join(task_id)
                         .join(path);
-                    tracing::trace!("VM submit_file saved in {file_path:#?}");
 
                     // Ensure any necessary subdirectories exists.
                     if let Some(parent) = file_path.parent() {
