@@ -527,7 +527,11 @@ impl TaskManager for Scheduler {
 
             //Move tx file from execution Tx path to new Tx path
             for (source_file, dest_file) in executed_files {
-                log::trace!("Move file {dest_file.name} checksum:{dest_file.checksum}");
+                tracing::trace!(
+                    "Move file {} checksum:{}",
+                    dest_file.name,
+                    dest_file.checksum
+                );
                 if let Err(err) =
                     move_vmfile(&source_file, &dest_file, &self.data_directory, tx.hash).await
                 {
