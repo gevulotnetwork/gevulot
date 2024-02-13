@@ -35,8 +35,8 @@ pub async fn download_asset_file(
     )
     .await
     {
-        Ok(Ok(resp)) => resp,
-        Ok(Err(err)) => {
+        Ok(Ok(resp)) if resp.status() == reqwest::StatusCode::OK => resp,
+        Ok(_) => {
             let peer_urls: Vec<reqwest::Url> = http_peer_list
                 .iter()
                 .filter_map(|(peer, port)| {

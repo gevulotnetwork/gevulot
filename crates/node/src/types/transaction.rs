@@ -1,5 +1,4 @@
 use super::file::{Download, File, Image, ProofVerif};
-use super::hash::Hash;
 use super::signature::Signature;
 use super::{hash::Hash, program::ResourceRequest};
 use crate::types::transaction;

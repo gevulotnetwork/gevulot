@@ -60,6 +60,8 @@ impl ProgramManager {
         id: Hash,
         limits: Option<ResourceRequest>,
     ) -> Result<ProgramHandle> {
+        tracing::trace!("start_program task:{}", id.to_string());
+
         let program = match self.storage.find_program(&id).await? {
             Some(program) => program,
             None => return Err(ProgramError::ProgramNotFound(id.to_string()).into()),
