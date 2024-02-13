@@ -45,7 +45,7 @@ pub async fn download_asset_file(
                         let mut url = reqwest::Url::parse("http://localhost").unwrap(); //unwrap always succeed
                         url.set_ip_host(peer.ip()).unwrap(); //unwrap always succeed
                         url.set_port(Some(port)).unwrap(); //unwrap always succeed
-                        url.set_path(&local_relative_file_path.to_str().unwrap()); //unwrap Path alway ok
+                        url.set_path(local_relative_file_path.to_str().unwrap()); //unwrap Path always ok
                         url
                     })
                 })

@@ -10,7 +10,7 @@ use futures_util::TryFutureExt;
 use gevulot_node::types::transaction::AclWhitelist;
 use std::fmt::Debug;
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::Path;
 use tokio::sync::mpsc::UnboundedSender;
 
 //event type.
@@ -35,10 +35,7 @@ pub struct EventTx<T: Debug> {
 
 impl From<Transaction<TxReceive>> for EventTx<RcvTx> {
     fn from(tx: Transaction<TxReceive>) -> Self {
-        EventTx {
-            tx: tx,
-            tx_type: RcvTx,
-        }
+        EventTx { tx, tx_type: RcvTx }
     }
 }
 
@@ -109,7 +106,7 @@ impl EventTx<RcvTx> {
 impl EventTx<DownloadTx> {
     pub async fn process_event(
         self,
-        local_directory_path: &PathBuf,
+        local_directory_path: &Path,
         http_peer_list: Vec<(SocketAddr, Option<u16>)>,
     ) -> Result<(EventTx<NewTx>, Option<EventTx<PropagateTx>>), EventProcessError> {
         let http_client = reqwest::Client::new();
@@ -133,7 +130,6 @@ impl EventTx<DownloadTx> {
         join_all(futures)
             .await
             .into_iter()
-            .map(|res| res)
             .collect::<Result<Vec<_>, _>>()
             .map_err(|err| {
                 tracing::error!("Error during Tx file download:{err}");
@@ -163,7 +159,7 @@ impl EventTx<PropagateTx> {
             state: TxValdiated,
         };
         tracing::info!("Tx validation propagate tx:{}", tx.hash.to_string());
-        p2p_sender.send(tx).map_err(|err| err.into())
+        p2p_sender.send(tx).map_err(|err| Box::new(err).into())
     }
 }
 

@@ -223,7 +223,7 @@ async fn run(config: Arc<Config>) -> Result<()> {
     let workflow_engine = Arc::new(WorkflowEngine::new(database.clone()));
     let download_url_prefix = format!(
         "http://{}:{}",
-        config.p2p_listen_addr.ip().to_string(),
+        config.p2p_listen_addr.ip(),
         config.http_download_port
     );
 
@@ -303,7 +303,7 @@ async fn p2p_beacon(config: P2PBeaconConfig) -> Result<()> {
     //Indicate some domain conflict issue.
     //P2P network should be started (peer domain) without Tx management (Node domain)
     let (tx, mut rcv_tx_event_rx) = mpsc::unbounded_channel();
-    tokio::spawn(async move { while let Some(_) = rcv_tx_event_rx.recv().await {} });
+    tokio::spawn(async move { while rcv_tx_event_rx.recv().await.is_some() {} });
 
     let (_, p2p_recv) = mpsc::unbounded_channel::<Transaction<TxValdiated>>();
     let p2p_stream = UnboundedReceiverStream::new(p2p_recv);

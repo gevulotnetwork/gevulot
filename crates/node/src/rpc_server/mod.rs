@@ -193,25 +193,28 @@ fn build_tx_tree(hash: &Hash, txs: Vec<(Hash, Option<Hash>)>) -> Rc<TransactionT
 #[cfg(test)]
 mod tests {
 
-    use std::{env::temp_dir, path::PathBuf};
-
+    use super::*;
+    use crate::txvalidation;
+    use crate::txvalidation::CallbackSender;
+    use crate::txvalidation::EventProcessError;
+    use gevulot_node::types::transaction::TxReceive;
     use jsonrpsee::{
         core::{client::ClientT, params::ArrayParams},
         http_client::HttpClientBuilder,
     };
-    use libsecp256k1::{PublicKey, SecretKey};
+    use libsecp256k1::SecretKey;
     use rand::{rngs::StdRng, SeedableRng};
+    use std::{env::temp_dir, path::PathBuf};
+    use tokio::sync::mpsc;
+    use tokio::sync::mpsc::UnboundedReceiver;
+    use tokio::sync::oneshot;
     use tracing_subscriber::{filter::LevelFilter, fmt::format::FmtSpan, EnvFilter};
-
-    use crate::mempool;
-
-    use super::*;
 
     #[ignore]
     #[tokio::test]
     async fn test_send_transaction() {
         start_logger(LevelFilter::INFO);
-        let rpc_server = new_rpc_server().await;
+        let (rpc_server, mut tx_receiver) = new_rpc_server().await;
 
         let url = format!("http://{}", rpc_server.addr());
         let rpc_client = HttpClientBuilder::default()
@@ -229,6 +232,21 @@ mod tests {
             .request::<RpcResponse<()>, ArrayParams>("sendTransaction", params)
             .await
             .expect("rpc request");
+
+        let recv_tx = tx_receiver.recv().await.expect("recv tx");
+
+        let tx = Transaction {
+            author: tx.author,
+            hash: tx.hash,
+            payload: tx.payload,
+            nonce: tx.nonce,
+            signature: tx.signature,
+            propagated: tx.executed,
+            executed: tx.executed,
+            state: TxReceive::RPC,
+        };
+
+        assert_eq!(tx, recv_tx.0);
 
         dbg!(resp);
     }
@@ -400,7 +418,13 @@ mod tests {
             .init();
     }
 
-    async fn new_rpc_server() -> RpcServer {
+    async fn new_rpc_server() -> (
+        RpcServer,
+        UnboundedReceiver<(
+            Transaction<TxReceive>,
+            Option<oneshot::Sender<Result<(), EventProcessError>>>,
+        )>,
+    ) {
         let cfg = Arc::new(Config {
             data_directory: temp_dir(),
             db_url: "postgres://gevulot:gevulot@localhost/gevulot".to_string(),
@@ -419,27 +443,17 @@ mod tests {
             http_download_port: 0,
         });
 
-        let acl_whitelist = Arc::new(AlwaysGrantAclWhitelist {});
         let db = Arc::new(Database::new(&cfg.db_url).await.unwrap());
-        let mempool = Arc::new(RwLock::new(
-            Mempool::new(db.clone(), acl_whitelist.clone(), None)
-                .await
-                .unwrap(),
-        ));
-        let asset_manager = Arc::new(AssetManager::new(
-            cfg.clone(),
-            db.clone(),
-            Arc::new(RwLock::new(std::collections::HashMap::new())),
-        ));
 
-        RpcServer::run(
-            cfg.clone(),
-            db.clone(),
-            mempool,
-            asset_manager,
-            acl_whitelist,
+        let (sendtx, txreceiver) =
+            mpsc::unbounded_channel::<(Transaction<TxReceive>, Option<CallbackSender>)>();
+        let txsender = txvalidation::TxEventSender::<txvalidation::RpcSender>::build(sendtx);
+
+        (
+            RpcServer::run(cfg, db, txsender)
+                .await
+                .expect("rpc_server.run"),
+            txreceiver,
         )
-        .await
-        .expect("rpc_server.run")
     }
 }

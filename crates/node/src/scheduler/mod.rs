@@ -74,6 +74,7 @@ pub struct Scheduler {
 }
 
 impl Scheduler {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         mempool: Arc<RwLock<Mempool>>,
         database: Arc<Database>,

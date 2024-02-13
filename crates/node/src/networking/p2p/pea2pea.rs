@@ -26,25 +26,6 @@ use pea2pea::{
 };
 use sha3::{Digest, Sha3_256};
 
-// #[async_trait::async_trait]
-// pub trait TxHandler: Send + Sync {
-//     async fn recv_tx(&self, tx: Transaction) -> Result<()>;
-// }
-
-// #[async_trait::async_trait]
-// pub trait TxChannel: Send + Sync {
-//     async fn send_tx(&self, tx: &Transaction) -> Result<()>;
-// }
-
-// struct BlackholeTxHandler;
-// #[async_trait::async_trait]
-// impl TxHandler for BlackholeTxHandler {
-//     async fn recv_tx(&self, tx: Transaction) -> Result<()> {
-//         tracing::debug!("submitting received tx to black hole");
-//         Ok(())
-//     }
-// }
-
 // NOTE: This P2P implementation is originally from `pea2pea` Noise handshake example.
 #[derive(Clone)]
 pub struct P2P {
@@ -74,6 +55,7 @@ impl Pea2Pea for P2P {
 }
 
 impl P2P {
+    #[allow(clippy::too_many_arguments)]
     pub async fn new(
         name: &str,
         listen_addr: SocketAddr,
@@ -146,24 +128,11 @@ impl P2P {
         instance
     }
 
-    // pub async fn register_tx_handler(&self, tx_handler: Arc<dyn TxHandler>) {
-    //     let mut old_handler = self.tx_handler.write().await;
-    //     *old_handler = tx_handler;
-    //     tracing::debug!("new tx handler registered");
-    // }
-
     async fn recv_tx(&self, tx: Transaction<TxCreate>) {
         tracing::debug!("submitting received tx to tx_handler");
         if let Err(err) = self.tx_sender.send_tx(tx) {
             tracing::error!("P2P error during received Tx sending:{err}");
         }
-
-        // let tx_handler = self.tx_handler.read().await;
-        // if let Err(err) = tx_handler.recv_tx(tx).await {
-        //     tracing::error!("failed to handle incoming transaction: {}", err);
-        // } else {
-        //     tracing::debug!("submitted received tx to tx_handler");
-        // }
     }
 
     async fn build_handshake_msg(&self) -> protocol::Handshake {
@@ -436,17 +405,6 @@ impl Reading for P2P {
     }
 }
 
-// #[async_trait::async_trait]
-// impl TxChannel for P2P {
-//     async fn send_tx(&self, tx: &Transaction) -> Result<()> {
-//         let msg = protocol::Message::V0(protocol::MessageV0::Transaction(tx.clone()));
-//         let bs = Bytes::from(bincode::serialize(&msg)?);
-
-//         tracing::debug!("broadcasting transaction {}", tx.hash);
-//         self.broadcast(bs)?;
-//         Ok(())
-//     }
-// }
 impl Writing for P2P {
     type Message = Bytes;
     type Codec = noise::Codec;
@@ -473,28 +431,63 @@ impl OnDisconnect for P2P {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::txvalidation;
+    use crate::txvalidation::CallbackSender;
+    use crate::txvalidation::EventProcessError;
     use eyre::Result;
-    use gevulot_node::types::{transaction::Payload, Hash, Transaction};
+    use gevulot_node::types::transaction::TxReceive;
+    use gevulot_node::types::{transaction::Payload, Transaction};
     use libsecp256k1::SecretKey;
-    use rand::{rngs::StdRng, RngCore, SeedableRng};
-    use tokio::sync::mpsc::{self, Sender};
+    use rand::{rngs::StdRng, SeedableRng};
+    use tokio::sync::mpsc::UnboundedReceiver;
+    use tokio::sync::mpsc::UnboundedSender;
+    use tokio::sync::mpsc::{self};
+    use tokio::sync::oneshot;
+    use tokio_stream::wrappers::UnboundedReceiverStream;
     use tracing::level_filters::LevelFilter;
     use tracing_subscriber::EnvFilter;
 
-    struct Sink(Arc<Sender<Transaction>>);
-    impl Sink {
-        fn new(tx: Arc<Sender<Transaction>>) -> Self {
-            Self(tx)
-        }
+    async fn create_peer(
+        name: &str,
+    ) -> (
+        P2P,
+        UnboundedSender<Transaction<TxValdiated>>,
+        UnboundedReceiver<(
+            Transaction<TxReceive>,
+            Option<oneshot::Sender<Result<(), EventProcessError>>>,
+        )>,
+    ) {
+        let http_peer_list1: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>> =
+            Default::default();
+        let (tx_sender, p2p_recv1) = mpsc::unbounded_channel::<Transaction<TxValdiated>>();
+        let p2p_stream1 = UnboundedReceiverStream::new(p2p_recv1);
+        let (sendtx1, txreceiver1) =
+            mpsc::unbounded_channel::<(Transaction<TxReceive>, Option<CallbackSender>)>();
+        let txsender1 = txvalidation::TxEventSender::<txvalidation::P2pSender>::build(sendtx1);
+        let peer = P2P::new(
+            name,
+            "127.0.0.1:0".parse().unwrap(),
+            "secret passphrase",
+            None,
+            None,
+            http_peer_list1,
+            txsender1,
+            p2p_stream1,
+        )
+        .await;
+        (peer, tx_sender, txreceiver1)
     }
 
-    #[async_trait::async_trait]
-    impl TxHandler for Sink {
-        async fn recv_tx(&self, tx: Transaction) -> Result<()> {
-            tracing::debug!("sink received new transaction");
-            self.0.send(tx).await.expect("sink send");
-            tracing::debug!("sink submitted tx to channel");
-            Ok(())
+    fn into_receive(tx: Transaction<TxValdiated>) -> Transaction<TxReceive> {
+        Transaction {
+            author: tx.author,
+            hash: tx.hash,
+            payload: tx.payload,
+            nonce: tx.nonce,
+            signature: tx.signature,
+            propagated: tx.executed,
+            executed: tx.executed,
+            state: TxReceive::P2P,
         }
     }
 
@@ -502,74 +495,14 @@ mod tests {
     async fn test_peer_list_inter_connection() {
         //start_logger(LevelFilter::ERROR);
 
-        let (tx1, mut rx1) = mpsc::channel(1);
-        let (tx2, mut rx2) = mpsc::channel(1);
-        let (tx3, mut rx3) = mpsc::channel(1);
-        let (sink1, sink2, sink3) = (
-            Arc::new(Sink::new(Arc::new(tx1))),
-            Arc::new(Sink::new(Arc::new(tx2))),
-            Arc::new(Sink::new(Arc::new(tx3))),
-        );
-        let http_peer_list1: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>> =
-            Default::default();
-        let (_, p2p_recv1) = mpsc::unbounded_channel::<Transaction>();
-        let p2p_stream1 = UnboundedReceiverStream::new(p2p_recv);
-
-        let http_peer_list2: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>> =
-            Default::default();
-        let (_, p2p_recv2) = mpsc::unbounded_channel::<Transaction>();
-        let p2p_stream2 = UnboundedReceiverStream::new(p2p_recv);
-
-        let http_peer_list3: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>> =
-            Default::default();
-        let (_, p2p_recv3) = mpsc::unbounded_channel::<Transaction>();
-        let p2p_stream3 = UnboundedReceiverStream::new(p2p_recv);
-
-        let (peer1, peer2, peer3) = (
-            P2P::new(
-                "peer1",
-                "127.0.0.1:0".parse().unwrap(),
-                "secret passphrase",
-                None,
-                None,
-                http_peer_list1,
-                p2p_recv1,
-                p2p_stream1,
-            )
-            .await,
-            P2P::new(
-                "peer2",
-                "127.0.0.1:0".parse().unwrap(),
-                "secret passphrase",
-                Some(9995),
-                None,
-                http_peer_list2,
-                p2p_recv2,
-                p2p_stream2,
-            )
-            .await,
-            P2P::new(
-                "peer3",
-                "127.0.0.1:0".parse().unwrap(),
-                "secret passphrase",
-                Some(9995),
-                None,
-                http_peer_list3,
-                p2p_recv3,
-                p2p_stream3,
-            )
-            .await,
-        );
+        let (peer1, tx_sender1, mut tx_receiver1) = create_peer("peer1").await;
+        let (peer2, tx_sender2, mut tx_receiver2) = create_peer("peer2").await;
+        let (peer3, tx_sender3, mut tx_receiver3) = create_peer("peer3").await;
 
         tracing::debug!("start listening");
         let bind_add = peer1.node().start_listening().await.expect("peer1 listen");
         let bind_add = peer2.node().start_listening().await.expect("peer2 listen");
         let bind_add = peer3.node().start_listening().await.expect("peer3 listen");
-
-        tracing::debug!("register tx handlers");
-        peer1.register_tx_handler(sink1.clone()).await;
-        peer2.register_tx_handler(sink2.clone()).await;
-        peer3.register_tx_handler(sink3.clone()).await;
 
         tracing::debug!("connect peer2 to peer1");
         peer2
@@ -596,75 +529,36 @@ mod tests {
 
         tracing::debug!("send tx from peer2 to peer1 and peer3");
         let tx = new_tx();
-        peer2.send_tx(&tx).await.unwrap();
+        tx_sender2.send(tx.clone()).unwrap();
         tracing::debug!("recv tx on peer1 from peer2");
-        let recv_tx = rx1.recv().await.expect("sink recv");
-        assert_eq!(tx, recv_tx);
+        let recv_tx = tx_receiver1.recv().await.expect("peer1 recv");
+
+        assert_eq!(into_receive(tx.clone()), recv_tx.0);
         tracing::debug!("recv tx on peer3 from peer2");
-        let recv_tx = rx3.recv().await.expect("sink recv");
-        assert_eq!(tx, recv_tx);
+        let recv_tx = tx_receiver3.recv().await.expect("peer3 recv");
+        assert_eq!(into_receive(tx), recv_tx.0);
 
         let tx = new_tx();
         tracing::debug!("send tx from peer3 to peer1 and peer2");
-        peer3.send_tx(&tx).await.unwrap();
+        tx_sender3.send(tx.clone()).unwrap();
         tracing::debug!("recv tx on peer1 from peer3");
-        let recv_tx = rx1.recv().await.expect("sink recv");
-        assert_eq!(tx, recv_tx);
+        let recv_tx = tx_receiver1.recv().await.expect("peer1 recv");
+        assert_eq!(into_receive(tx.clone()), recv_tx.0);
         tracing::debug!("recv tx on peer2 from peer3");
-        let recv_tx = rx2.recv().await.expect("sink recv");
-        assert_eq!(tx, recv_tx);
+        let recv_tx = tx_receiver2.recv().await.expect("peer2 recv");
+        assert_eq!(into_receive(tx), recv_tx.0);
     }
 
     #[tokio::test]
     async fn test_two_peers_disconnect() {
         //start_logger(LevelFilter::ERROR);
 
-        let (tx1, mut rx1) = mpsc::channel(1);
-        let (tx2, mut rx2) = mpsc::channel(1);
-        let (sink1, sink2) = (
-            Arc::new(Sink::new(Arc::new(tx1))),
-            Arc::new(Sink::new(Arc::new(tx2))),
-        );
-        let http_peer_list1: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>> =
-            Default::default();
-        let (_, p2p_recv1) = mpsc::unbounded_channel::<Transaction>();
-        let p2p_stream1 = UnboundedReceiverStream::new(p2p_recv);
-
-        let http_peer_list2: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>> =
-            Default::default();
-        let (_, p2p_recv2) = mpsc::unbounded_channel::<Transaction>();
-        let p2p_stream2 = UnboundedReceiverStream::new(p2p_recv);
-
-        let peer1 = P2P::new(
-            "peer1",
-            "127.0.0.1:0".parse().unwrap(),
-            "secret passphrase",
-            None,
-            None,
-            http_peer_list1,
-            http_peer_list1,
-            p2p_recv1,
-        )
-        .await;
+        let (peer1, tx_sender1, mut tx_receiver1) = create_peer("peer1").await;
         peer1.node().start_listening().await.expect("peer1 listen");
-        peer1.register_tx_handler(sink1.clone()).await;
 
         {
-            let peer2 = P2P::new(
-                "peer2",
-                "127.0.0.1:0".parse().unwrap(),
-                "secret passphrase",
-                Some(8776),
-                None,
-                http_peer_list2,
-                http_peer_list2,
-                p2p_recv2,
-            )
-            .await;
+            let (peer2, tx_sender2, mut tx_receiver2) = create_peer("peer2").await;
             peer2.node().start_listening().await.expect("peer2 listen");
-            peer2.register_tx_handler(sink2.clone()).await;
-
-            tracing::debug!("Nodes init Done");
 
             peer1
                 .node()
@@ -677,17 +571,17 @@ mod tests {
             tracing::debug!("Nodes Connected");
             tracing::debug!("send tx from peer1 to peer2");
             let tx = new_tx();
-            peer1.send_tx(&tx).await.unwrap();
+            tx_sender1.send(tx.clone()).unwrap();
             tracing::debug!("recv tx on peer2 from peer1");
-            let recv_tx = rx2.recv().await.expect("sink recv");
-            assert_eq!(tx, recv_tx);
+            let recv_tx = tx_receiver2.recv().await.expect("peer2 recv");
+            assert_eq!(into_receive(tx), recv_tx.0);
 
             let tx = new_tx();
             tracing::debug!("send tx from peer2 to peer1");
-            peer2.send_tx(&tx).await.unwrap();
+            tx_sender2.send(tx.clone()).unwrap();
             tracing::debug!("recv tx on peer1 from peer2");
-            let recv_tx = rx1.recv().await.expect("sink recv");
-            assert_eq!(tx, recv_tx);
+            let recv_tx = tx_receiver1.recv().await.expect("peer1 recv");
+            assert_eq!(into_receive(tx), recv_tx.0);
 
             let peers = peer2.node().connected_addrs();
             for addr in peers {
@@ -700,8 +594,7 @@ mod tests {
         // Simulate the silent node disconnection by dropping the node.
         tracing::debug!("send tx from peer1 to disconnected peer2");
         let tx = new_tx();
-        peer1.send_tx(&tx).await.unwrap();
-
+        tx_sender1.send(tx).unwrap();
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
         assert_eq!(peer1.peer_list.read().await.len(), 1);
@@ -714,38 +607,12 @@ mod tests {
     async fn test_two_peers() {
         //start_logger(LevelFilter::ERROR);
 
-        let (tx1, mut rx1) = mpsc::channel(1);
-        let (tx2, mut rx2) = mpsc::channel(1);
-        let (sink1, sink2) = (
-            Arc::new(Sink::new(Arc::new(tx1))),
-            Arc::new(Sink::new(Arc::new(tx2))),
-        );
-        let (peer1, peer2) = (
-            P2P::new(
-                "peer1",
-                "127.0.0.1:0".parse().unwrap(),
-                "secret passphrase",
-                None,
-                None,
-            )
-            .await,
-            P2P::new(
-                "peer2",
-                "127.0.0.1:0".parse().unwrap(),
-                "secret passphrase",
-                None,
-                None,
-            )
-            .await,
-        );
+        let (peer1, tx_sender1, mut tx_receiver1) = create_peer("peer1").await;
+        let (peer2, tx_sender2, mut tx_receiver2) = create_peer("peer2").await;
 
         tracing::debug!("start listening");
         peer1.node().start_listening().await.expect("peer1 listen");
         peer2.node().start_listening().await.expect("peer2 listen");
-
-        tracing::debug!("register tx handlers");
-        peer1.register_tx_handler(sink1.clone()).await;
-        peer2.register_tx_handler(sink2.clone()).await;
 
         tracing::debug!("connect peer2 to peer1");
         peer2
@@ -756,31 +623,34 @@ mod tests {
 
         tracing::debug!("send tx from peer1 to peer2");
         let tx = new_tx();
-        peer1.send_tx(&tx).await.unwrap();
+        tx_sender1.send(tx.clone()).unwrap();
         tracing::debug!("recv tx on peer2 from peer1");
-        let recv_tx = rx2.recv().await.expect("sink recv");
-        assert_eq!(tx, recv_tx);
+        let recv_tx = tx_receiver2.recv().await.expect("peer2 recv");
+        assert_eq!(into_receive(tx), recv_tx.0);
 
         let tx = new_tx();
         tracing::debug!("send tx from peer2 to peer1");
-        peer2.send_tx(&tx).await.unwrap();
+        tx_sender2.send(tx.clone()).unwrap();
         tracing::debug!("recv tx on peer1 from peer2");
-        let recv_tx = rx1.recv().await.expect("sink recv");
-        assert_eq!(tx, recv_tx);
+        let recv_tx = tx_receiver1.recv().await.expect("peer1 recv");
+        assert_eq!(into_receive(tx), recv_tx.0);
     }
 
-    fn new_tx() -> Transaction {
+    fn new_tx() -> Transaction<TxValdiated> {
         let rng = &mut StdRng::from_entropy();
-        let mut tx = Transaction {
-            hash: Hash::random(rng),
-            payload: Payload::Empty,
-            nonce: rng.next_u64(),
-            ..Default::default()
-        };
 
-        let key = SecretKey::random(rng);
-        tx.sign(&key);
-        tx
+        let tx = Transaction::<TxCreate>::new(Payload::Empty, &SecretKey::random(rng));
+
+        Transaction {
+            author: tx.author,
+            hash: tx.hash,
+            payload: tx.payload,
+            nonce: tx.nonce,
+            signature: tx.signature,
+            propagated: tx.executed,
+            executed: tx.executed,
+            state: TxValdiated,
+        }
     }
 
     fn start_logger(default_level: LevelFilter) {

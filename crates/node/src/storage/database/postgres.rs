@@ -158,7 +158,7 @@ impl Database {
                 b.push_bind(t.id)
                     .push_bind(&new_file.name)
                     .push_bind(&new_file.url)
-                    .push_bind(&new_file.checksum);
+                    .push_bind(new_file.checksum);
             });
 
             let query = query_builder.build();
@@ -598,7 +598,7 @@ impl Database {
                         b.push_bind(tx.hash)
                             .push_bind(&new_file.name)
                             .push_bind(&new_file.url)
-                            .push_bind(&new_file.checksum);
+                            .push_bind(new_file.checksum);
                     });
 
                     let query = query_builder.build();
@@ -643,7 +643,7 @@ impl Database {
                         b.push_bind(tx.hash)
                             .push_bind(&new_file.name)
                             .push_bind(&new_file.url)
-                            .push_bind(&new_file.checksum);
+                            .push_bind(new_file.checksum);
                     });
 
                     let query = query_builder.build();
@@ -721,6 +721,7 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
+    use gevulot_node::types::transaction::TxCreate;
     use libsecp256k1::{PublicKey, SecretKey};
     use rand::{rngs::StdRng, Rng, SeedableRng};
 
@@ -730,6 +731,19 @@ mod tests {
     };
 
     use super::*;
+
+    fn into_validated(tx: Transaction<TxCreate>) -> Transaction<TxValdiated> {
+        Transaction {
+            author: tx.author,
+            hash: tx.hash,
+            payload: tx.payload,
+            nonce: tx.nonce,
+            signature: tx.signature,
+            propagated: tx.executed,
+            executed: tx.executed,
+            state: TxValdiated,
+        }
+    }
 
     #[ignore]
     #[tokio::test]
@@ -774,6 +788,7 @@ mod tests {
             signature: Signature::default(),
             propagated: false,
             executed: false,
+            state: TxValdiated,
         };
 
         database
@@ -835,6 +850,7 @@ mod tests {
                 parent: run_tx.hash,
                 prover: prover.hash,
                 proof: vec![1],
+                files: vec![],
             },
             &key,
         );
@@ -843,6 +859,7 @@ mod tests {
                 parent: run_tx.hash,
                 prover: prover.hash,
                 proof: vec![2],
+                files: vec![],
             },
             &key,
         );
@@ -851,6 +868,7 @@ mod tests {
                 parent: run_tx.hash,
                 prover: prover.hash,
                 proof: vec![3],
+                files: vec![],
             },
             &key,
         );
@@ -859,6 +877,7 @@ mod tests {
                 parent: run_tx.hash,
                 prover: prover.hash,
                 proof: vec![4],
+                files: vec![],
             },
             &key,
         );
@@ -868,6 +887,7 @@ mod tests {
                 parent: proof1_tx.hash,
                 verifier: verifier.hash,
                 verification: vec![1],
+                files: vec![],
             },
             &key,
         );
@@ -876,6 +896,7 @@ mod tests {
                 parent: proof2_tx.hash,
                 verifier: verifier.hash,
                 verification: vec![2],
+                files: vec![],
             },
             &key,
         );
@@ -884,6 +905,7 @@ mod tests {
                 parent: proof3_tx.hash,
                 verifier: verifier.hash,
                 verification: vec![3],
+                files: vec![],
             },
             &key,
         );
@@ -892,6 +914,7 @@ mod tests {
                 parent: proof4_tx.hash,
                 verifier: verifier.hash,
                 verification: vec![4],
+                files: vec![],
             },
             &key,
         );
@@ -923,7 +946,10 @@ mod tests {
             .expect("add verifier");
 
         for tx in &txs {
-            database.add_transaction(tx).await.expect("add transaction");
+            database
+                .add_transaction(&into_validated(tx.clone()))
+                .await
+                .expect("add transaction");
         }
 
         // Pick random transaction from set.

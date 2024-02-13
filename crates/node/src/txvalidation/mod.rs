@@ -24,6 +24,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 mod download_manager;
 mod event;
 
+#[allow(clippy::enum_variant_names)]
 #[derive(Error, Debug)]
 pub enum EventProcessError {
     #[error("Fail to rcv Tx from the channel: {0}")]
@@ -34,7 +35,7 @@ pub enum EventProcessError {
         tokio::sync::mpsc::error::SendError<(Transaction<TxReceive>, Option<CallbackSender>)>,
     ),
     #[error("Fail to send the Tx on the channel: {0}")]
-    PropagateTxError(#[from] tokio::sync::mpsc::error::SendError<Transaction<TxValdiated>>),
+    PropagateTxError(#[from] Box<tokio::sync::mpsc::error::SendError<Transaction<TxValdiated>>>),
     #[error("validation fail: {0}")]
     ValidateError(String),
     #[error("Tx asset fail to download because {0}")]
@@ -92,7 +93,7 @@ impl TxEventSender<RpcSender> {
         let (sender, rx) = oneshot::channel();
         self.sender
             .send((tx.into_received(TxReceive::RPC), Some(sender)))
-            .map_err(|err| EventProcessError::from(err))?;
+            .map_err(EventProcessError::from)?;
         rx.await?
     }
 }
@@ -112,7 +113,7 @@ impl TxEventSender<TxResultSender> {
         let (sender, rx) = oneshot::channel();
         self.sender
             .send((tx.into_received(TxReceive::TXRESULT), Some(sender)))
-            .map_err(|err| EventProcessError::from(err))?;
+            .map_err(EventProcessError::from)?;
         rx.await?
     }
 }

@@ -280,10 +280,7 @@ pub enum TxReceive {
 
 impl TxReceive {
     fn is_from_tx_exec_result(&self) -> bool {
-        match self {
-            TxReceive::TXRESULT => true,
-            _ => false,
-        }
+        matches!(self, TxReceive::TXRESULT)
     }
 }
 
@@ -515,10 +512,12 @@ mod tests {
         };
 
         let sk = SecretKey::random(&mut StdRng::from_entropy());
-        let mut tx = Transaction::<TxCreate>::default();
-        tx.author = PublicKey::from_secret_key(&sk);
-        tx.payload = Payload::Run { workflow };
-        tx.signature = Signature::default();
+        let tx = Transaction::<TxCreate> {
+            author: PublicKey::from_secret_key(&sk),
+            payload: Payload::Run { workflow },
+            signature: Signature::default(),
+            ..Default::default()
+        };
 
         let tx = tx.into_received(TxReceive::RPC);
         assert!(tx.validate().is_err());

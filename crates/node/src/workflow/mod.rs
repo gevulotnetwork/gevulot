@@ -35,15 +35,11 @@ pub trait TransactionStore: Sync + Send {
 
 pub struct WorkflowEngine {
     tx_store: Arc<dyn TransactionStore>,
-    //    file_storage: Arc<storage::File>,
 }
 
 impl WorkflowEngine {
     pub fn new(tx_store: Arc<dyn TransactionStore>) -> Self {
-        WorkflowEngine {
-            tx_store,
-            //            file_storage,
-        }
+        WorkflowEngine { tx_store }
     }
 
     pub async fn next_task(&self, cur_tx: &Transaction<TxValdiated>) -> Result<Option<Task>> {
@@ -298,7 +294,8 @@ impl WorkflowEngine {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, env::temp_dir};
+    use gevulot_node::types::transaction::TxCreate;
+    use std::collections::HashMap;
 
     use gevulot_node::types::{
         transaction::{Payload, ProgramData, Workflow, WorkflowStep},
@@ -310,11 +307,11 @@ mod tests {
     use super::*;
 
     pub struct TxStore {
-        pub txs: HashMap<Hash, Transaction>,
+        pub txs: HashMap<Hash, Transaction<TxValdiated>>,
     }
 
     impl TxStore {
-        pub fn new(txs: &[Transaction]) -> Self {
+        pub fn new(txs: &[Transaction<TxValdiated>]) -> Self {
             let mut store = TxStore {
                 txs: HashMap::with_capacity(txs.len()),
             };
@@ -327,17 +324,17 @@ mod tests {
 
     #[async_trait]
     impl TransactionStore for TxStore {
-        async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction>> {
+        async fn find_transaction(
+            &self,
+            tx_hash: &Hash,
+        ) -> Result<Option<Transaction<TxValdiated>>> {
             Ok(self.txs.get(tx_hash).cloned())
         }
     }
 
     #[tokio::test]
     async fn test_next_task_for_empty_workflow_steps() {
-        let wfe = WorkflowEngine::new(
-            Arc::new(TxStore::new(&[])),
-            Arc::new(storage::File::new(&temp_dir())),
-        );
+        let wfe = WorkflowEngine::new(Arc::new(TxStore::new(&[])));
         let tx = transaction_for_workflow_steps(vec![]);
         if let Payload::Run { workflow } = &tx.payload {
             let res = wfe.next_task(&tx).await;
@@ -366,10 +363,7 @@ mod tests {
         };
 
         let tx = transaction_for_workflow_steps(vec![proving.clone(), verifying]);
-        let wfe = WorkflowEngine::new(
-            Arc::new(TxStore::new(&[tx.clone()])),
-            Arc::new(storage::File::new(&temp_dir())),
-        );
+        let wfe = WorkflowEngine::new(Arc::new(TxStore::new(&[tx.clone()])));
 
         if let Payload::Run { workflow } = &tx.payload {
             let task = wfe.next_task(&tx).await.expect("next_task").unwrap();
@@ -407,57 +401,69 @@ mod tests {
         let proofkey_tx = transaction_for_proofkey(&proof_tx.hash);
         let verification_tx = transaction_for_verification(&proof_tx.hash, &verifier_hash);
         let tx_store = TxStore::new(&[root_tx, proof_tx, proofkey_tx.clone(), verification_tx]);
-        let wfe = WorkflowEngine::new(
-            Arc::new(tx_store),
-            Arc::new(storage::File::new(&temp_dir())),
-        );
+        let wfe = WorkflowEngine::new(Arc::new(tx_store));
 
         let task = wfe.next_task(&proofkey_tx).await;
         assert!(task.is_ok());
     }
 
-    fn transaction_for_workflow_steps(steps: Vec<WorkflowStep>) -> Transaction {
+    fn into_validated(tx: Transaction<TxCreate>) -> Transaction<TxValdiated> {
+        Transaction {
+            author: tx.author,
+            hash: tx.hash,
+            payload: tx.payload,
+            nonce: tx.nonce,
+            signature: tx.signature,
+            propagated: tx.executed,
+            executed: tx.executed,
+            state: TxValdiated,
+        }
+    }
+
+    fn transaction_for_workflow_steps(steps: Vec<WorkflowStep>) -> Transaction<TxValdiated> {
         let key = SecretKey::random(&mut StdRng::from_entropy());
-        Transaction::new(
+        into_validated(Transaction::new(
             Payload::Run {
                 workflow: Workflow { steps },
             },
             &key,
-        )
+        ))
     }
 
-    fn transaction_for_proof(parent: &Hash, program: &Hash) -> Transaction {
+    fn transaction_for_proof(parent: &Hash, program: &Hash) -> Transaction<TxValdiated> {
         let key = SecretKey::random(&mut StdRng::from_entropy());
-        Transaction::new(
+        into_validated(Transaction::new(
             Payload::Proof {
                 parent: *parent,
                 prover: *program,
                 proof: "proof.".into(),
+                files: vec![],
             },
             &key,
-        )
+        ))
     }
 
-    fn transaction_for_proofkey(parent: &Hash) -> Transaction {
+    fn transaction_for_proofkey(parent: &Hash) -> Transaction<TxValdiated> {
         let key = SecretKey::random(&mut StdRng::from_entropy());
-        Transaction::new(
+        into_validated(Transaction::new(
             Payload::ProofKey {
                 parent: *parent,
                 key: "key.".into(),
             },
             &key,
-        )
+        ))
     }
 
-    fn transaction_for_verification(parent: &Hash, program: &Hash) -> Transaction {
+    fn transaction_for_verification(parent: &Hash, program: &Hash) -> Transaction<TxValdiated> {
         let key = SecretKey::random(&mut StdRng::from_entropy());
-        Transaction::new(
+        into_validated(Transaction::new(
             Payload::Verification {
                 parent: *parent,
                 verifier: *program,
                 verification: b"verification.".to_vec(),
+                files: vec![],
             },
             &key,
-        )
+        ))
     }
 }
