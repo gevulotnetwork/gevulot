@@ -224,7 +224,7 @@ impl GRPCClient {
             result: Some(grpc::task_result_request::Result::Task(grpc::TaskResult {
                 id: result.id.clone(),
                 data: result.data.clone(),
-                files: files,
+                files,
             })),
         };
 
