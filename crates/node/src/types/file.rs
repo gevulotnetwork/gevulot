@@ -6,6 +6,20 @@ use serde::Serialize;
 use std::path::Path;
 use std::path::PathBuf;
 
+pub async fn open_task_file(
+    data_dir: &PathBuf,
+    task_id: &str,
+    path: &str,
+) -> Result<tokio::io::BufReader<tokio::fs::File>> {
+    let mut path = Path::new(path);
+    if path.is_absolute() {
+        path = path.strip_prefix("/")?;
+    }
+    let path = PathBuf::new().join(data_dir).join(task_id).join(path);
+    let fd = tokio::fs::File::open(path).await?;
+    Ok(tokio::io::BufReader::new(fd))
+}
+
 //describe file data that is stored in the database.
 // to manipulate file on disk use the equivalent type state definition File<T>
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize, sqlx::FromRow)]

@@ -1,20 +1,18 @@
+use crate::types::file;
+use crate::types::Hash;
+use crate::vmm::vm_server::grpc::file_data;
+use async_trait::async_trait;
+use eyre::Result;
+use grpc::vm_service_server::VmService;
+use grpc::{GetFileRequest, Task, TaskRequest, TaskResultResponse};
 use std::fmt::Debug;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-
-use async_trait::async_trait;
-use eyre::Result;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::AsyncReadExt;
+use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, Mutex};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Code, Extensions, Request, Response, Status, Streaming};
-
-use grpc::vm_service_server::VmService;
-use grpc::{GetFileRequest, Task, TaskRequest, TaskResultResponse};
-
-use crate::storage;
-use crate::types::Hash;
-use crate::vmm::vm_server::grpc::file_data;
 
 use self::grpc::{
     FileChunk, FileData, FileMetadata, GenericResponse, TaskResponse, TaskResultRequest,
@@ -55,7 +53,7 @@ pub trait ProgramRegistry: Send {
 pub struct VMServer {
     task_source: Arc<dyn TaskManager>,
     program_registry: Arc<Mutex<dyn ProgramRegistry>>,
-    file_storage: Arc<storage::File>,
+    file_data_dir: PathBuf,
 }
 
 impl Debug for VMServer {
@@ -68,12 +66,12 @@ impl VMServer {
     pub fn new(
         task_source: Arc<dyn TaskManager>,
         program_registry: Arc<Mutex<dyn ProgramRegistry>>,
-        file_storage: Arc<storage::File>,
+        file_data_dir: PathBuf,
     ) -> Self {
         VMServer {
             task_source,
             program_registry,
-            file_storage,
+            file_data_dir,
         }
     }
 
@@ -138,14 +136,11 @@ impl VmService for VMServer {
 
         let req = request.into_inner();
 
-        let mut file = match self
-            .file_storage
-            .get_task_file(&req.task_id, &req.path)
-            .await
-        {
-            Ok(file) => file,
-            Err(err) => return Err(Status::new(Code::NotFound, "couldn't get task file")),
-        };
+        let mut file =
+            match file::open_task_file(&self.file_data_dir, &req.task_id, &req.path).await {
+                Ok(file) => file,
+                Err(err) => return Err(Status::new(Code::NotFound, "couldn't get task file")),
+            };
 
         let (tx, rx) = mpsc::channel(4);
         tokio::spawn({
@@ -223,7 +218,7 @@ impl VmService for VMServer {
                     }
 
                     let file_path = PathBuf::new()
-                        .join(self.file_storage.data_dir())
+                        .join(&self.file_data_dir)
                         .join(task_id)
                         .join(path);
 

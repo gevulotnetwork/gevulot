@@ -31,7 +31,6 @@ use tracing_subscriber::{filter::LevelFilter, fmt::format::FmtSpan, EnvFilter};
 use types::{transaction::TxValdiated, Hash, Transaction};
 use workflow::WorkflowEngine;
 
-mod asset_manager;
 mod cli;
 mod mempool;
 mod nanos;
@@ -241,9 +240,8 @@ async fn run(config: Arc<Config>) -> Result<()> {
         txvalidation::TxEventSender::<txvalidation::TxResultSender>::build(tx_sender.clone()),
     ));
 
-    let file_storage = Arc::new(storage::File::new(&config.data_directory));
     let vm_server =
-        vmm::vm_server::VMServer::new(scheduler.clone(), provider, file_storage.clone());
+        vmm::vm_server::VMServer::new(scheduler.clone(), provider, config.data_directory.clone());
 
     // Start gRPC VSOCK server.
     tokio::spawn(async move {
