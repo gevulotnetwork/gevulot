@@ -194,7 +194,6 @@ async fn run(config: Arc<Config>) -> Result<()> {
             http_peer_list,
             txvalidation::TxEventSender::<txvalidation::P2pSender>::build(tx_sender.clone()),
             p2p_stream,
-            //database.clone()
         )
         .await,
     );
@@ -227,8 +226,6 @@ async fn run(config: Arc<Config>) -> Result<()> {
         config.http_download_port
     );
 
-    //TODO the exec result tx sender has to be added.
-    //TODO remove mempool.
     let scheduler = Arc::new(scheduler::Scheduler::new(
         mempool.clone(),
         database.clone(),
@@ -279,8 +276,6 @@ async fn run(config: Arc<Config>) -> Result<()> {
     let rpc_server = rpc_server::RpcServer::run(
         config.clone(),
         database.clone(),
-        //        mempool.clone(),
-        //        asset_mgr.clone(),
         txvalidation::TxEventSender::<txvalidation::RpcSender>::build(tx_sender),
     )
     .await?;

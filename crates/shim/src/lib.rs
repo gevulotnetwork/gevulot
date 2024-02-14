@@ -216,9 +216,6 @@ impl GRPCClient {
                     })
             })
             .collect::<Result<Vec<_>>>()?;
-        // for file in &result.files {
-        //     let checksum = self.submit_file(result.id.clone(), file.clone())?;
-        // }
 
         let task_result_req = grpc::TaskResultRequest {
             result: Some(grpc::task_result_request::Result::Task(grpc::TaskResult {

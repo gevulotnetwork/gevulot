@@ -31,7 +31,6 @@ use sha3::{Digest, Sha3_256};
 pub struct P2P {
     node: Node,
     noise_states: Arc<RwLock<HashMap<SocketAddr, noise::State>>>,
-    //tx_handler: Arc<tokio::sync::RwLock<Arc<dyn TxHandler>>>,
 
     // Peer connection map: <(P2P TCP connection's peer address) , (peer's advertised address in peer_list)>.
     // This mapping is needed for proper cleanup on OnDisconnect.
@@ -287,8 +286,6 @@ impl Handshake for P2P {
             handshake_msg.peers.insert(handshake_msg.my_p2p_listen_addr);
         }
 
-        tracing::debug!("node information exchanged.");
-
         tracing::debug!("tcp connection peer address: {}", remote_peer);
         tracing::debug!(
             "peer advertised address: {}",
@@ -338,7 +335,6 @@ impl Handshake for P2P {
         local_diff.remove(&local_p2p_addr);
         local_diff.remove(remote_peer_p2p_addr);
 
-        tracing::debug!("found {} new nodes", local_diff.len());
         let node = self.node();
         for addr in local_diff {
             tracing::debug!("connect to {}", &addr);

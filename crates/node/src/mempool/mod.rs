@@ -22,27 +22,15 @@ pub enum MempoolError {
 #[derive(Clone)]
 pub struct Mempool {
     storage: Arc<dyn Storage>,
-    //    acl_whitelist: Arc<dyn AclWhitelist>,
-    // TODO: This should be refactored to PubSub channel abstraction later on.
-    //    tx_chan: Option<Arc<dyn networking::p2p::TxChannel>>,
     deque: VecDeque<Transaction<TxValdiated>>,
 }
 
 impl Mempool {
-    pub async fn new(
-        storage: Arc<dyn Storage>,
-        //        acl_whitelist: Arc<dyn AclWhitelist>,
-        //        tx_chan: Option<Arc<dyn networking::p2p::TxChannel>>,
-    ) -> Result<Self> {
+    pub async fn new(storage: Arc<dyn Storage>) -> Result<Self> {
         let mut deque = VecDeque::new();
         storage.fill_deque(&mut deque).await?;
 
-        Ok(Self {
-            storage,
-            // acl_whitelist,
-            // tx_chan,
-            deque,
-        })
+        Ok(Self { storage, deque })
     }
 
     pub fn next(&mut self) -> Option<Transaction<TxValdiated>> {
@@ -64,12 +52,3 @@ impl Mempool {
         self.deque.len()
     }
 }
-
-// pub struct P2PTxHandler(Arc<RwLock<Mempool>>);
-
-// #[async_trait::async_trait]
-// impl networking::p2p::TxHandler for P2PTxHandler {
-//     async fn recv_tx(&self, tx: Transaction<TxValdiated>) -> Result<()> {
-//         self.0.write().await.add(tx).await
-//     }
-// }

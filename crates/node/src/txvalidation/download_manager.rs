@@ -20,9 +20,7 @@ use tokio_util::io::ReaderStream;
 
 /// download_file downloads file from the given `url` and saves it to file in `local_directory_path` + / + `file`.
 pub async fn download_asset_file(
-    // url: &str,
     local_directory_path: &Path,
-    // file: &str,
     http_peer_list: &[(SocketAddr, Option<u16>)],
     http_client: &reqwest::Client,
     asset_file: File<Download>,
@@ -143,7 +141,6 @@ pub async fn serve_files(
     http_download_port: u16,
     data_directory: Arc<PathBuf>,
 ) -> Result<JoinHandle<()>> {
-    //   let mut bind_addr = config.p2p_listen_addr;
     bind_addr.set_port(http_download_port);
     let listener = TcpListener::bind(bind_addr).await?;
 
