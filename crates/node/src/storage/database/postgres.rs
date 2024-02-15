@@ -9,7 +9,7 @@ use super::entity::{self};
 use crate::types::{self, transaction::ProgramData, File, Hash, Program, Task};
 
 const MAX_DB_CONNS: u32 = 64;
-const DB_CONNECT_TIMEOUT: Duration = Duration::from_millis(750);
+const DB_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone)]
 pub struct Database {
