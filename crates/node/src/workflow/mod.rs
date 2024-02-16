@@ -2,7 +2,7 @@ use crate::types::file::DbFile;
 use async_trait::async_trait;
 use eyre::Result;
 use gevulot_node::types::{
-    transaction::{Payload, TxValdiated, Workflow, WorkflowStep},
+    transaction::{Payload, Validated, Workflow, WorkflowStep},
     Hash, Task, TaskKind, Transaction,
 };
 use std::sync::Arc;
@@ -30,7 +30,7 @@ pub enum WorkflowError {
 
 #[async_trait]
 pub trait TransactionStore: Sync + Send {
-    async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction<TxValdiated>>>;
+    async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction<Validated>>>;
 }
 
 pub struct WorkflowEngine {
@@ -42,7 +42,7 @@ impl WorkflowEngine {
         WorkflowEngine { tx_store }
     }
 
-    pub async fn next_task(&self, cur_tx: &Transaction<TxValdiated>) -> Result<Option<Task>> {
+    pub async fn next_task(&self, cur_tx: &Transaction<Validated>) -> Result<Option<Task>> {
         let workflow = self.workflow_for_transaction(&cur_tx.hash).await?;
 
         match &cur_tx.payload {
@@ -294,7 +294,7 @@ impl WorkflowEngine {
 
 #[cfg(test)]
 mod tests {
-    use gevulot_node::types::transaction::TxCreate;
+    use gevulot_node::types::transaction::Created;
     use std::collections::HashMap;
 
     use gevulot_node::types::{
@@ -307,11 +307,11 @@ mod tests {
     use super::*;
 
     pub struct TxStore {
-        pub txs: HashMap<Hash, Transaction<TxValdiated>>,
+        pub txs: HashMap<Hash, Transaction<Validated>>,
     }
 
     impl TxStore {
-        pub fn new(txs: &[Transaction<TxValdiated>]) -> Self {
+        pub fn new(txs: &[Transaction<Validated>]) -> Self {
             let mut store = TxStore {
                 txs: HashMap::with_capacity(txs.len()),
             };
@@ -324,10 +324,7 @@ mod tests {
 
     #[async_trait]
     impl TransactionStore for TxStore {
-        async fn find_transaction(
-            &self,
-            tx_hash: &Hash,
-        ) -> Result<Option<Transaction<TxValdiated>>> {
+        async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction<Validated>>> {
             Ok(self.txs.get(tx_hash).cloned())
         }
     }
@@ -407,7 +404,7 @@ mod tests {
         assert!(task.is_ok());
     }
 
-    fn into_validated(tx: Transaction<TxCreate>) -> Transaction<TxValdiated> {
+    fn into_validated(tx: Transaction<Created>) -> Transaction<Validated> {
         Transaction {
             author: tx.author,
             hash: tx.hash,
@@ -416,11 +413,11 @@ mod tests {
             signature: tx.signature,
             propagated: tx.executed,
             executed: tx.executed,
-            state: TxValdiated,
+            state: Validated,
         }
     }
 
-    fn transaction_for_workflow_steps(steps: Vec<WorkflowStep>) -> Transaction<TxValdiated> {
+    fn transaction_for_workflow_steps(steps: Vec<WorkflowStep>) -> Transaction<Validated> {
         let key = SecretKey::random(&mut StdRng::from_entropy());
         into_validated(Transaction::new(
             Payload::Run {
@@ -430,7 +427,7 @@ mod tests {
         ))
     }
 
-    fn transaction_for_proof(parent: &Hash, program: &Hash) -> Transaction<TxValdiated> {
+    fn transaction_for_proof(parent: &Hash, program: &Hash) -> Transaction<Validated> {
         let key = SecretKey::random(&mut StdRng::from_entropy());
         into_validated(Transaction::new(
             Payload::Proof {
@@ -443,7 +440,7 @@ mod tests {
         ))
     }
 
-    fn transaction_for_proofkey(parent: &Hash) -> Transaction<TxValdiated> {
+    fn transaction_for_proofkey(parent: &Hash) -> Transaction<Validated> {
         let key = SecretKey::random(&mut StdRng::from_entropy());
         into_validated(Transaction::new(
             Payload::ProofKey {
@@ -454,7 +451,7 @@ mod tests {
         ))
     }
 
-    fn transaction_for_verification(parent: &Hash, program: &Hash) -> Transaction<TxValdiated> {
+    fn transaction_for_verification(parent: &Hash, program: &Hash) -> Transaction<Validated> {
         let key = SecretKey::random(&mut StdRng::from_entropy());
         into_validated(Transaction::new(
             Payload::Verification {

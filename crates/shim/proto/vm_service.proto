@@ -43,7 +43,7 @@ message GetFileRequest {
 
 message File {
   string path = 1;
-  bytes checksum = 3;
+  bytes checksum = 2;
 }
 
 message FileMetadata {

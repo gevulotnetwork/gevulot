@@ -28,7 +28,7 @@ use tokio::sync::{Mutex as TMutex, RwLock};
 use tokio_stream::wrappers::UnboundedReceiverStream;
 use tonic::transport::Server;
 use tracing_subscriber::{filter::LevelFilter, fmt::format::FmtSpan, EnvFilter};
-use types::{transaction::TxValdiated, Hash, Transaction};
+use types::{transaction::Validated, Hash, Transaction};
 use workflow::WorkflowEngine;
 
 mod cli;
@@ -135,11 +135,11 @@ fn generate_node_key(opts: NodeKeyOptions) -> Result<()> {
 
 #[async_trait]
 impl mempool::Storage for storage::Database {
-    async fn get(&self, hash: &Hash) -> Result<Option<Transaction<TxValdiated>>> {
+    async fn get(&self, hash: &Hash) -> Result<Option<Transaction<Validated>>> {
         self.find_transaction(hash).await
     }
 
-    async fn set(&self, tx: &Transaction<TxValdiated>) -> Result<()> {
+    async fn set(&self, tx: &Transaction<Validated>) -> Result<()> {
         let tx_hash = tx.hash;
         self.add_transaction(tx).await?;
         self.add_asset(&tx_hash).await?;
@@ -148,7 +148,7 @@ impl mempool::Storage for storage::Database {
 
     async fn fill_deque(
         &self,
-        deque: &mut std::collections::VecDeque<Transaction<TxValdiated>>,
+        deque: &mut std::collections::VecDeque<Transaction<Validated>>,
     ) -> Result<()> {
         for t in self.get_unexecuted_transactions().await? {
             deque.push_back(t);
@@ -160,7 +160,7 @@ impl mempool::Storage for storage::Database {
 
 #[async_trait]
 impl workflow::TransactionStore for storage::Database {
-    async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction<TxValdiated>>> {
+    async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction<Validated>>> {
         self.find_transaction(tx_hash).await
     }
 }
@@ -173,8 +173,8 @@ async fn run(config: Arc<Config>) -> Result<()> {
 
     let mempool = Arc::new(RwLock::new(Mempool::new(database.clone()).await?));
 
-    //start Tx process event loop
-    let (txevent_loop_jh, tx_sender, p2p_stream) = txvalidation::start_event_loop(
+    // Start Tx process event loop.
+    let (txevent_loop_jh, tx_sender, p2p_stream) = txvalidation::spawn_event_loop(
         config.data_directory.clone(),
         config.p2p_listen_addr,
         config.http_download_port,
@@ -294,13 +294,13 @@ async fn p2p_beacon(config: P2PBeaconConfig) -> Result<()> {
     let http_peer_list: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>> =
         Default::default();
 
-    //build empty channel for P2P interface Transaction management.
-    //Indicate some domain conflict issue.
-    //P2P network should be started (peer domain) without Tx management (Node domain)
+    // Build an empty channel for P2P interface's `Transaction` management.
+    // Indicate some domain conflict issue.
+    // P2P network should be started (peer domain) without Tx management (Node domain).
     let (tx, mut rcv_tx_event_rx) = mpsc::unbounded_channel();
     tokio::spawn(async move { while rcv_tx_event_rx.recv().await.is_some() {} });
 
-    let (_, p2p_recv) = mpsc::unbounded_channel::<Transaction<TxValdiated>>();
+    let (_, p2p_recv) = mpsc::unbounded_channel::<Transaction<Validated>>();
     let p2p_stream = UnboundedReceiverStream::new(p2p_recv);
 
     let p2p = Arc::new(

@@ -1,4 +1,4 @@
-use crate::types::{transaction::TxValdiated, Hash, Transaction};
+use crate::types::{transaction::Validated, Hash, Transaction};
 use async_trait::async_trait;
 use eyre::Result;
 use std::collections::VecDeque;
@@ -7,9 +7,9 @@ use thiserror::Error;
 
 #[async_trait]
 pub trait Storage: Send + Sync {
-    async fn get(&self, hash: &Hash) -> Result<Option<Transaction<TxValdiated>>>;
-    async fn set(&self, tx: &Transaction<TxValdiated>) -> Result<()>;
-    async fn fill_deque(&self, deque: &mut VecDeque<Transaction<TxValdiated>>) -> Result<()>;
+    async fn get(&self, hash: &Hash) -> Result<Option<Transaction<Validated>>>;
+    async fn set(&self, tx: &Transaction<Validated>) -> Result<()>;
+    async fn fill_deque(&self, deque: &mut VecDeque<Transaction<Validated>>) -> Result<()>;
 }
 
 #[allow(clippy::enum_variant_names)]
@@ -22,7 +22,7 @@ pub enum MempoolError {
 #[derive(Clone)]
 pub struct Mempool {
     storage: Arc<dyn Storage>,
-    deque: VecDeque<Transaction<TxValdiated>>,
+    deque: VecDeque<Transaction<Validated>>,
 }
 
 impl Mempool {
@@ -33,16 +33,16 @@ impl Mempool {
         Ok(Self { storage, deque })
     }
 
-    pub fn next(&mut self) -> Option<Transaction<TxValdiated>> {
+    pub fn next(&mut self) -> Option<Transaction<Validated>> {
         // TODO(tuommaki): Should storage reflect the POP in state?
         self.deque.pop_front()
     }
 
-    pub fn peek(&self) -> Option<&Transaction<TxValdiated>> {
+    pub fn peek(&self) -> Option<&Transaction<Validated>> {
         self.deque.front()
     }
 
-    pub async fn add(&mut self, tx: Transaction<TxValdiated>) -> Result<()> {
+    pub async fn add(&mut self, tx: Transaction<Validated>) -> Result<()> {
         self.storage.set(&tx).await?;
         self.deque.push_back(tx);
         Ok(())

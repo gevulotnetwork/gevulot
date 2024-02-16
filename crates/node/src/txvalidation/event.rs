@@ -1,13 +1,13 @@
+use crate::txvalidation::acl::AclWhitelist;
 use crate::txvalidation::download_manager;
 use crate::txvalidation::EventProcessError;
 use crate::types::{
-    transaction::{TransactionError, TxReceive, TxValdiated},
+    transaction::{Received, Validated},
     Transaction,
 };
 use crate::Mempool;
 use futures::future::join_all;
 use futures_util::TryFutureExt;
-use gevulot_node::types::transaction::AclWhitelist;
 use std::fmt::Debug;
 use std::net::SocketAddr;
 use std::path::Path;
@@ -15,7 +15,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 //event type.
 #[derive(Debug, Clone)]
-pub struct RcvTx;
+pub struct ReceivedTx;
 
 #[derive(Debug, Clone)]
 pub struct DownloadTx;
@@ -28,44 +28,47 @@ pub struct PropagateTx;
 
 //Event processing depends on the marker type.
 #[derive(Debug, Clone)]
-pub struct EventTx<T: Debug> {
-    pub tx: Transaction<TxReceive>,
+pub struct TxEvent<T: Debug> {
+    pub tx: Transaction<Received>,
     pub tx_type: T,
 }
 
-impl From<Transaction<TxReceive>> for EventTx<RcvTx> {
-    fn from(tx: Transaction<TxReceive>) -> Self {
-        EventTx { tx, tx_type: RcvTx }
+impl From<Transaction<Received>> for TxEvent<ReceivedTx> {
+    fn from(tx: Transaction<Received>) -> Self {
+        TxEvent {
+            tx,
+            tx_type: ReceivedTx,
+        }
     }
 }
 
-impl From<EventTx<RcvTx>> for EventTx<DownloadTx> {
-    fn from(event: EventTx<RcvTx>) -> Self {
-        EventTx {
+impl From<TxEvent<ReceivedTx>> for TxEvent<DownloadTx> {
+    fn from(event: TxEvent<ReceivedTx>) -> Self {
+        TxEvent {
             tx: event.tx,
             tx_type: DownloadTx,
         }
     }
 }
 
-impl From<EventTx<DownloadTx>> for EventTx<NewTx> {
-    fn from(event: EventTx<DownloadTx>) -> Self {
-        EventTx {
+impl From<TxEvent<DownloadTx>> for TxEvent<NewTx> {
+    fn from(event: TxEvent<DownloadTx>) -> Self {
+        TxEvent {
             tx: event.tx,
             tx_type: NewTx,
         }
     }
 }
 
-impl From<EventTx<DownloadTx>> for Option<EventTx<PropagateTx>> {
-    fn from(event: EventTx<DownloadTx>) -> Self {
+impl From<TxEvent<DownloadTx>> for Option<TxEvent<PropagateTx>> {
+    fn from(event: TxEvent<DownloadTx>) -> Self {
         match event.tx.state {
-            TxReceive::P2P => None,
-            TxReceive::RPC => Some(EventTx {
+            Received::P2P => None,
+            Received::RPC => Some(TxEvent {
                 tx: event.tx,
                 tx_type: PropagateTx,
             }),
-            TxReceive::TXRESULT => Some(EventTx {
+            Received::TXRESULT => Some(TxEvent {
                 tx: event.tx,
                 tx_type: PropagateTx,
             }),
@@ -74,11 +77,11 @@ impl From<EventTx<DownloadTx>> for Option<EventTx<PropagateTx>> {
 }
 
 //Processing of event that arrive: SourceTxType.
-impl EventTx<RcvTx> {
+impl TxEvent<ReceivedTx> {
     pub async fn process_event(
         self,
         acl_whitelist: &impl AclWhitelist,
-    ) -> Result<EventTx<DownloadTx>, EventProcessError> {
+    ) -> Result<TxEvent<DownloadTx>, EventProcessError> {
         match self.validate_tx(acl_whitelist).await {
             Ok(()) => Ok(self.into()),
             Err(err) => Err(EventProcessError::ValidateError(format!(
@@ -88,12 +91,17 @@ impl EventTx<RcvTx> {
     }
 
     //Tx validation process.
-    async fn validate_tx(&self, acl_whitelist: &impl AclWhitelist) -> Result<(), TransactionError> {
-        self.tx.validate()?;
+    async fn validate_tx(
+        &self,
+        acl_whitelist: &impl AclWhitelist,
+    ) -> Result<(), EventProcessError> {
+        self.tx.validate().map_err(|err| {
+            EventProcessError::ValidateError(format!("Error during transaction validation:{err}",))
+        })?;
 
         // Secondly verify that author is whitelisted.
         if !acl_whitelist.contains(&self.tx.author).await? {
-            return Err(TransactionError::Validation(
+            return Err(EventProcessError::ValidateError(
                 "Tx permission denied signer not authorized".to_string(),
             ));
         }
@@ -103,12 +111,12 @@ impl EventTx<RcvTx> {
 }
 
 //Download Tx processing
-impl EventTx<DownloadTx> {
+impl TxEvent<DownloadTx> {
     pub async fn process_event(
         self,
         local_directory_path: &Path,
         http_peer_list: Vec<(SocketAddr, Option<u16>)>,
-    ) -> Result<(EventTx<NewTx>, Option<EventTx<PropagateTx>>), EventProcessError> {
+    ) -> Result<(TxEvent<NewTx>, Option<TxEvent<PropagateTx>>), EventProcessError> {
         let http_client = reqwest::Client::new();
         let asset_file_list = self.tx.get_asset_list().map_err(|err| {
             EventProcessError::DownloadAssetError(format!(
@@ -135,17 +143,17 @@ impl EventTx<DownloadTx> {
                 tracing::error!("Error during Tx file download:{err}");
                 EventProcessError::DownloadAssetError(format!("Exwecution error:{err}"))
             })?;
-        let newtx: EventTx<NewTx> = self.clone().into();
-        let propagate: Option<EventTx<PropagateTx>> = self.into();
+        let newtx: TxEvent<NewTx> = self.clone().into();
+        let propagate: Option<TxEvent<PropagateTx>> = self.into();
         Ok((newtx, propagate))
     }
 }
 
 //Propagate Tx processing
-impl EventTx<PropagateTx> {
+impl TxEvent<PropagateTx> {
     pub async fn process_event(
         self,
-        p2p_sender: &UnboundedSender<Transaction<TxValdiated>>,
+        p2p_sender: &UnboundedSender<Transaction<Validated>>,
     ) -> Result<(), EventProcessError> {
         let tx = Transaction {
             author: self.tx.author,
@@ -156,14 +164,14 @@ impl EventTx<PropagateTx> {
             //TODO should be updated after the p2p send with a notification
             propagated: true,
             executed: self.tx.executed,
-            state: TxValdiated,
+            state: Validated,
         };
         tracing::info!("Tx validation propagate tx:{}", tx.hash.to_string());
         p2p_sender.send(tx).map_err(|err| Box::new(err).into())
     }
 }
 
-impl EventTx<NewTx> {
+impl TxEvent<NewTx> {
     pub async fn process_event(self, mempool: &mut Mempool) -> Result<(), EventProcessError> {
         let tx = Transaction {
             author: self.tx.author,
@@ -174,7 +182,7 @@ impl EventTx<NewTx> {
             //TODO should be updated after the p2p send with a notification
             propagated: true,
             executed: self.tx.executed,
-            state: TxValdiated,
+            state: Validated,
         };
         tracing::info!("Tx validation save tx:{}", tx.hash.to_string());
         mempool

@@ -24,7 +24,6 @@ CREATE TABLE file (
     task_id uuid NOT NULL,
     name VARCHAR(256) NOT NULL,
     url VARCHAR(2048) NOT NULL,
-    checksum VARCHAR(64) NOT NULL,
     CONSTRAINT fk_task
         FOREIGN KEY (task_id)
              REFERENCES task (id) ON DELETE CASCADE

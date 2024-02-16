@@ -1,14 +1,14 @@
 use super::entity::{self};
+use crate::txvalidation::acl::AclWhiteListError;
+use crate::txvalidation::acl::AclWhitelist;
 use crate::types::file::DbFile;
-use crate::types::transaction;
 use crate::types::{
     self,
-    transaction::{ProgramData, TxValdiated},
+    transaction::{ProgramData, Validated},
     Hash, Program, Task,
 };
 use eyre::Result;
 use gevulot_node::types::program::ResourceRequest;
-use gevulot_node::types::transaction::TransactionError;
 use libsecp256k1::PublicKey;
 use sqlx::{self, postgres::PgPoolOptions, FromRow, Row};
 use std::time::Duration;
@@ -18,12 +18,12 @@ const MAX_DB_CONNS: u32 = 64;
 const DB_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[async_trait::async_trait]
-impl transaction::AclWhitelist for Database {
-    async fn contains(&self, key: &PublicKey) -> Result<bool, TransactionError> {
+impl AclWhitelist for Database {
+    async fn contains(&self, key: &PublicKey) -> Result<bool, AclWhiteListError> {
         let key = entity::PublicKey(*key);
-        self.acl_whitelist_has(&key)
-            .await
-            .map_err(|err| TransactionError::General(format!("Fail to query access list: {err}",)))
+        self.acl_whitelist_has(&key).await.map_err(|err| {
+            AclWhiteListError::InternalError(format!("Fail to query access list: {err}",))
+        })
     }
 }
 
@@ -270,7 +270,7 @@ impl Database {
     pub async fn find_transaction(
         &self,
         tx_hash: &Hash,
-    ) -> Result<Option<types::Transaction<TxValdiated>>> {
+    ) -> Result<Option<types::Transaction<Validated>>> {
         let mut db_tx = self.pool.begin().await?;
 
         let entity =
@@ -426,7 +426,7 @@ impl Database {
                 _ => types::transaction::Payload::Empty,
             };
 
-            let mut tx: types::transaction::Transaction<TxValdiated> = entity.into();
+            let mut tx: types::transaction::Transaction<Validated> = entity.into();
             tx.payload = payload;
             Ok(Some(tx))
         } else {
@@ -434,7 +434,7 @@ impl Database {
         }
     }
 
-    pub async fn get_transactions(&self) -> Result<Vec<types::Transaction<TxValdiated>>> {
+    pub async fn get_transactions(&self) -> Result<Vec<types::Transaction<Validated>>> {
         let mut db_tx = self.pool.begin().await?;
         let refs: Vec<Hash> = sqlx::query("SELECT hash FROM transaction")
             .map(|row: sqlx::postgres::PgRow| row.get(0))
@@ -452,9 +452,7 @@ impl Database {
         Ok(txs)
     }
 
-    pub async fn get_unexecuted_transactions(
-        &self,
-    ) -> Result<Vec<types::Transaction<TxValdiated>>> {
+    pub async fn get_unexecuted_transactions(&self) -> Result<Vec<types::Transaction<Validated>>> {
         let mut db_tx = self.pool.begin().await?;
         let refs: Vec<Hash> = sqlx::query("SELECT hash FROM transaction WHERE executed IS false")
             .map(|row: sqlx::postgres::PgRow| row.get(0))
@@ -488,7 +486,7 @@ impl Database {
         Ok(refs)
     }
 
-    pub async fn add_transaction(&self, tx: &types::Transaction<TxValdiated>) -> Result<()> {
+    pub async fn add_transaction(&self, tx: &types::Transaction<Validated>) -> Result<()> {
         let entity = entity::Transaction::from(tx);
 
         let mut db_tx = self.pool.begin().await?;
@@ -721,7 +719,7 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
-    use gevulot_node::types::transaction::TxCreate;
+    use gevulot_node::types::transaction::Created;
     use libsecp256k1::{PublicKey, SecretKey};
     use rand::{rngs::StdRng, Rng, SeedableRng};
 
@@ -732,7 +730,8 @@ mod tests {
 
     use super::*;
 
-    fn into_validated(tx: Transaction<TxCreate>) -> Transaction<TxValdiated> {
+    //TODO change by impl From when module declaration between main and lib are solved.
+    fn into_validated(tx: Transaction<Created>) -> Transaction<Validated> {
         Transaction {
             author: tx.author,
             hash: tx.hash,
@@ -741,7 +740,7 @@ mod tests {
             signature: tx.signature,
             propagated: tx.executed,
             executed: tx.executed,
-            state: TxValdiated,
+            state: Validated,
         }
     }
 
@@ -788,7 +787,7 @@ mod tests {
             signature: Signature::default(),
             propagated: false,
             executed: false,
-            state: TxValdiated,
+            state: Validated,
         };
 
         database

@@ -16,7 +16,7 @@ use tokio_stream::StreamExt;
 use super::{noise, protocol};
 use bytes::{Bytes, BytesMut};
 use gevulot_node::types::{
-    transaction::{TxCreate, TxValdiated},
+    transaction::{Created, Validated},
     Transaction,
 };
 use parking_lot::RwLock;
@@ -36,14 +36,14 @@ pub struct P2P {
     // This mapping is needed for proper cleanup on OnDisconnect.
     peer_addr_mapping: Arc<tokio::sync::RwLock<HashMap<SocketAddr, SocketAddr>>>,
     peer_list: Arc<tokio::sync::RwLock<BTreeSet<SocketAddr>>>,
-    //contains corrected peers use for asset file download.
+    // Contains corrected peers that are used for asset file download.
     pub peer_http_port_list: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>>,
 
     http_port: Option<u16>,
     nat_listen_addr: Option<SocketAddr>,
     psk: Vec<u8>,
 
-    //send Tx to the process loop
+    // Send Tx to the process loop.
     tx_sender: TxEventSender<P2pSender>,
 }
 
@@ -63,7 +63,7 @@ impl P2P {
         nat_listen_addr: Option<SocketAddr>,
         peer_http_port_list: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>>,
         tx_sender: TxEventSender<P2pSender>,
-        propagate_tx_stream: impl Stream<Item = Transaction<TxValdiated>> + std::marker::Send + 'static,
+        propagate_tx_stream: impl Stream<Item = Transaction<Validated>> + std::marker::Send + 'static,
     ) -> Self {
         let config = Config {
             name: Some(name.into()),
@@ -82,7 +82,6 @@ impl P2P {
         let instance = Self {
             node,
             noise_states: Default::default(),
-            //tx_handler: Arc::new(tokio::sync::RwLock::new(Arc::new(BlackholeTxHandler {}))),
             psk: psk.to_vec(),
             peer_list: Default::default(),
             peer_addr_mapping: Default::default(),
@@ -98,7 +97,7 @@ impl P2P {
         instance.enable_writing().await;
         instance.enable_disconnect().await;
 
-        //start new Tx stream loop
+        // Start a new Tx stream loop.
         tokio::spawn({
             let p2p = instance.clone();
             async move {
@@ -127,7 +126,7 @@ impl P2P {
         instance
     }
 
-    async fn recv_tx(&self, tx: Transaction<TxCreate>) {
+    async fn forward_tx(&self, tx: Transaction<Created>) {
         tracing::debug!("submitting received tx to tx_handler");
         if let Err(err) = self.tx_sender.send_tx(tx) {
             tracing::error!("P2P error during received Tx sending:{err}");
@@ -375,7 +374,7 @@ impl Reading for P2P {
                         tx.hash,
                         hex::encode(tx.author.serialize())
                     );
-                    let tx: Transaction<TxCreate> = Transaction {
+                    let tx: Transaction<Created> = Transaction {
                         author: tx.author,
                         hash: tx.hash,
                         payload: tx.payload,
@@ -383,9 +382,9 @@ impl Reading for P2P {
                         signature: tx.signature,
                         propagated: tx.propagated,
                         executed: tx.executed,
-                        state: TxCreate,
+                        state: Created,
                     };
-                    self.recv_tx(tx).await;
+                    self.forward_tx(tx).await;
                 }
                 protocol::MessageV0::DiagnosticsRequest(kind) => {
                     tracing::debug!("received diagnostics request");
@@ -431,7 +430,7 @@ mod tests {
     use crate::txvalidation::CallbackSender;
     use crate::txvalidation::EventProcessError;
     use eyre::Result;
-    use gevulot_node::types::transaction::TxReceive;
+    use gevulot_node::types::transaction::Received;
     use gevulot_node::types::{transaction::Payload, Transaction};
     use libsecp256k1::SecretKey;
     use rand::{rngs::StdRng, SeedableRng};
@@ -447,18 +446,18 @@ mod tests {
         name: &str,
     ) -> (
         P2P,
-        UnboundedSender<Transaction<TxValdiated>>,
+        UnboundedSender<Transaction<Validated>>,
         UnboundedReceiver<(
-            Transaction<TxReceive>,
+            Transaction<Received>,
             Option<oneshot::Sender<Result<(), EventProcessError>>>,
         )>,
     ) {
         let http_peer_list1: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>> =
             Default::default();
-        let (tx_sender, p2p_recv1) = mpsc::unbounded_channel::<Transaction<TxValdiated>>();
+        let (tx_sender, p2p_recv1) = mpsc::unbounded_channel::<Transaction<Validated>>();
         let p2p_stream1 = UnboundedReceiverStream::new(p2p_recv1);
         let (sendtx1, txreceiver1) =
-            mpsc::unbounded_channel::<(Transaction<TxReceive>, Option<CallbackSender>)>();
+            mpsc::unbounded_channel::<(Transaction<Received>, Option<CallbackSender>)>();
         let txsender1 = txvalidation::TxEventSender::<txvalidation::P2pSender>::build(sendtx1);
         let peer = P2P::new(
             name,
@@ -474,7 +473,8 @@ mod tests {
         (peer, tx_sender, txreceiver1)
     }
 
-    fn into_receive(tx: Transaction<TxValdiated>) -> Transaction<TxReceive> {
+    //TODO change by impl From when module declaration between main and lib are solved.
+    fn into_receive(tx: Transaction<Validated>) -> Transaction<Received> {
         Transaction {
             author: tx.author,
             hash: tx.hash,
@@ -483,7 +483,7 @@ mod tests {
             signature: tx.signature,
             propagated: tx.executed,
             executed: tx.executed,
-            state: TxReceive::P2P,
+            state: Received::P2P,
         }
     }
 
@@ -632,10 +632,10 @@ mod tests {
         assert_eq!(into_receive(tx), recv_tx.0);
     }
 
-    fn new_tx() -> Transaction<TxValdiated> {
+    fn new_tx() -> Transaction<Validated> {
         let rng = &mut StdRng::from_entropy();
 
-        let tx = Transaction::<TxCreate>::new(Payload::Empty, &SecretKey::random(rng));
+        let tx = Transaction::<Created>::new(Payload::Empty, &SecretKey::random(rng));
 
         Transaction {
             author: tx.author,
@@ -645,7 +645,7 @@ mod tests {
             signature: tx.signature,
             propagated: tx.executed,
             executed: tx.executed,
-            state: TxValdiated,
+            state: Validated,
         }
     }
 

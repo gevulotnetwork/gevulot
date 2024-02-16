@@ -1,4 +1,4 @@
-use gevulot_node::types::transaction::TxCreate;
+use gevulot_node::types::transaction::Created;
 use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
@@ -109,7 +109,7 @@ async fn deploy_programs(
         signature: read_tx.signature,
         propagated: false,
         executed: false,
-        state: TxCreate,
+        state: Created,
     };
 
     assert_eq!(tx, read_tx);

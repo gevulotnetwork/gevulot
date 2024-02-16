@@ -117,14 +117,3 @@ CREATE TABLE proof_key (
         FOREIGN KEY (tx)
             REFERENCES transaction (hash) ON DELETE CASCADE
 );
-
-
-CREATE TABLE txfile (
-    tx_id VARCHAR(64) NOT NULL,
-    name VARCHAR(256) NOT NULL,
-    url VARCHAR(2048) NOT NULL,
-    checksum VARCHAR(64) NOT NULL,
-    CONSTRAINT fk_tx
-        FOREIGN KEY (tx_id)
-             REFERENCES transaction (hash) ON DELETE CASCADE
-);

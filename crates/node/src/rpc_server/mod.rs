@@ -7,7 +7,7 @@ use crate::{
     cli::Config,
     storage::Database,
     types::{
-        transaction::{TxCreate, TxValdiated},
+        transaction::{Created, Validated},
         Transaction,
     },
 };
@@ -76,7 +76,7 @@ async fn send_transaction(params: Params<'static>, ctx: Arc<Context>) -> RpcResp
     tracing::info!("JSON-RPC: send_transaction()");
 
     // Real logic
-    let tx: Transaction<TxCreate> = match params.one() {
+    let tx: Transaction<Created> = match params.one() {
         Ok(tx) => tx,
         Err(e) => {
             tracing::error!("failed to parse transaction: {}", e);
@@ -98,7 +98,7 @@ async fn send_transaction(params: Params<'static>, ctx: Arc<Context>) -> RpcResp
 async fn get_transaction(
     params: Params<'static>,
     ctx: Arc<Context>,
-) -> RpcResponse<Transaction<TxValdiated>> {
+) -> RpcResponse<Transaction<Validated>> {
     let tx_hash: Hash = match params.one() {
         Ok(tx_hash) => tx_hash,
         Err(e) => {
@@ -197,7 +197,7 @@ mod tests {
     use crate::txvalidation;
     use crate::txvalidation::CallbackSender;
     use crate::txvalidation::EventProcessError;
-    use gevulot_node::types::transaction::TxReceive;
+    use gevulot_node::types::transaction::Received;
     use jsonrpsee::{
         core::{client::ClientT, params::ArrayParams},
         http_client::HttpClientBuilder,
@@ -243,7 +243,7 @@ mod tests {
             signature: tx.signature,
             propagated: tx.executed,
             executed: tx.executed,
-            state: TxReceive::RPC,
+            state: Received::RPC,
         };
 
         assert_eq!(tx, recv_tx.0);
@@ -421,7 +421,7 @@ mod tests {
     async fn new_rpc_server() -> (
         RpcServer,
         UnboundedReceiver<(
-            Transaction<TxReceive>,
+            Transaction<Received>,
             Option<oneshot::Sender<Result<(), EventProcessError>>>,
         )>,
     ) {
@@ -446,7 +446,7 @@ mod tests {
         let db = Arc::new(Database::new(&cfg.db_url).await.unwrap());
 
         let (sendtx, txreceiver) =
-            mpsc::unbounded_channel::<(Transaction<TxReceive>, Option<CallbackSender>)>();
+            mpsc::unbounded_channel::<(Transaction<Received>, Option<CallbackSender>)>();
         let txsender = txvalidation::TxEventSender::<txvalidation::RpcSender>::build(sendtx);
 
         (

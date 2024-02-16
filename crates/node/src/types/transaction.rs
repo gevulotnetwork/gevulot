@@ -2,7 +2,6 @@ use super::file::{Download, File, Image, ProofVerif};
 use super::signature::Signature;
 use super::{hash::Hash, program::ResourceRequest};
 use crate::types::transaction;
-use async_trait::async_trait;
 use eyre::Result;
 use libsecp256k1::{sign, verify, Message, PublicKey, SecretKey};
 use num_bigint::BigInt;
@@ -10,19 +9,6 @@ use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
 use std::{collections::HashSet, rc::Rc};
 use thiserror::Error;
-
-#[async_trait]
-pub trait AclWhitelist: Send + Sync {
-    async fn contains(&self, key: &PublicKey) -> Result<bool, TransactionError>;
-}
-
-pub struct AlwaysGrantAclWhitelist;
-#[async_trait::async_trait]
-impl AclWhitelist for AlwaysGrantAclWhitelist {
-    async fn contains(&self, _key: &PublicKey) -> Result<bool, TransactionError> {
-        Ok(true)
-    }
-}
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub enum TransactionTree {
@@ -263,29 +249,29 @@ pub enum TransactionError {
 // Tx are defined in 3 domains: Validation, Execution, Storage.
 // Currently the same definition is used but different type should be defined  (TODO).
 // Only the validation type state are defined.
-// TxCreate : identify a Tx that has just been created.
-// TxReceive: Identify a Tx that has been received. Determine the received source.
-// TxValdiated: Identify a Tx that has been validated. Pass all the validation process.
+// Created : identify a Tx that has just been created.
+// Received: Identify a Tx that has been received. Determine the received source.
+// Validated: Identify a Tx that has been validated. Pass all the validation process.
 // The validation suppose the Tx has been propagated. Currently there's no notification during the propagation (TODO).
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-pub struct TxCreate;
+pub struct Created;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-pub enum TxReceive {
+pub enum Received {
     P2P,
     RPC,
     TXRESULT,
 }
 
-impl TxReceive {
+impl Received {
     fn is_from_tx_exec_result(&self) -> bool {
-        matches!(self, TxReceive::TXRESULT)
+        matches!(self, Received::TXRESULT)
     }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-pub struct TxValdiated;
+pub struct Validated;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct Transaction<T> {
@@ -313,7 +299,7 @@ impl<T> Transaction<T> {
     }
 }
 
-impl Default for Transaction<TxCreate> {
+impl Default for Transaction<Created> {
     fn default() -> Self {
         Self {
             author: PublicKey::from_secret_key(&SecretKey::default()),
@@ -323,12 +309,12 @@ impl Default for Transaction<TxCreate> {
             signature: Signature::default(),
             propagated: false,
             executed: false,
-            state: TxCreate,
+            state: Created,
         }
     }
 }
 
-impl Default for Transaction<TxValdiated> {
+impl Default for Transaction<Validated> {
     fn default() -> Self {
         Self {
             author: PublicKey::from_secret_key(&SecretKey::default()),
@@ -338,12 +324,12 @@ impl Default for Transaction<TxValdiated> {
             signature: Signature::default(),
             propagated: false,
             executed: false,
-            state: TxValdiated,
+            state: Validated,
         }
     }
 }
 
-impl Transaction<TxCreate> {
+impl Transaction<Created> {
     pub fn new(payload: Payload, signing_key: &SecretKey) -> Self {
         let author = PublicKey::from_secret_key(signing_key);
 
@@ -355,7 +341,7 @@ impl Transaction<TxCreate> {
             signature: Signature::default(),
             propagated: false,
             executed: false,
-            state: TxCreate,
+            state: Created,
         };
 
         tx.sign(signing_key);
@@ -371,7 +357,7 @@ impl Transaction<TxCreate> {
         self.signature = sig.into();
     }
 
-    pub fn into_received(self, state: TxReceive) -> Transaction<TxReceive> {
+    pub fn into_received(self, state: Received) -> Transaction<Received> {
         Transaction {
             author: self.author,
             hash: self.hash,
@@ -385,7 +371,7 @@ impl Transaction<TxCreate> {
     }
 }
 
-impl Transaction<TxReceive> {
+impl Transaction<Received> {
     pub fn verify(&self) -> bool {
         let hash = self.compute_hash();
         let msg: Message = hash.into();
@@ -483,7 +469,7 @@ mod tests {
         let sk = SecretKey::random(&mut StdRng::from_entropy());
 
         let tx = Transaction::new(Payload::Empty, &sk);
-        let tx = tx.into_received(TxReceive::P2P);
+        let tx = tx.into_received(Received::P2P);
         assert!(tx.verify());
     }
 
@@ -497,7 +483,7 @@ mod tests {
         tx.nonce += 1;
 
         // Verify must return false.
-        let tx = tx.into_received(TxReceive::TXRESULT);
+        let tx = tx.into_received(Received::TXRESULT);
         assert!(!tx.verify());
     }
 
@@ -512,22 +498,22 @@ mod tests {
         };
 
         let sk = SecretKey::random(&mut StdRng::from_entropy());
-        let tx = Transaction::<TxCreate> {
+        let tx = Transaction::<Created> {
             author: PublicKey::from_secret_key(&sk),
             payload: Payload::Run { workflow },
             signature: Signature::default(),
             ..Default::default()
         };
 
-        let tx = tx.into_received(TxReceive::RPC);
+        let tx = tx.into_received(Received::RPC);
         assert!(tx.validate().is_err());
     }
 
     #[test]
     fn test_tx_validations_verifies_signature() {
-        let tx = Transaction::<TxCreate>::default();
+        let tx = Transaction::<Created>::default();
 
-        let tx = tx.into_received(TxReceive::RPC);
+        let tx = tx.into_received(Received::RPC);
         assert!(tx.validate().is_err());
     }
 }

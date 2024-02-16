@@ -180,7 +180,7 @@ pub struct P2PBeaconConfig {
 
     #[arg(
         long,
-        long_help = "Port open to download transaction data between nodes. Use P2P interface to bind.",
+        long_help = "HTTP port for downloading transaction data between nodes. Uses same interface as P2P listen address.",
         env = "GEVULOT_HTTP_PORT",
         default_value = "9995"
     )]
