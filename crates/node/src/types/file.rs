@@ -114,7 +114,7 @@ impl File<Download> {
 
     pub async fn exist(&self, root_path: &Path) -> bool {
         if self.extention.0 .1 {
-            let file_path = root_path.join(&root_path);
+            let file_path = root_path.join(root_path);
             tokio::fs::try_exists(file_path).await.unwrap_or(false)
         } else {
             false
@@ -132,7 +132,7 @@ impl File<ProofVerif> {
     pub fn into_download_file(self, tx_hash: Hash) -> File<Download> {
         let relative_path = self.get_relatif_path(tx_hash).to_str().unwrap().to_string();
         let url = format!("{}/{}", self.url, relative_path);
-        File::<Download>::new(relative_path, url, self.checksum.clone(), tx_hash, true)
+        File::<Download>::new(relative_path, url, self.checksum, tx_hash, true)
     }
 
     // Save Relative File path for ProofVerif files is <Tx Hash>/<self.checksum>/<filename>
@@ -149,7 +149,7 @@ impl File<ProofVerif> {
     }
 
     pub async fn exist(&self, root_path: &Path) -> bool {
-        let file_path = root_path.join(&root_path);
+        let file_path = root_path.join(root_path);
         tokio::fs::try_exists(file_path).await.unwrap_or(false)
     }
 }
@@ -195,7 +195,7 @@ pub async fn move_vmfile(
     // Remove it from the VM.
     if dest.exist(base_path).await {
         tracing::debug!(
-            "move_vmfile: dest file already exist. Rmove VM file:{:#?}",
+            "move_vmfile: dest file already exist. Remove VM file:{:#?}",
             source.get_relatif_path()
         );
         source.remove_file(base_path).await.map_err(|e| e.into())
