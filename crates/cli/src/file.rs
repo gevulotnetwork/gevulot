@@ -41,7 +41,7 @@ impl From<FileData> for ProgramMetadata {
 
 pub async fn prepare_files_download<I>(
     bind_addr: Option<SocketAddr>,
-    //input parameters file and file_url
+    // input parameters file and file_url
     files_data_iter: I,
 ) -> crate::BoxResult<(Vec<FileData>, Option<JoinHandle<()>>)>
 where
@@ -121,8 +121,8 @@ pub fn extract_hash_from_file_content(path: &PathBuf) -> Option<Hash> {
     Some((&checksum).into())
 }
 
-//calculate the file name digest and the local server url.
-//return the file path, file_url and file digest
+// calculate the file name digest and the local server url.
+// return the file path, file_url and file digest
 fn calculate_file_url_digest(file_path: &str, listen_addr: SocketAddr) -> (String, String) {
     let mut hasher = Sha3_256::new();
     hasher.update(file_path.as_bytes());

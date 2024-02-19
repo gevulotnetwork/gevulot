@@ -40,16 +40,24 @@ enum ConfCommands {
         /// name of the deployment.
         #[clap(short, long, value_name = "DEPLOYMENT NAME")]
         name: String,
-        /// file path containing the program image of the prover to deploy or the hash  of the prover image file (--prover-img-url is mandatory in this case). If the  file doesn't exist, the parameter is used as a hash.
+        /// file path containing the program image of the prover to deploy or the hash  
+        /// of the prover image file (--prover-img-url is mandatory in this case). 
+        /// If the  file doesn't exist, the parameter is used as a hash.
         #[clap(short, long, value_name = "PROVER FILE or HASH")]
         prover: String,
-        /// file path containing the program image of the verifier to deploy or the hash  of the verifier image file (--verifier-img-url is mandatory in this case). If the file doesn't exist, the parameter is used as a hash.
+        /// file path containing the program image of the verifier to deploy or the hash 
+        /// of the verifier image file (--verifier-img-url is mandatory in this case). 
+        /// If the file doesn't exist, the parameter is used as a hash.
         #[clap(short, long, value_name = "VERIFIER FILE or HASH")]
         verifier: String,
-        /// url to get the prover image. If provided the prover will use this URL to get the prover image file. If not the cli tool starts a local HTTP server to serve the file to the node.
+        /// url to get the prover image. If provided the prover will use this URL 
+        /// to get the prover image file. If not the cli tool starts a local HTTP server 
+        /// to serve the file to the node.
         #[clap(long = "proverimgurl", value_name = "PROVER URL")]
         prover_img_url: Option<String>,
-        /// url to get the verifier image. If provided the verifier will use this URL to get the verifier image. If not the cli tool starts a local HTTP server to serve the file to the node.
+        /// url to get the verifier image. If provided the verifier will use this URL 
+        /// to get the verifier image. If not the cli tool starts a local HTTP server 
+        /// to serve the file to the node.
         #[clap(long = "verifierimgurl", value_name = "VERIFIER URL")]
         verifier_img_url: Option<String>,
         /// Address the local http server use by the node to download images.
@@ -83,7 +91,10 @@ enum ConfCommands {
         /// }]
         /// Example for proving and verification:
         /// --tasks '[
-        /// {"program":"9616d42b0d82c1ed06eab8eaa26680261ad831012bbf3ad8303738a53bf85c7c","cmd_args":[{"name":"--nonce","value":"42"}],"inputs":[]}
+        /// {
+        ///     "program":"9616d42b0d82c1ed06eab8eaa26680261ad831012bbf3ad8303738a53bf85c7c",
+        ///     "cmd_args":[{"name":"--nonce","value":"42"}],"inputs":[]
+        /// }
         ///,
         ///{
         /// "program":"37ef718f473a96e2dd56ac27fc175bfa08f4a30e34bdff5802e2f5071265a942",

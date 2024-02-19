@@ -87,20 +87,20 @@ pub async fn serve_file(
                             );
                         }
                     },
-                    //manage file download tracking.
+                    // manage file download tracking.
                     Some((file_digest, byte_len)) = counter_rx.recv() => {
                         download_started = true;
                         if let Some(pg) = pg_map.get(&file_digest) {
                             pg.inc(byte_len as u64);
-                            if pg.length().unwrap() <= pg.position() { //unwrap because always present, inited in the pg constructor.
+                            if pg.length().unwrap() <= pg.position() { // unwrap because always present, inited in the pg constructor.
                                 pg.finish_with_message("Uploaded");
                                 served_files.remove(&file_digest);
                             }
 
                         }
                         if served_files.is_empty() {
-                            //end of the download
-                            //wait that the  http download buffer flush.
+                            // end of the download
+                            // wait that the  http download buffer flush.
                             tokio::time::sleep(tokio::time::Duration::from_millis(250)).await;
                             break;
                         }
