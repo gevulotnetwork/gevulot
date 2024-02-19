@@ -25,7 +25,7 @@ pub async fn download_asset_file(
     http_client: &reqwest::Client,
     asset_file: File<Download>,
 ) -> Result<()> {
-    let local_relative_file_path = asset_file.get_relatif_path();
+    let local_relative_file_path = asset_file.get_save_path();
     tracing::info!("download_file:{asset_file:?} local_directory_path:{local_directory_path:?} local_relative_file_path:{local_relative_file_path:?} http_peer_list:{http_peer_list:?}");
     let mut resp = match tokio::time::timeout(
         tokio::time::Duration::from_secs(5),

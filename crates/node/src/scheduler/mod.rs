@@ -9,7 +9,12 @@ use crate::types::TaskState;
 use crate::vmm::vm_server::grpc;
 use crate::vmm::{vm_server::TaskManager, VMId};
 use crate::workflow::{WorkflowEngine, WorkflowError};
+use crate::{
+    mempool::Mempool,
+    types::{Hash, Task},
+};
 use async_trait::async_trait;
+use eyre::Result;
 use gevulot_node::types::transaction::Payload;
 use gevulot_node::types::{TaskKind, Transaction};
 use libsecp256k1::SecretKey;
@@ -17,24 +22,15 @@ pub use program_manager::ProgramManager;
 use rand::RngCore;
 pub use resource_manager::ResourceManager;
 use std::path::PathBuf;
-use uuid::Uuid;
-
 use std::time::Instant;
 use std::{
     collections::{HashMap, VecDeque},
     sync::Arc,
     time::Duration,
 };
-
-use eyre::Result;
 use tokio::{
     sync::{Mutex, RwLock},
     time::sleep,
-};
-
-use crate::{
-    mempool::Mempool,
-    types::{Hash, Task},
 };
 
 use self::program_manager::{ProgramError, ProgramHandle};
@@ -422,7 +418,7 @@ impl TaskManager for Scheduler {
                 );
             }
 
-            //move and build output files of the Tx execution
+            // Handle tx execution's result files so that they are available as an input for next task if needed.
             let executed_files: Vec<(File<Vm>, File<ProofVerif>)> = result
                 .files
                 .into_iter()
@@ -432,11 +428,6 @@ impl TaskManager for Scheduler {
                         file.checksum[..].into(),
                         running_task.task.tx,
                     );
-
-                    let uuid = Uuid::new_v4();
-                    //format file_name to keep the current filename and the uuid.
-                    //put uuid at the end so that the uuid is use to save the file.
-                    let new_file_name = format!("{}/{}", file.path, uuid);
                     let dest = File::<ProofVerif>::new(
                         file.path,
                         self.http_download_host.clone(),

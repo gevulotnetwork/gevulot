@@ -473,7 +473,7 @@ mod tests {
         (peer, tx_sender, txreceiver1)
     }
 
-    //TODO change by impl From when module declaration between main and lib are solved.
+    // TODO: Change to `impl From` form when module declaration between main and lib is solved.
     fn into_receive(tx: Transaction<Validated>) -> Transaction<Received> {
         Transaction {
             author: tx.author,

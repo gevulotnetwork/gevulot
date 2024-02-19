@@ -89,8 +89,11 @@ impl File<Download> {
         File::build(name, url, checksum, Download(tx_hash.to_string()))
     }
 
-    pub fn get_relatif_path(&self) -> PathBuf {
-        let file_name = Path::new(&self.name).file_name().unwrap();
+    // Save Relative File path for downloaded files is <Tx Hash>/<self.name>
+    pub fn get_save_path(&self) -> PathBuf {
+        let file_name = Path::new(&self.name)
+            .file_name()
+            .unwrap_or(std::ffi::OsStr::new(""));
         let mut path = PathBuf::from(&self.extention.0);
         path.push(file_name);
         path
@@ -101,30 +104,21 @@ impl File<Download> {
 pub struct ProofVerif;
 impl File<ProofVerif> {
     pub fn new(path: String, http_download_host: String, checksum: Hash) -> Self {
-        let uuid = uuid::Uuid::new_v4();
-        //format file_name to keep the current filename and the uuid.
-        //put uuid at the end so that the uuid is use to save the file.
-        let new_file_name = format!("{}/{}", path, uuid);
-
-        File::build(new_file_name, http_download_host, checksum, ProofVerif)
+        File::build(path, http_download_host, checksum, ProofVerif)
     }
 
     pub fn into_download_file(self, tx_hash: Hash) -> File<Download> {
-        //get uuid from file name
-        let uuid = Path::new(&self.name).file_name().unwrap();
-        File::<Download>::new(
-            self.name.to_string(),
-            format!("{}/{}/{}", self.url, tx_hash, uuid.to_str().unwrap()),
-            self.checksum.to_string().into(),
-            tx_hash,
-        )
+        let relative_path = self.get_relatif_path(tx_hash).to_str().unwrap().to_string();
+        let url = format!("{}/{}", self.url, relative_path);
+        File::<Download>::new(relative_path, url, self.checksum.clone(), tx_hash)
     }
 
+    // Save Relative File path for ProofVerif files is <Tx Hash>/<self.checksum>/<filename>
     pub fn get_relatif_path(&self, tx_hash: Hash) -> PathBuf {
-        //get uuid from file name
-        let uuid = Path::new(&self.name).file_name().unwrap();
+        let file_name = Path::new(&self.name).file_name().unwrap_or_default();
         let mut path = PathBuf::from(tx_hash.to_string());
-        path.push(uuid);
+        path.push(self.checksum.to_string());
+        path.push(file_name);
         path
     }
 

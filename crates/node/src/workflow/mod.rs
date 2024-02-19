@@ -245,7 +245,8 @@ impl WorkflowEngine {
                     continue;
                 }
                 Payload::Verification { parent, .. } => {
-                    //if we return the parent Tx it's reexecuted an generate a duplicate key value violates unique constraint error in the db
+                    //// XXX: If we return the parent tx, it gets re-executed and would generate
+                    //// a duplicate key value violates unique constraint error in the db
                     tracing::debug!("finding workflow from parent {} of {}", &parent, tx_hash);
                     tx_hash = parent;
                     continue;

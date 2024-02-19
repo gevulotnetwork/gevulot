@@ -55,7 +55,7 @@ pub struct RpcSender;
 pub struct P2pSender;
 pub struct TxResultSender;
 
-//use to send a tx to the event process.
+// `TxEventSender` holds the received transaction of a specific state together with an optional callback interface.
 #[derive(Debug, Clone)]
 pub struct TxEventSender<T> {
     sender: UnboundedSender<(Transaction<Received>, Option<CallbackSender>)>,
