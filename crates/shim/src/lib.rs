@@ -233,7 +233,7 @@ impl GRPCClient {
             path: name.to_string(),
         };
 
-        let file_path = Path::new(&self.workspace).join(task_id).join(name);
+        let file_path = Path::new(&self.workspace).join(name);
         if let Some(parent) = file_path.parent() {
             if let Ok(false) = tokio::fs::try_exists(parent).await {
                 if let Err(err) = tokio::fs::create_dir_all(parent).await {
