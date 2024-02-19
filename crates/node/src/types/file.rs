@@ -82,11 +82,24 @@ impl<E> File<E> {
 
 //File type
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
-pub struct Download(String);
-//Asset file use download and install the file data locally.
+pub struct Download((String, bool));
+// Asset file use download and install the file data locally.
+// verify_exist: define if the exist verification do a real file system verification.
+// Only file path using checksum should do file exist verification.
 impl File<Download> {
-    pub fn new(name: String, url: String, checksum: Hash, tx_hash: Hash) -> Self {
-        File::build(name, url, checksum, Download(tx_hash.to_string()))
+    pub fn new(
+        name: String,
+        url: String,
+        checksum: Hash,
+        tx_hash: Hash,
+        verify_exist: bool,
+    ) -> Self {
+        File::build(
+            name,
+            url,
+            checksum,
+            Download((tx_hash.to_string(), verify_exist)),
+        )
     }
 
     // Save Relative File path for downloaded files is <Tx Hash>/<self.name>
@@ -94,9 +107,18 @@ impl File<Download> {
         let file_name = Path::new(&self.name)
             .file_name()
             .unwrap_or(std::ffi::OsStr::new(""));
-        let mut path = PathBuf::from(&self.extention.0);
+        let mut path = PathBuf::from(&self.extention.0 .0);
         path.push(file_name);
         path
+    }
+
+    pub async fn exist(&self, root_path: &Path) -> bool {
+        if self.extention.0 .1 {
+            let file_path = root_path.join(&root_path);
+            tokio::fs::try_exists(file_path).await.unwrap_or(false)
+        } else {
+            false
+        }
     }
 }
 
@@ -110,7 +132,7 @@ impl File<ProofVerif> {
     pub fn into_download_file(self, tx_hash: Hash) -> File<Download> {
         let relative_path = self.get_relatif_path(tx_hash).to_str().unwrap().to_string();
         let url = format!("{}/{}", self.url, relative_path);
-        File::<Download>::new(relative_path, url, self.checksum.clone(), tx_hash)
+        File::<Download>::new(relative_path, url, self.checksum.clone(), tx_hash, true)
     }
 
     // Save Relative File path for ProofVerif files is <Tx Hash>/<self.checksum>/<filename>
@@ -124,6 +146,11 @@ impl File<ProofVerif> {
 
     pub fn vec_to_bytes(vec: &[File<ProofVerif>]) -> Result<Vec<u8>, bincode::Error> {
         bincode::serialize(vec)
+    }
+
+    pub async fn exist(&self, root_path: &Path) -> bool {
+        let file_path = root_path.join(&root_path);
+        tokio::fs::try_exists(file_path).await.unwrap_or(false)
     }
 }
 
@@ -151,6 +178,11 @@ impl File<Vm> {
         path.push(file_path);
         path
     }
+
+    pub async fn remove_file(&self, base_path: &Path) -> std::io::Result<()> {
+        let src_file_path = base_path.join(self.get_relatif_path());
+        tokio::fs::remove_file(src_file_path).await
+    }
 }
 
 pub async fn move_vmfile(
@@ -159,27 +191,37 @@ pub async fn move_vmfile(
     base_path: &Path,
     proofverif_tx_hash: Hash,
 ) -> Result<()> {
-    let src_file_path = base_path.to_path_buf().join(source.get_relatif_path());
-    let dst_file_path = base_path
-        .to_path_buf()
-        .join(dest.get_relatif_path(proofverif_tx_hash));
+    // If the dest file already exist don't copy it.
+    // Remove it from the VM.
+    if dest.exist(base_path).await {
+        tracing::debug!(
+            "move_vmfile: dest file already exist. Rmove VM file:{:#?}",
+            source.get_relatif_path()
+        );
+        source.remove_file(base_path).await.map_err(|e| e.into())
+    } else {
+        let src_file_path = base_path.to_path_buf().join(source.get_relatif_path());
+        let dst_file_path = base_path
+            .to_path_buf()
+            .join(dest.get_relatif_path(proofverif_tx_hash));
 
-    tracing::debug!(
-        "moving file from {:#?} to {:#?}",
-        src_file_path,
-        dst_file_path
-    );
+        tracing::debug!(
+            "move_vmfile: moving file from {:#?} to {:#?}",
+            src_file_path,
+            dst_file_path
+        );
 
-    // Ensure any necessary subdirectories exists.
-    if let Some(parent) = dst_file_path.parent() {
-        tokio::fs::create_dir_all(parent)
+        // Ensure any necessary subdirectories exists.
+        if let Some(parent) = dst_file_path.parent() {
+            tokio::fs::create_dir_all(parent)
+                .await
+                .expect("task file mkdir");
+        }
+
+        tokio::fs::rename(src_file_path, dst_file_path)
             .await
-            .expect("task file mkdir");
+            .map_err(|e| e.into())
     }
-
-    tokio::fs::rename(src_file_path, dst_file_path)
-        .await
-        .map_err(|e| e.into())
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
@@ -204,7 +246,7 @@ impl From<File<Image>> for File<Download> {
             file.name,
             file.url,
             file.checksum,
-            Download(extention.to_str().unwrap().to_string()),
+            Download((extention.to_str().unwrap().to_string(), false)),
         )
     }
 }

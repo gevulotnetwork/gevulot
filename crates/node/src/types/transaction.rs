@@ -435,6 +435,7 @@ impl Transaction<Received> {
                             file_url.clone(),
                             checksum.to_string().into(),
                             self.hash,
+                            false,
                         ))
                     })
                     .collect()

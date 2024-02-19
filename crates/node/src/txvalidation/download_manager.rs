@@ -18,7 +18,7 @@ use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 use tokio_util::io::ReaderStream;
 
-/// download_file downloads file from the given `url` and saves it to file in `local_directory_path` + / + `file`.
+/// Downloads file from the given `url` and saves it to file in `local_directory_path` + / + `file path`.
 pub async fn download_asset_file(
     local_directory_path: &Path,
     http_peer_list: &[(SocketAddr, Option<u16>)],
@@ -27,6 +27,16 @@ pub async fn download_asset_file(
 ) -> Result<()> {
     let local_relative_file_path = asset_file.get_save_path();
     tracing::info!("download_file:{asset_file:?} local_directory_path:{local_directory_path:?} local_relative_file_path:{local_relative_file_path:?} http_peer_list:{http_peer_list:?}");
+
+    // Detect if the file already exist. If yes don't download.
+    if asset_file.exist(&local_relative_file_path).await {
+        tracing::trace!(
+            "download_asset_file: File already exist, skip download: {:#?}",
+            asset_file.get_save_path()
+        );
+        return Ok(());
+    }
+
     let mut resp = match tokio::time::timeout(
         tokio::time::Duration::from_secs(5),
         http_client.get(asset_file.url).send(),
