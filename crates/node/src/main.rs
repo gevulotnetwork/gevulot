@@ -14,8 +14,7 @@ use asset_manager::AssetManager;
 use async_trait::async_trait;
 use clap::Parser;
 use cli::{
-    Cli, Command, Config, GenerateCommand, NodeKeyOptions, P2PBeaconConfig, PeerCommand,
-    ShowCommand,
+    Cli, Command, Config, GenerateCommand, KeyOptions, P2PBeaconConfig, PeerCommand, ShowCommand,
 };
 use eyre::Result;
 use gevulot_node::types;
@@ -67,7 +66,11 @@ async fn main() -> Result<()> {
 
     match cli.subcommand {
         Command::Generate { target } => match target {
-            GenerateCommand::NodeKey { options } => generate_node_key(options),
+            GenerateCommand::NodeKey { options } => {
+                eprintln!("WARNING: `node-key` command is deprecated. Please use `key` instead.");
+                generate_key(options)
+            }
+            GenerateCommand::Key { options } => generate_key(options),
         },
         Command::Migrate { db_url } => {
             let pool = PgPoolOptions::new()
@@ -104,22 +107,23 @@ async fn main() -> Result<()> {
     }
 }
 
-fn generate_node_key(opts: NodeKeyOptions) -> Result<()> {
+fn generate_key(opts: KeyOptions) -> Result<()> {
     let key = SecretKey::random(&mut StdRng::from_entropy());
+    let public_key = PublicKey::from_secret_key(&key);
     let mut fd = match std::fs::OpenOptions::new()
         .read(true)
         .write(true)
         .create_new(true)
-        .open(&opts.node_key_file)
+        .open(&opts.key_file)
     {
         Ok(fd) => fd,
         Err(err) => match err.kind() {
             ErrorKind::NotFound => {
-                eprintln!("directory for {:#?} doesn't exist", &opts.node_key_file);
+                eprintln!("directory for {:#?} doesn't exist", &opts.key_file);
                 std::process::exit(1);
             }
             ErrorKind::AlreadyExists => {
-                eprintln!("file {:#?} already exists", &opts.node_key_file);
+                eprintln!("file {:#?} already exists", &opts.key_file);
                 std::process::exit(1);
             }
             _ => return Err(err.into()),
@@ -128,6 +132,13 @@ fn generate_node_key(opts: NodeKeyOptions) -> Result<()> {
 
     fd.write_all(&key.serialize()[..])?;
     fd.flush()?;
+
+    println!(
+        "Key generated and saved in file {}\nPublic key: {}",
+        &opts.key_file.to_str().unwrap_or(""),
+        hex::encode(public_key.serialize()),
+    );
+
     Ok(())
 }
 
