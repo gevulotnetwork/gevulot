@@ -142,7 +142,7 @@ impl mempool::Storage for storage::Database {
     async fn set(&self, tx: &Transaction<Validated>) -> Result<()> {
         let tx_hash = tx.hash;
         self.add_transaction(tx).await?;
-        self.add_asset(&tx_hash).await?;
+        //        self.add_asset(&tx_hash).await?;
         self.mark_asset_complete(&tx_hash).await
     }
 

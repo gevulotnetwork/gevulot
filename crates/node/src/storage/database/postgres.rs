@@ -224,15 +224,15 @@ impl Database {
         Ok(())
     }
 
-    pub async fn add_asset(&self, tx_hash: &Hash) -> Result<()> {
-        sqlx::query!(
-            "INSERT INTO assets ( tx ) VALUES ( $1 ) RETURNING *",
-            tx_hash.to_string(),
-        )
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(())
-    }
+    // pub async fn add_asset(&self, tx_hash: &Hash) -> Result<()> {
+    //     sqlx::query!(
+    //         "INSERT INTO assets ( tx ) VALUES ( $1 ) RETURNING *",
+    //         tx_hash.to_string(),
+    //     )
+    //     .fetch_one(&self.pool)
+    //     .await?;
+    //     Ok(())
+    // }
 
     pub async fn has_assets_loaded(&self, tx_hash: &Hash) -> Result<bool> {
         let res: Option<i32> =
