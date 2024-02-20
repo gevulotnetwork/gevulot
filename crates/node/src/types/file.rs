@@ -114,7 +114,7 @@ impl File<Download> {
 
     pub async fn exist(&self, root_path: &Path) -> bool {
         if self.extention.0 .1 {
-            let file_path = root_path.join(root_path);
+            let file_path = root_path.join(self.get_save_path());
             tokio::fs::try_exists(file_path).await.unwrap_or(false)
         } else {
             false
@@ -148,8 +148,8 @@ impl File<ProofVerif> {
         bincode::serialize(vec)
     }
 
-    pub async fn exist(&self, root_path: &Path) -> bool {
-        let file_path = root_path.join(root_path);
+    pub async fn exist(&self, root_path: &Path, tx_hash: Hash) -> bool {
+        let file_path = root_path.join(self.get_relatif_path(tx_hash));
         tokio::fs::try_exists(file_path).await.unwrap_or(false)
     }
 }
@@ -193,9 +193,10 @@ pub async fn move_vmfile(
 ) -> Result<()> {
     // If the dest file already exist don't copy it.
     // Remove it from the VM.
-    if dest.exist(base_path).await {
+    if dest.exist(base_path, proofverif_tx_hash).await {
         tracing::debug!(
-            "move_vmfile: dest file already exist. Remove VM file:{:#?}",
+            "move_vmfile: dest file already exist:{:#?}. Remove VM file:{:#?}",
+            dest.get_relatif_path(proofverif_tx_hash),
             source.get_relatif_path()
         );
         source.remove_file(base_path).await.map_err(|e| e.into())
