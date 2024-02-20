@@ -106,17 +106,14 @@ impl VmService for VMServer {
         };
 
         let reply = match self.task_source.get_task(program, vm_id).await {
-            Some(task) => {
-                tracing::info!("task has {} files", task.files.len());
-                grpc::TaskResponse {
-                    result: Some(grpc::task_response::Result::Task(grpc::Task {
-                        id: task.id.to_string(),
-                        name: task.name.to_string(),
-                        args: task.args,
-                        files: task.files,
-                    })),
-                }
-            }
+            Some(task) => grpc::TaskResponse {
+                result: Some(grpc::task_response::Result::Task(grpc::Task {
+                    id: task.id.to_string(),
+                    name: task.name.to_string(),
+                    args: task.args,
+                    files: task.files,
+                })),
+            },
             None => grpc::TaskResponse {
                 result: Some(grpc::task_response::Result::Error(
                     grpc::TaskError::Unavailable.into(),

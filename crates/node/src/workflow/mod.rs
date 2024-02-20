@@ -44,7 +44,7 @@ impl WorkflowEngine {
     }
 
     pub async fn next_task(&self, cur_tx: &Transaction<Validated>) -> Result<Option<Task>> {
-        let workflow = self.workflow_for_transaction(&cur_tx.hash).await?;
+        let opt_workflow = self.workflow_for_transaction(&cur_tx.hash).await?;
 
         match &cur_tx.payload {
             Payload::Run { workflow } => {
@@ -70,6 +70,13 @@ impl WorkflowEngine {
                 ..
             } => {
                 tracing::debug!("creating next task from Proof tx {}", &cur_tx.hash);
+                let Some(workflow) = opt_workflow else {
+                    return Err(WorkflowError::WorkflowTransactionMissing(format!(
+                        "Proof tx with no workflow {}",
+                        cur_tx.hash.clone(),
+                    ))
+                    .into());
+                };
 
                 match workflow.steps.iter().position(|s| s.program == *prover) {
                     Some(proof_step_idx) => {
@@ -121,6 +128,13 @@ impl WorkflowEngine {
                     ..
                 } = proof_tx.payload
                 {
+                    let Some(workflow) = opt_workflow else {
+                        return Err(WorkflowError::WorkflowTransactionMissing(format!(
+                            "Proof tx with no workflow {}",
+                            cur_tx.hash.clone(),
+                        ))
+                        .into());
+                    };
                     match workflow.steps.iter().position(|s| s.program == prover) {
                         Some(proof_step_idx) => {
                             if workflow.steps.len() <= proof_step_idx {
@@ -155,6 +169,14 @@ impl WorkflowEngine {
                 // Ideally it's not the right place to execute a Tx
                 // but as the execution is nothing, it's more convenient.
                 tracing::debug!("Mark as executed Payload::Verification tx {}", &cur_tx.hash);
+                self.tx_store.mark_tx_executed(&cur_tx.hash).await?;
+                Ok(None)
+            }
+            Payload::Deploy { .. } => {
+                // Execute the Deploy tx by setting to executed.
+                // Ideally it's not the right place to execute a Tx
+                // but as the execution is only a move of file that has been done, it's more convenient.
+                tracing::debug!("Mark as executed Payload::Deploy tx {}", &cur_tx.hash);
                 self.tx_store.mark_tx_executed(&cur_tx.hash).await?;
                 Ok(None)
             }
@@ -223,7 +245,7 @@ impl WorkflowEngine {
         }
     }
 
-    async fn workflow_for_transaction(&self, tx_hash: &Hash) -> Result<Workflow> {
+    async fn workflow_for_transaction(&self, tx_hash: &Hash) -> Result<Option<Workflow>> {
         let mut tx_hash = *tx_hash;
 
         tracing::debug!("finding workflow for transaction {}", tx_hash);
@@ -240,7 +262,7 @@ impl WorkflowEngine {
             match tx.unwrap().payload {
                 Payload::Run { workflow } => {
                     tracing::debug!("workflow found for transaction {}", tx_hash);
-                    return Ok(workflow);
+                    return Ok(Some(workflow));
                 }
                 Payload::Proof { parent, .. } => {
                     //if we return the parent Tx it's reexecuted an generate a duplicate key value violates unique constraint error in the db
@@ -260,6 +282,7 @@ impl WorkflowEngine {
                     tx_hash = parent;
                     continue;
                 }
+                Payload::Deploy { .. } => return Ok(None),
                 payload => {
                     tracing::debug!(
                         "failed to find workflow for transaction {}: incompatible transaction :{payload:?}",
