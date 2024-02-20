@@ -622,6 +622,7 @@ impl Database {
                 verification,
                 files,
             } => {
+                tracing::trace!("Postgres add_transaction tx:{}", tx.hash.to_string());
                 sqlx::query(
                     "INSERT INTO verification ( tx, parent, verifier, verification ) VALUES ( $1, $2, $3, $4 ) ON CONFLICT (tx) DO NOTHING",
                 )

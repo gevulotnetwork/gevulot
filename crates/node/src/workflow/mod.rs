@@ -31,6 +31,7 @@ pub enum WorkflowError {
 #[async_trait]
 pub trait TransactionStore: Sync + Send {
     async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction<Validated>>>;
+    async fn mark_tx_executed(&self, tx_hash: &Hash) -> Result<()>;
 }
 
 pub struct WorkflowEngine {
@@ -148,6 +149,14 @@ impl WorkflowEngine {
                 } else {
                     Err(WorkflowError::IncompatibleTransaction(proof_tx.hash.to_string()).into())
                 }
+            }
+            Payload::Verification { .. } => {
+                // Execute the verify tx by setting to executed.
+                // Ideally it's not the right place to execute a Tx
+                // but as the execution is nothing, it's more convenient.
+                tracing::debug!("Mark as executed Payload::Verification tx {}", &cur_tx.hash);
+                self.tx_store.mark_tx_executed(&cur_tx.hash).await?;
+                Ok(None)
             }
             _ => Err(WorkflowError::IncompatibleTransaction(
                 "unsupported payload type".to_string(),
@@ -327,6 +336,10 @@ mod tests {
     impl TransactionStore for TxStore {
         async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction<Validated>>> {
             Ok(self.txs.get(tx_hash).cloned())
+        }
+        async fn mark_tx_executed(&self, tx_hash: &Hash) -> Result<()> {
+            // Do nothing because the txs map can't be modified behind a &self.
+            Ok(())
         }
     }
 

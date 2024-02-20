@@ -163,6 +163,9 @@ impl workflow::TransactionStore for storage::Database {
     async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction<Validated>>> {
         self.find_transaction(tx_hash).await
     }
+    async fn mark_tx_executed(&self, tx_hash: &Hash) -> Result<()> {
+        self.mark_tx_executed(tx_hash).await
+    }
 }
 
 async fn run(config: Arc<Config>) -> Result<()> {
