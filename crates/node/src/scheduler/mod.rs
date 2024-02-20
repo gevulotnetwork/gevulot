@@ -392,7 +392,7 @@ impl TaskManager for Scheduler {
         vm_id: Arc<dyn VMId>,
         result: grpc::task_result_request::Result,
     ) -> bool {
-        dbg!(&result);
+        tracing::debug!("submit_result  result:{result:?}");
 
         let grpc::task_result_request::Result::Task(result) = result else {
             todo!("task failed; handle it correctly")
