@@ -15,6 +15,7 @@ blake3 = "1.5"
 bytes = "1.5"
 clap = { version = "4", features = ["derive", "env", "string"] }
 console-subscriber = "0.2"
+flate2 = "1.0"
 ecies = {version = "0.2", default-features = false, features = ["pure"]}
 eyre = "0.6.8"
 futures-util = "0.3"

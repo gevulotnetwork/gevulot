@@ -1159,6 +1159,7 @@ dependencies = [
  "console-subscriber",
  "ecies",
  "eyre",
+ "flate2",
  "futures-util",
  "hex",
  "home",
