@@ -174,6 +174,24 @@ pub enum Payload {
     },
 }
 
+impl std::fmt::Display for Payload {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let payload = match self {
+            Payload::Empty => "Empty",
+            Payload::Transfer { .. } => "Transfer",
+            Payload::Stake { .. } => "Stake",
+            Payload::Unstake { .. } => "Unstake",
+            Payload::Deploy { .. } => "Deploy",
+            Payload::Run { .. } => "Run",
+            Payload::Proof { .. } => "Proof",
+            Payload::ProofKey { .. } => "ProofKey",
+            Payload::Verification { .. } => "Verification",
+            Payload::Cancel { .. } => "Cancel",
+        };
+        write!(f, "({})", payload)
+    }
+}
+
 impl Payload {
     pub fn serialize_into(&self, buf: &mut Vec<u8>) {
         match self {
@@ -345,6 +363,12 @@ impl Transaction<Created> {
         };
 
         tx.sign(signing_key);
+
+        tracing::debug!(
+            "Transaction::new tx:{} payload:{}",
+            tx.hash.to_string(),
+            tx.payload
+        );
 
         tx
     }

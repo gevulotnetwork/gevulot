@@ -370,8 +370,9 @@ impl Reading for P2P {
             Ok(protocol::Message::V0(msg)) => match msg {
                 protocol::MessageV0::Transaction(tx) => {
                     tracing::debug!(
-                        "received transaction {} author:{}",
+                        "received transaction {}:{} author:{}",
                         tx.hash,
+                        tx.payload,
                         hex::encode(tx.author.serialize())
                     );
                     let tx: Transaction<Created> = Transaction {

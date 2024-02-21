@@ -120,6 +120,7 @@ impl VmService for VMServer {
                 )),
             },
         };
+        tracing::trace!("VMServer get_task reply: {:?}", reply);
 
         Ok(Response::new(reply))
     }
@@ -301,6 +302,11 @@ impl VmService for VMServer {
                 ));
             }
         };
+
+        tracing::trace!(
+            "VMServer submit_result program:{}, vm_id:{vm_id}",
+            program.to_string()
+        );
 
         let result = request.into_inner().result;
 

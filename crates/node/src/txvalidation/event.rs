@@ -166,7 +166,11 @@ impl TxEvent<PropagateTx> {
             executed: self.tx.executed,
             state: Validated,
         };
-        tracing::info!("Tx validation propagate tx:{}", tx.hash.to_string());
+        tracing::info!(
+            "Tx validation propagate tx:{} payload:{}",
+            tx.hash.to_string(),
+            tx.payload
+        );
         p2p_sender.send(tx).map_err(|err| Box::new(err).into())
     }
 }
@@ -184,7 +188,11 @@ impl TxEvent<NewTx> {
             executed: self.tx.executed,
             state: Validated,
         };
-        tracing::info!("Tx validation save tx:{}", tx.hash.to_string());
+        tracing::info!(
+            "Tx validation save tx:{}  payload:{}",
+            tx.hash.to_string(),
+            tx.payload
+        );
         mempool
             .add(tx)
             .map_err(|err| EventProcessError::SaveTxError(format!("{err}")))

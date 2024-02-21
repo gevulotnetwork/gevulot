@@ -266,7 +266,11 @@ impl Provider for Qemu {
             cmd.stderr(Stdio::from(stderr));
         }
 
-        tracing::info!("starting QEMU. args:\n{:#?}\n", cmd.get_args());
+        tracing::info!(
+            "Program:{} starting QEMU. args:\n{:#?}\n",
+            program.hash.to_string(),
+            cmd.get_args(),
+        );
 
         qemu_vm_handle.child = Some(cmd.spawn().expect("failed to start VM"));
 
