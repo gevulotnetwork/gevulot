@@ -2,11 +2,10 @@ pub mod download_manager;
 pub mod p2p;
 
 use eyre::{eyre, Result};
-use flate2::read::GzDecoder;
-use std::{
-    io::{BufRead, BufReader},
-    sync::Arc,
-};
+use futures_util::TryStreamExt;
+use std::sync::Arc;
+use tokio::io::AsyncBufReadExt;
+use tokio_util::io::StreamReader;
 
 pub use p2p::P2P;
 
@@ -24,30 +23,26 @@ impl WhitelistSyncer {
 
     pub async fn sync(&self) -> Result<()> {
         let url = reqwest::Url::parse(&self.url)?;
-        let resp = reqwest::Client::new().get(url.clone()).send().await?;
+        let client = reqwest::ClientBuilder::new().gzip(true).build()?;
+
+        let resp = client.get(url.clone()).send().await?;
 
         if resp.status() == reqwest::StatusCode::OK {
-            match resp.bytes().await {
-                Ok(bs) => {
-                    let mut key_count = 0;
+            let reader = StreamReader::new(
+                resp.bytes_stream()
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e)),
+            );
 
-                    // XXX: This is kind of a blocking operation as this
-                    // processes the whole whitelist file in one blocking go.
-                    let mut decoder = BufReader::new(GzDecoder::new(&bs[..]));
-                    let mut buf = String::new();
-                    while decoder.read_line(&mut buf).is_ok() {
-                        let public_key = crate::entity::PublicKey::try_from(buf.as_str())?;
-                        self.database.acl_whitelist(&public_key).await?;
-                        buf.clear();
-                        key_count += 1;
-                    }
-
-                    tracing::info!("{} keys whitelisted", key_count);
-
-                    Ok(())
-                }
-                Err(err) => Err(eyre!("failed to read server response: {}", err)),
+            let mut lines = reader.lines();
+            let mut key_count = 0;
+            while let Ok(Some(line)) = lines.next_line().await {
+                let public_key = crate::entity::PublicKey::try_from(line.as_str())?;
+                self.database.acl_whitelist(&public_key).await?;
+                key_count += 1;
             }
+
+            tracing::info!("{} keys whitelisted", key_count);
+            Ok(())
         } else {
             Err(eyre!(
                 "failed to download file from {}: response status: {}",
