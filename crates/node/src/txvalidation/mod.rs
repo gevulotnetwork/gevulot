@@ -153,6 +153,8 @@ pub async fn spawn_event_loop(
                 //process RcvTx(EventTx<SourceTxType>) event
                 let http_peer_list = convert_peer_list_to_vec(&http_peer_list).await;
 
+                tracing::trace!("txvalidation receive event:{}", event.tx.hash.to_string());
+
                 //process the receive event
                 tokio::spawn({
                     let p2p_sender = p2p_sender.clone();
@@ -163,17 +165,33 @@ pub async fn spawn_event_loop(
                         let res = event
                             .process_event(acl_whitelist.as_ref())
                             .and_then(|download_event| {
+                                tracing::trace!(
+                                    "txvalidation before download:{}",
+                                    download_event.tx.hash.to_string()
+                                );
                                 download_event.process_event(&local_directory_path, http_peer_list)
                             })
                             .and_then(|(new_tx, propagate_tx)| async move {
                                 if let Some(propagate_tx) = propagate_tx {
+                                    tracing::trace!(
+                                        "txvalidation before propagate:{}",
+                                        propagate_tx.tx.hash.to_string()
+                                    );
                                     propagate_tx.process_event(&p2p_sender).await?;
                                 }
+                                tracing::trace!(
+                                    "txvalidation before new:{}",
+                                    new_tx.tx.hash.to_string()
+                                );
                                 new_tx.process_event(&mut *(mempool.write().await)).await?;
 
                                 Ok(())
                             })
                             .await;
+                        //log the error if any error is return
+                        if let Err(ref err) = res {
+                            tracing::error!("An error occurs during Tx validation: {err}",);
+                        }
                         //send the execution result back if needed.
                         if let Some(callback) = callback {
                             //forget the result because if the RPC connection is closed the send can fail.

@@ -127,6 +127,7 @@ impl TxEvent<DownloadTx> {
         let futures: Vec<_> = asset_file_list
             .into_iter()
             .map(|asset_file| {
+                tracing::trace!("txvalidation process_event download for file :{asset_file:?}",);
                 download_manager::download_asset_file(
                     local_directory_path,
                     &http_peer_list,
