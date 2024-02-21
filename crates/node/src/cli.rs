@@ -7,10 +7,9 @@ pub struct Config {
     #[arg(
         long,
         long_help = "Peer whitelist URL",
-        env = "GEVULOT_ACL_WHITELIST_URL",
-        default_value = "https://gevulot.com/acl/devnet.gz"
+        env = "GEVULOT_ACL_WHITELIST_URL"
     )]
-    pub acl_whitelist_url: String,
+    pub acl_whitelist_url: Option<String>,
 
     #[arg(
         long,
