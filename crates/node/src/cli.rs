@@ -6,6 +6,14 @@ use clap::{Args, Parser, Subcommand};
 pub struct Config {
     #[arg(
         long,
+        long_help = "Peer whitelist URL",
+        env = "GEVULOT_ACL_WHITELIST_URL",
+        default_value = "https://gevulot.com/acl/devnet.gz"
+    )]
+    pub acl_whitelist_url: String,
+
+    #[arg(
+        long,
         long_help = "Directory where the node should store its data",
         env = "GEVULOT_DATA_DIRECTORY", 
         default_value_os_t = PathBuf::from("/var/lib/gevulot"),

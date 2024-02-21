@@ -353,8 +353,47 @@ impl TaskManager for Scheduler {
             vm_id
         );
 
-        if let Some(task_queue) = self.task_queue.lock().await.get(&program) {
-            if let Some((task, scheduled)) = task_queue.front() {
+        // Ensure that the VM requesting for a task is not already executing one!
+        let mut running_tasks = self.running_tasks.lock().await;
+        if let Some(idx) = running_tasks.iter().position(|e| e.vm_id.eq(vm_id.clone())) {
+            // A VM that is already running a task, requests for a new one.
+            // Mark the existing task as executed and stop the VM.
+            let running_task = running_tasks.swap_remove(idx);
+            tracing::info!(
+                "task {} has been running {}sec but found to be orphaned. marking it as executed.",
+                running_task.task.id,
+                running_task.task_started.elapsed().as_secs()
+            );
+
+            if let Err(err) = self.database.mark_tx_executed(&running_task.task.tx).await {
+                tracing::error!(
+                    "failed to update transaction.executed => true - tx.hash: {} error:{err}",
+                    &running_task.task.tx
+                );
+            }
+
+            tracing::debug!("terminating VM {} running program {}", vm_id, program);
+
+            let mut running_vms = self.running_vms.lock().await;
+            let idx = running_vms.iter().position(|e| e.vm_id().eq(vm_id.clone()));
+            if idx.is_some() {
+                let program_handle = running_vms.remove(idx.unwrap());
+                if let Err(err) = self
+                    .program_manager
+                    .lock()
+                    .await
+                    .stop_program(program_handle)
+                    .await
+                {
+                    tracing::error!("failed to stop program {}: {}", program, err);
+                }
+            }
+
+            return None;
+        }
+
+        if let Some(task_queue) = self.task_queue.lock().await.get_mut(&program) {
+            if let Some((task, scheduled)) = task_queue.pop_front() {
                 tracing::debug!(
                     "task {} found for program {} running in vm_id {}",
                     task.id,
@@ -370,7 +409,7 @@ impl TaskManager for Scheduler {
                 self.running_tasks.lock().await.push(RunningTask {
                     task: task.clone(),
                     vm_id: vm_id.clone(),
-                    task_scheduled: *scheduled,
+                    task_scheduled: scheduled,
                     task_started: Instant::now(),
                 });
 
