@@ -3,7 +3,6 @@
 .DS_Store
 .idea
 *.pki
-**/.sqlx
 crates/tests/e2e-tests/files
 crates/tests/e2e-tests/prover
 crates/tests/e2e-tests/verifier
