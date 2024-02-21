@@ -406,7 +406,7 @@ impl TaskManager for Scheduler {
                     scheduled.elapsed().as_millis()
                 );
 
-                self.running_tasks.lock().await.push(RunningTask {
+                running_tasks.push(RunningTask {
                     task: task.clone(),
                     vm_id: vm_id.clone(),
                     task_scheduled: scheduled,
