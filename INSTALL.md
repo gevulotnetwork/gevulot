@@ -216,6 +216,10 @@ WantedBy=default.target
 Requires=gevulot-postgres.service
 After=gevulot-postgres.service
 
+[Service]
+Restart=on-failure
+RestartSec=5s
+
 [Container]
 ContainerName=gevulot-node
 
