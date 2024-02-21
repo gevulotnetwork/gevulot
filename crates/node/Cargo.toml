@@ -18,7 +18,7 @@ console-subscriber = "0.2"
 ecies = {version = "0.2", default-features = false, features = ["pure"]}
 eyre = "0.6.8"
 futures = "0.3.30"
-futures-util = "0.3"
+futures-util = { version = "0.3", features = [ "io" ] }
 hex = "0.4"
 home = "0.5"
 http-body-util = "0.1"
@@ -33,14 +33,14 @@ pea2pea = "0.48"
 prost = "0.11"
 qapi = { version = "0.14", features = [ "qmp", "async-tokio-net" ]}
 rand = { version = "0.8", features = [ "std_rng" ] }
-reqwest = { version = "0.11", features = [ "stream" ] }
+reqwest = { version = "0.11", features = [ "gzip", "stream" ] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "^1.0.9"
 sha3 = "0.10"
 snow = "0.9"
 sqlx = { version = "0.7", features = ["postgres", "migrate", "runtime-tokio", "rust_decimal", "time", "tls-rustls", "uuid"] }
 thiserror = "1"
-tokio = { version = "1", features = ["full", "tracing"] }
+tokio = { version = "1", features = ["full", "io-util", "tracing"] }
 tokio-stream = "0.1"
 tokio-util = "0.7"
 tokio-vsock = { version = "0.4.0", features = ["tonic-conn"] }
