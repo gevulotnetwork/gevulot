@@ -193,7 +193,7 @@ This guide uses `/var/lib/gevulot`, which is also the default, but it is configu
 
 Each Gevulot node requires a keypair for operation. It can be generated with Gevulot node container:
 ```
-podman run -it -v /var/lib/gevulot:/var/lib/gevulot:z quay.io/gevulot/node:latest generate node-key 
+podman run -it -v /var/lib/gevulot:/var/lib/gevulot:z quay.io/gevulot/node:latest generate key
 ```
 
 ## Gevulot node systemd unit

@@ -115,13 +115,13 @@ pub struct Config {
 }
 
 #[derive(Debug, Args)]
-pub struct NodeKeyOptions {
+pub struct KeyOptions {
     #[arg(
         long,
-        long_help = "Node key filename",
+        long_help = "Key filename",
         default_value_os_t = PathBuf::from("/var/lib/gevulot/node.key"),
     )]
-    pub node_key_file: PathBuf,
+    pub key_file: PathBuf,
 }
 
 #[derive(Debug, Subcommand)]
@@ -189,9 +189,14 @@ pub struct P2PBeaconConfig {
 
 #[derive(Debug, Subcommand)]
 pub enum GenerateCommand {
+    Key {
+        #[command(flatten)]
+        options: KeyOptions,
+    },
+    // NOTE: Depracated. Will be eventually removed. Use `Key` instead.
     NodeKey {
         #[command(flatten)]
-        options: NodeKeyOptions,
+        options: KeyOptions,
     },
 }
 
