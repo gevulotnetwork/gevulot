@@ -165,24 +165,12 @@ pub async fn spawn_event_loop(
                         let res = event
                             .process_event(acl_whitelist.as_ref())
                             .and_then(|download_event| {
-                                tracing::trace!(
-                                    "txvalidation before download:{}",
-                                    download_event.tx.hash.to_string()
-                                );
                                 download_event.process_event(&local_directory_path, http_peer_list)
                             })
                             .and_then(|(new_tx, propagate_tx)| async move {
                                 if let Some(propagate_tx) = propagate_tx {
-                                    tracing::trace!(
-                                        "txvalidation before propagate:{}",
-                                        propagate_tx.tx.hash.to_string()
-                                    );
                                     propagate_tx.process_event(&p2p_sender).await?;
                                 }
-                                tracing::trace!(
-                                    "txvalidation before new:{}",
-                                    new_tx.tx.hash.to_string()
-                                );
                                 new_tx.process_event(&mut *(mempool.write().await)).await?;
 
                                 Ok(())

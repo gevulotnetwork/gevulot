@@ -224,45 +224,6 @@ impl Database {
         Ok(())
     }
 
-    // pub async fn add_asset(&self, tx_hash: &Hash) -> Result<()> {
-    //     sqlx::query!(
-    //         "INSERT INTO assets ( tx ) VALUES ( $1 ) RETURNING *",
-    //         tx_hash.to_string(),
-    //     )
-    //     .fetch_one(&self.pool)
-    //     .await?;
-    //     Ok(())
-    // }
-
-    pub async fn has_assets_loaded(&self, tx_hash: &Hash) -> Result<bool> {
-        let res: Option<i32> =
-            sqlx::query("SELECT 1 FROM assets WHERE completed IS NOT NULL AND tx = $1")
-                .bind(tx_hash)
-                .map(|row: sqlx::postgres::PgRow| row.get(0))
-                .fetch_optional(&self.pool)
-                .await?;
-
-        Ok(res.is_some())
-    }
-
-    pub async fn get_incomplete_assets(&self) -> Result<Vec<Hash>> {
-        let assets =
-            sqlx::query("SELECT tx FROM assets WHERE completed IS NULL ORDER BY created ASC")
-                .map(|row: sqlx::postgres::PgRow| row.get(0))
-                .fetch_all(&self.pool)
-                .await?;
-
-        Ok(assets)
-    }
-
-    pub async fn mark_asset_complete(&self, tx_hash: &Hash) -> Result<()> {
-        sqlx::query("UPDATE assets SET completed = NOW() WHERE tx = $1")
-            .bind(&tx_hash.to_string())
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
     // NOTE: There are plenty of opportunities for optimizations in following
     // transaction related operations. They are implemented naively on purpose
     // for now to maintain initial flexibility in development. Later on, these

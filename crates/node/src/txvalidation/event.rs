@@ -127,7 +127,6 @@ impl TxEvent<DownloadTx> {
         let futures: Vec<_> = asset_file_list
             .into_iter()
             .map(|asset_file| {
-                tracing::trace!("txvalidation process_event download for file :{asset_file:?}",);
                 download_manager::download_asset_file(
                     local_directory_path,
                     &http_peer_list,
@@ -141,8 +140,7 @@ impl TxEvent<DownloadTx> {
             .into_iter()
             .collect::<Result<Vec<_>, _>>()
             .map_err(|err| {
-                tracing::error!("Error during Tx file download:{err}");
-                EventProcessError::DownloadAssetError(format!("Exwecution error:{err}"))
+                EventProcessError::DownloadAssetError(format!("Execution error:{err}"))
             })?;
         let newtx: TxEvent<NewTx> = self.clone().into();
         let propagate: Option<TxEvent<PropagateTx>> = self.into();

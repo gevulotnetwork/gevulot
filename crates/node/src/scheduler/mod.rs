@@ -365,13 +365,6 @@ impl TaskManager for Scheduler {
                 running_task.task_started.elapsed().as_secs()
             );
 
-            if let Err(err) = self.database.mark_tx_executed(&running_task.task.tx).await {
-                tracing::error!(
-                    "failed to update transaction.executed => true - tx.hash: {} error:{err}",
-                    &running_task.task.tx
-                );
-            }
-
             tracing::debug!("terminating VM {} running program {}", vm_id, program);
 
             let mut running_vms = self.running_vms.lock().await;
@@ -449,13 +442,6 @@ impl TaskManager for Scheduler {
                 task_id,
                 running_task.task_started.elapsed().as_secs()
             );
-
-            if let Err(err) = self.database.mark_tx_executed(&running_task.task.tx).await {
-                tracing::error!(
-                    "failed to update transaction.executed => true - tx.hash: {} error:{err}",
-                    &running_task.task.tx
-                );
-            }
 
             // Handle tx execution's result files so that they are available as an input for next task if needed.
             let executed_files: Vec<(File<Vm>, File<ProofVerif>)> = result
