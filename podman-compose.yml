@@ -1,0 +1,32 @@
+version: 3.7
+
+services:
+  database:
+    image: docker.io/library/postgres:16-alpine
+    restart: always
+    volumes:
+      - ./crates/node/migrations:/docker-entrypoint-initdb.d:z
+      - ./data/db:/var/lib/postgres/data:z
+    environment:
+      - POSTGRES_USER=gevulot
+      - POSTGRES_PASSWORD=gevulot
+      - POSTGRES_DB=gevulot
+    ports:
+      - "5432:5432"
+    network_mode: host
+  node:
+    image: quay.io/gevulot/node:latest
+    privileged: true
+    restart: always
+    depends_on:
+      - database
+    volumes:
+      - ./data/node:/var/lib/gevulot:z
+    environment:
+      - GEVULOT_DB_URL=postgres://gevulot:gevulot@127.0.0.1/gevulot
+    devices:
+      - /dev/vsock:rw
+      - /dev/kvm:rw
+    ports:
+      - "9944:9944"
+    network_mode: host
