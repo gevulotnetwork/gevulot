@@ -450,7 +450,7 @@ mod tests {
 
     async fn new_rpc_server() -> RpcServer {
         let cfg = Arc::new(Config {
-            acl_whitelist_url: "http://127.0.0.1:0/does.not.exist".to_string(),
+            acl_whitelist_url: None,
             data_directory: temp_dir(),
             db_url: "postgres://gevulot:gevulot@localhost/gevulot".to_string(),
             json_rpc_listen_addr: "127.0.0.1:0".parse().unwrap(),

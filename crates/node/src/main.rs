@@ -213,18 +213,19 @@ async fn run(config: Arc<Config>) -> Result<()> {
     let file_storage = Arc::new(storage::File::new(&config.data_directory));
 
     // Launch the ACL whitelist syncing early in the startup.
-    let acl_whitelist_syncer =
-        WhitelistSyncer::new(config.acl_whitelist_url.clone(), database.clone());
-    tokio::spawn(async move {
-        loop {
-            if let Err(err) = acl_whitelist_syncer.sync().await {
-                tracing::warn!("failed to sync ACL whitelist: {}", err);
-            }
+    if let Some(ref whitelist_url) = config.acl_whitelist_url {
+        let acl_whitelist_syncer = WhitelistSyncer::new(whitelist_url.clone(), database.clone());
+        tokio::spawn(async move {
+            loop {
+                if let Err(err) = acl_whitelist_syncer.sync().await {
+                    tracing::warn!("failed to sync ACL whitelist: {}", err);
+                }
 
-            // Sync the whitelist every 10min.
-            sleep(Duration::from_secs(600));
-        }
-    });
+                // Sync the whitelist every 10min.
+                sleep(Duration::from_secs(600));
+            }
+        });
+    }
 
     let p2p = Arc::new(
         networking::P2P::new(
