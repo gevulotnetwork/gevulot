@@ -1,5 +1,5 @@
 use crate::file::FileData;
-use gevulot_node::types::transaction::ProgramMetadata;
+use gevulot_node::types::transaction::{Created, ProgramMetadata};
 use gevulot_node::types::Hash;
 use gevulot_node::{
     rpc_client::RpcClient,
@@ -203,7 +203,7 @@ pub async fn run_deploy_command(
     ))
 }
 
-async fn send_transaction(client: &RpcClient, tx: &Transaction) -> Result<Hash, String> {
+async fn send_transaction(client: &RpcClient, tx: &Transaction<Created>) -> Result<Hash, String> {
     client
         .send_transaction(tx)
         .await

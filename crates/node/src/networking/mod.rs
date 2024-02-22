@@ -1,4 +1,3 @@
-pub mod download_manager;
 pub mod p2p;
 
 use eyre::{eyre, Result};

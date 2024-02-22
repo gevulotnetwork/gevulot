@@ -2,34 +2,35 @@ mod program_manager;
 mod resource_manager;
 
 use crate::storage::Database;
+use crate::txvalidation::TxEventSender;
+use crate::txvalidation::TxResultSender;
+use crate::types::file::{move_vmfile, File, ProofVerif, Vm};
 use crate::types::TaskState;
 use crate::vmm::vm_server::grpc;
 use crate::vmm::{vm_server::TaskManager, VMId};
 use crate::workflow::{WorkflowEngine, WorkflowError};
+use crate::{
+    mempool::Mempool,
+    types::{Hash, Task},
+};
 use async_trait::async_trait;
+use eyre::Result;
 use gevulot_node::types::transaction::Payload;
 use gevulot_node::types::{TaskKind, Transaction};
 use libsecp256k1::SecretKey;
 pub use program_manager::ProgramManager;
 use rand::RngCore;
 pub use resource_manager::ResourceManager;
-
+use std::path::PathBuf;
 use std::time::Instant;
 use std::{
     collections::{HashMap, VecDeque},
     sync::Arc,
     time::Duration,
 };
-
-use eyre::Result;
 use tokio::{
     sync::{Mutex, RwLock},
     time::sleep,
-};
-
-use crate::{
-    mempool::Mempool,
-    types::{Hash, Task},
 };
 
 use self::program_manager::{ProgramError, ProgramHandle};
@@ -63,15 +64,22 @@ pub struct Scheduler {
     running_vms: Arc<Mutex<Vec<ProgramHandle>>>,
     #[allow(clippy::type_complexity)]
     task_queue: Arc<Mutex<HashMap<Hash, VecDeque<(Task, Instant)>>>>,
+    data_directory: PathBuf,
+    http_download_host: String,
+    tx_sender: TxEventSender<TxResultSender>,
 }
 
 impl Scheduler {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         mempool: Arc<RwLock<Mempool>>,
         database: Arc<Database>,
         program_manager: ProgramManager,
         workflow_engine: Arc<WorkflowEngine>,
         node_key: SecretKey,
+        data_directory: PathBuf,
+        http_download_host: String,
+        tx_sender: TxEventSender<TxResultSender>,
     ) -> Self {
         Self {
             mempool,
@@ -84,6 +92,9 @@ impl Scheduler {
             running_tasks: Arc::new(Mutex::new(vec![])),
             running_vms: Arc::new(Mutex::new(vec![])),
             task_queue: Arc::new(Mutex::new(HashMap::new())),
+            data_directory,
+            http_download_host,
+            tx_sender,
         }
     }
 
@@ -180,49 +191,33 @@ impl Scheduler {
         let mut mempool = self.mempool.write().await;
 
         // Check if next tx is ready for processing?
-        let tx = match mempool.peek() {
-            Some(tx) => {
-                if let Payload::Run { .. } = tx.payload {
-                    if self.database.has_assets_loaded(&tx.hash).await.unwrap() {
-                        mempool.next().unwrap()
-                    } else {
-                        // Assets are still downloading.
-                        // TODO: This can stall the whole processing pipeline!!
-                        // XXX: ....^.........^........^......^.......^........
-                        tracing::info!("assets for tx {} still loading", tx.hash);
-                        return None;
-                    }
-                } else {
-                    tracing::debug!("scheduling new task from tx {}", tx.hash);
-                    mempool.next().unwrap()
-                }
-            }
-            None => return None,
-        };
 
-        match self.workflow_engine.next_task(&tx).await {
-            Ok(res) => res,
-            Err(e) if e.is::<WorkflowError>() => {
-                let err = e.downcast_ref::<WorkflowError>();
-                match err {
-                    Some(WorkflowError::IncompatibleTransaction(_)) => {
-                        tracing::debug!("{}", e);
-                        None
-                    }
-                    _ => {
-                        tracing::error!(
-                            "workflow error, failed to compute next task for tx:{}: {}",
-                            tx.hash,
-                            e
-                        );
-                        None
+        match mempool.next() {
+            Some(tx) => match self.workflow_engine.next_task(&tx).await {
+                Ok(res) => res,
+                Err(e) if e.is::<WorkflowError>() => {
+                    let err = e.downcast_ref::<WorkflowError>();
+                    match err {
+                        Some(WorkflowError::IncompatibleTransaction(_)) => {
+                            tracing::debug!("{}", e);
+                            None
+                        }
+                        _ => {
+                            tracing::error!(
+                                "workflow error, failed to compute next task for tx:{}: {}",
+                                tx.hash,
+                                e
+                            );
+                            None
+                        }
                     }
                 }
-            }
-            Err(e) => {
-                tracing::error!("failed to compute next task for tx:{}: {}", tx.hash, e);
-                None
-            }
+                Err(e) => {
+                    tracing::error!("failed to compute next task for tx:{}: {}", tx.hash, e);
+                    None
+                }
+            },
+            None => None,
         }
     }
 
@@ -358,8 +353,40 @@ impl TaskManager for Scheduler {
             vm_id
         );
 
-        if let Some(task_queue) = self.task_queue.lock().await.get(&program) {
-            if let Some((task, scheduled)) = task_queue.front() {
+        // Ensure that the VM requesting for a task is not already executing one!
+        let mut running_tasks = self.running_tasks.lock().await;
+        if let Some(idx) = running_tasks.iter().position(|e| e.vm_id.eq(vm_id.clone())) {
+            // A VM that is already running a task, requests for a new one.
+            // Mark the existing task as executed and stop the VM.
+            let running_task = running_tasks.swap_remove(idx);
+            tracing::info!(
+                "task {} has been running {}sec but found to be orphaned. marking it as executed.",
+                running_task.task.id,
+                running_task.task_started.elapsed().as_secs()
+            );
+
+            tracing::debug!("terminating VM {} running program {}", vm_id, program);
+
+            let mut running_vms = self.running_vms.lock().await;
+            let idx = running_vms.iter().position(|e| e.vm_id().eq(vm_id.clone()));
+            if idx.is_some() {
+                let program_handle = running_vms.remove(idx.unwrap());
+                if let Err(err) = self
+                    .program_manager
+                    .lock()
+                    .await
+                    .stop_program(program_handle)
+                    .await
+                {
+                    tracing::error!("failed to stop program {}: {}", program, err);
+                }
+            }
+
+            return None;
+        }
+
+        if let Some(task_queue) = self.task_queue.lock().await.get_mut(&program) {
+            if let Some((task, scheduled)) = task_queue.pop_front() {
                 tracing::debug!(
                     "task {} found for program {} running in vm_id {}",
                     task.id,
@@ -372,10 +399,10 @@ impl TaskManager for Scheduler {
                     scheduled.elapsed().as_millis()
                 );
 
-                self.running_tasks.lock().await.push(RunningTask {
+                running_tasks.push(RunningTask {
                     task: task.clone(),
                     vm_id: vm_id.clone(),
-                    task_scheduled: *scheduled,
+                    task_scheduled: scheduled,
                     task_started: Instant::now(),
                 });
 
@@ -397,7 +424,7 @@ impl TaskManager for Scheduler {
         vm_id: Arc<dyn VMId>,
         result: grpc::task_result_request::Result,
     ) -> bool {
-        dbg!(&result);
+        tracing::debug!("submit_result  result:{result:#?}");
 
         let grpc::task_result_request::Result::Task(result) = result else {
             todo!("task failed; handle it correctly")
@@ -416,13 +443,71 @@ impl TaskManager for Scheduler {
                 running_task.task_started.elapsed().as_secs()
             );
 
-            if let Err(err) = self.database.mark_tx_executed(&running_task.task.tx).await {
-                tracing::error!(
-                    "failed to update transaction.executed => true - tx.hash: {} error:{err}",
-                    &running_task.task.tx
-                );
-            }
+            // Handle tx execution's result files so that they are available as an input for next task if needed.
+            let executed_files: Vec<(File<Vm>, File<ProofVerif>)> = result
+                .files
+                .into_iter()
+                .map(|file| {
+                    let vm_file = File::<Vm>::new(
+                        file.path.to_string(),
+                        file.checksum[..].into(),
+                        running_task.task.tx,
+                    );
+                    let dest = File::<ProofVerif>::new(
+                        file.path,
+                        self.http_download_host.clone(),
+                        file.checksum[..].into(),
+                    );
+                    (vm_file, dest)
+                })
+                .collect();
 
+            //TODO ? -Verify that all expected files has been generated.
+            // let executed_files: Vec<(VmFile, TxFile)> =
+            //     if let Ok(Some(tx)) = self.database.find_transaction(&running_task.task.tx).await {
+            //         if let Payload::Run { workflow } = tx.payload {
+            //             workflow
+            //                 .steps
+            //                 .iter()
+            //                 .flat_map(|step| &step.inputs)
+            //                 .filter_map(|input| {
+            //                     let ProgramData::Output {
+            //                         source_program,
+            //                         file_name,
+            //                     } = input
+            //                     else {
+            //                         return None;
+            //                     };
+            //                     let vm_file = VmFile {
+            //                         task_id: running_task.task.tx,
+            //                         name: file_name.to_string(),
+            //                     };
+
+            //                     let uuid = Uuid::new_v4();
+            //                     //format file_name to keep the current filename and the uuid.
+            //                     //put uuid at the end so that the uuid is use to save the file.
+            //                     let new_file_name = format!("{}/{}", file_name, uuid);
+            //                     let dest = TxFile {
+            //                         //Real url will be calculated during download.
+            //                         url: self.http_download_host.clone(),
+            //                         name: new_file_name,
+            //                         checksum: Hash::default(),
+            //                     };
+            //                     Some((vm_file, dest))
+            //                 })
+            //                 .collect()
+            //         } else {
+            //             vec![]
+            //         }
+            //     } else {
+            //         vec![]
+            //     };
+
+            let new_tx_files: Vec<File<ProofVerif>> = executed_files
+                .iter()
+                .map(|(_, file)| file)
+                .cloned()
+                .collect();
             let nonce = rand::thread_rng().next_u64();
             let tx = match running_task.task.kind {
                 TaskKind::Proof => Transaction::new(
@@ -430,6 +515,7 @@ impl TaskManager for Scheduler {
                         parent: running_task.task.tx,
                         prover: program,
                         proof: result.data,
+                        files: new_tx_files,
                     },
                     &self.node_key,
                 ),
@@ -438,6 +524,7 @@ impl TaskManager for Scheduler {
                         parent: running_task.task.tx,
                         verifier: program,
                         verification: result.data,
+                        files: new_tx_files,
                     },
                     &self.node_key,
                 ),
@@ -451,13 +538,29 @@ impl TaskManager for Scheduler {
                     );
                 }
             };
+            tracing::info!("Submit result Tx created:{}", tx.hash.to_string());
 
-            let mut mempool = self.mempool.write().await;
-            if let Err(err) = mempool.add(tx.clone()).await {
-                tracing::error!("failed to add transaction to mempool: {}", err);
+            //Move tx file from execution Tx path to new Tx path
+            for (source_file, dest_file) in executed_files {
+                tracing::trace!(
+                    "Move file {} checksum:{}",
+                    dest_file.name,
+                    dest_file.checksum
+                );
+                if let Err(err) =
+                    move_vmfile(&source_file, &dest_file, &self.data_directory, tx.hash).await
+                {
+                    tracing::error!(
+                        "failed to move excution file from: {source_file:?} to: {dest_file:?} error: {err}",
+                    );
+                }
+            }
+
+            //send tx to validation process.
+            if let Err(err) = self.tx_sender.send_tx(tx).await {
+                tracing::error!("failed to send Tx result to validation process: {}", err);
             } else {
-                dbg!(tx);
-                tracing::info!("successfully added new tx to mempool from task result");
+                tracing::info!("successfully sent new tx to tx validation from task result");
             }
 
             tracing::debug!("terminating VM {} running program {}", vm_id, program);

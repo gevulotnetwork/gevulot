@@ -1,15 +1,13 @@
-use std::sync::Arc;
-
+use crate::types::file::DbFile;
 use async_trait::async_trait;
 use eyre::Result;
 use gevulot_node::types::{
-    transaction::{Payload, ProgramData, Workflow, WorkflowStep},
-    File, Hash, Task, TaskKind, Transaction,
+    transaction::{Payload, Validated, Workflow, WorkflowStep},
+    Hash, Task, TaskKind, Transaction,
 };
+use std::sync::Arc;
 use thiserror::Error;
 use uuid::Uuid;
-
-use crate::storage;
 
 #[allow(clippy::enum_variant_names)]
 #[derive(Error, Debug, PartialEq)]
@@ -25,28 +23,28 @@ pub enum WorkflowError {
 
     #[error("transaction not found: {0}")]
     TransactionNotFound(Hash),
+
+    #[error("Program file definition error: {0}")]
+    FileDefinitionError(String),
 }
 
 #[async_trait]
 pub trait TransactionStore: Sync + Send {
-    async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction>>;
+    async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction<Validated>>>;
+    async fn mark_tx_executed(&self, tx_hash: &Hash) -> Result<()>;
 }
 
 pub struct WorkflowEngine {
     tx_store: Arc<dyn TransactionStore>,
-    file_storage: Arc<storage::File>,
 }
 
 impl WorkflowEngine {
-    pub fn new(tx_store: Arc<dyn TransactionStore>, file_storage: Arc<storage::File>) -> Self {
-        WorkflowEngine {
-            tx_store,
-            file_storage,
-        }
+    pub fn new(tx_store: Arc<dyn TransactionStore>) -> Self {
+        WorkflowEngine { tx_store }
     }
 
-    pub async fn next_task(&self, cur_tx: &Transaction) -> Result<Option<Task>> {
-        let workflow = self.workflow_for_transaction(&cur_tx.hash).await?;
+    pub async fn next_task(&self, cur_tx: &Transaction<Validated>) -> Result<Option<Task>> {
+        let opt_workflow = self.workflow_for_transaction(&cur_tx.hash).await?;
 
         match &cur_tx.payload {
             Payload::Run { workflow } => {
@@ -69,12 +67,20 @@ impl WorkflowEngine {
                 parent,
                 prover,
                 proof,
+                ..
             } => {
                 tracing::debug!("creating next task from Proof tx {}", &cur_tx.hash);
+                let Some(workflow) = opt_workflow else {
+                    return Err(WorkflowError::WorkflowTransactionMissing(format!(
+                        "Proof tx with no workflow {}",
+                        cur_tx.hash.clone(),
+                    ))
+                    .into());
+                };
 
                 match workflow.steps.iter().position(|s| s.program == *prover) {
                     Some(proof_step_idx) => {
-                        if proof_step_idx <= workflow.steps.len() {
+                        if workflow.steps.len() <= proof_step_idx {
                             Err(WorkflowError::WorkflowStepMissing(format!(
                                 "verifier for proof tx {}",
                                 cur_tx.hash.clone(),
@@ -119,8 +125,16 @@ impl WorkflowEngine {
                     parent,
                     prover,
                     proof,
+                    ..
                 } = proof_tx.payload
                 {
+                    let Some(workflow) = opt_workflow else {
+                        return Err(WorkflowError::WorkflowTransactionMissing(format!(
+                            "Proof tx with no workflow {}",
+                            cur_tx.hash.clone(),
+                        ))
+                        .into());
+                    };
                     match workflow.steps.iter().position(|s| s.program == prover) {
                         Some(proof_step_idx) => {
                             if workflow.steps.len() <= proof_step_idx {
@@ -149,6 +163,22 @@ impl WorkflowEngine {
                 } else {
                     Err(WorkflowError::IncompatibleTransaction(proof_tx.hash.to_string()).into())
                 }
+            }
+            Payload::Verification { .. } => {
+                // Execute the verify tx by setting to executed.
+                // Ideally it's not the right place to execute a Tx
+                // but as the execution is nothing, it's more convenient.
+                tracing::debug!("Mark as executed Payload::Verification tx {}", &cur_tx.hash);
+                self.tx_store.mark_tx_executed(&cur_tx.hash).await?;
+                Ok(None)
+            }
+            Payload::Deploy { .. } => {
+                // Execute the Deploy tx by setting to executed.
+                // Ideally it's not the right place to execute a Tx
+                // but as the execution is only a move of file that has been done, it's more convenient.
+                tracing::debug!("Mark as executed Payload::Deploy tx {}", &cur_tx.hash);
+                self.tx_store.mark_tx_executed(&cur_tx.hash).await?;
+                Ok(None)
             }
             _ => Err(WorkflowError::IncompatibleTransaction(
                 "unsupported payload type".to_string(),
@@ -204,9 +234,9 @@ impl WorkflowEngine {
                     cur_tx = parent;
                     continue;
                 }
-                _ => {
+                payload => {
                     tracing::debug!(
-                        "failed to find workflow for transaction {}: incompatible transaction",
+                        "Find parent failed to find workflow for transaction {}: incompatible transaction: {payload:?}",
                         cur_tx
                     );
                     return Err(WorkflowError::IncompatibleTransaction(cur_tx.to_string()).into());
@@ -215,7 +245,7 @@ impl WorkflowEngine {
         }
     }
 
-    async fn workflow_for_transaction(&self, tx_hash: &Hash) -> Result<Workflow> {
+    async fn workflow_for_transaction(&self, tx_hash: &Hash) -> Result<Option<Workflow>> {
         let mut tx_hash = *tx_hash;
 
         tracing::debug!("finding workflow for transaction {}", tx_hash);
@@ -232,9 +262,10 @@ impl WorkflowEngine {
             match tx.unwrap().payload {
                 Payload::Run { workflow } => {
                     tracing::debug!("workflow found for transaction {}", tx_hash);
-                    return Ok(workflow);
+                    return Ok(Some(workflow));
                 }
                 Payload::Proof { parent, .. } => {
+                    //if we return the parent Tx it's reexecuted an generate a duplicate key value violates unique constraint error in the db
                     tracing::debug!("finding workflow from parent {} of {}", &parent, tx_hash);
                     tx_hash = parent;
                     continue;
@@ -245,13 +276,19 @@ impl WorkflowEngine {
                     continue;
                 }
                 Payload::Verification { parent, .. } => {
-                    tracing::debug!("finding workflow from parent {} of {}", &parent, tx_hash);
-                    tx_hash = parent;
-                    continue;
+                    // //// XXX: If we return the parent tx, it gets re-executed and would generate
+                    // //// a duplicate key value violates unique constraint error in the db
+                    // tracing::debug!("finding workflow from parent {} of {}", &parent, tx_hash);
+                    // tx_hash = parent;
+                    // continue;
+
+                    //no workflow for Verif Tx
+                    return Ok(None);
                 }
-                _ => {
+                Payload::Deploy { .. } => return Ok(None),
+                payload => {
                     tracing::debug!(
-                        "failed to find workflow for transaction {}: incompatible transaction",
+                        "failed to find workflow for transaction {}: incompatible transaction :{payload:?}",
                         &tx_hash
                     );
                     return Err(WorkflowError::IncompatibleTransaction(tx_hash.to_string()).into());
@@ -267,47 +304,16 @@ impl WorkflowEngine {
         kind: TaskKind,
     ) -> Result<Task> {
         let id = Uuid::new_v4();
-        let mut file_transfers = vec![];
+        let file_transfers: Vec<(Hash, String)> = vec![];
         let files = step
             .inputs
             .iter()
-            .map(|e| match e {
-                ProgramData::Input {
-                    file_name,
-                    file_url,
-                    ..
-                } => File {
-                    tx,
-                    name: file_name.clone(),
-                    url: file_url.clone(),
-                },
-                ProgramData::Output {
-                    source_program,
-                    file_name,
-                } => {
-                    // Make record of file that needs transfer from source tx to current tx's files.
-                    file_transfers.push((*source_program, file_name.clone()));
-
-                    File {
-                        tx,
-                        name: file_name.clone(),
-                        url: "".to_string(),
-                    }
-                }
+            .filter_map(|e| {
+                DbFile::try_from_prg_data(e)
+                    .map_err(|err| WorkflowError::FileDefinitionError(err.to_string()).into())
+                    .transpose()
             })
-            .collect();
-
-        // Process file transfers from source programs.
-        for (source_program, file_name) in file_transfers {
-            let source_tx = self
-                .find_parent_tx_for_program(&tx, &source_program)
-                .await
-                .expect("output file dependency missing");
-
-            self.file_storage
-                .move_task_file(&source_tx.to_string(), &tx.to_string(), &file_name)
-                .await?;
-        }
+            .collect::<Result<Vec<_>>>()?;
 
         Ok(Task {
             id,
@@ -324,7 +330,8 @@ impl WorkflowEngine {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, env::temp_dir};
+    use gevulot_node::types::transaction::Created;
+    use std::collections::HashMap;
 
     use gevulot_node::types::{
         transaction::{Payload, ProgramData, Workflow, WorkflowStep},
@@ -336,11 +343,11 @@ mod tests {
     use super::*;
 
     pub struct TxStore {
-        pub txs: HashMap<Hash, Transaction>,
+        pub txs: HashMap<Hash, Transaction<Validated>>,
     }
 
     impl TxStore {
-        pub fn new(txs: &[Transaction]) -> Self {
+        pub fn new(txs: &[Transaction<Validated>]) -> Self {
             let mut store = TxStore {
                 txs: HashMap::with_capacity(txs.len()),
             };
@@ -353,17 +360,18 @@ mod tests {
 
     #[async_trait]
     impl TransactionStore for TxStore {
-        async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction>> {
+        async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction<Validated>>> {
             Ok(self.txs.get(tx_hash).cloned())
+        }
+        async fn mark_tx_executed(&self, tx_hash: &Hash) -> Result<()> {
+            // Do nothing because the txs map can't be modified behind a &self.
+            Ok(())
         }
     }
 
     #[tokio::test]
     async fn test_next_task_for_empty_workflow_steps() {
-        let wfe = WorkflowEngine::new(
-            Arc::new(TxStore::new(&[])),
-            Arc::new(storage::File::new(&temp_dir())),
-        );
+        let wfe = WorkflowEngine::new(Arc::new(TxStore::new(&[])));
         let tx = transaction_for_workflow_steps(vec![]);
         if let Payload::Run { workflow } = &tx.payload {
             let res = wfe.next_task(&tx).await;
@@ -392,10 +400,7 @@ mod tests {
         };
 
         let tx = transaction_for_workflow_steps(vec![proving.clone(), verifying]);
-        let wfe = WorkflowEngine::new(
-            Arc::new(TxStore::new(&[tx.clone()])),
-            Arc::new(storage::File::new(&temp_dir())),
-        );
+        let wfe = WorkflowEngine::new(Arc::new(TxStore::new(&[tx.clone()])));
 
         if let Payload::Run { workflow } = &tx.payload {
             let task = wfe.next_task(&tx).await.expect("next_task").unwrap();
@@ -433,57 +438,69 @@ mod tests {
         let proofkey_tx = transaction_for_proofkey(&proof_tx.hash);
         let verification_tx = transaction_for_verification(&proof_tx.hash, &verifier_hash);
         let tx_store = TxStore::new(&[root_tx, proof_tx, proofkey_tx.clone(), verification_tx]);
-        let wfe = WorkflowEngine::new(
-            Arc::new(tx_store),
-            Arc::new(storage::File::new(&temp_dir())),
-        );
+        let wfe = WorkflowEngine::new(Arc::new(tx_store));
 
         let task = wfe.next_task(&proofkey_tx).await;
         assert!(task.is_ok());
     }
 
-    fn transaction_for_workflow_steps(steps: Vec<WorkflowStep>) -> Transaction {
+    fn into_validated(tx: Transaction<Created>) -> Transaction<Validated> {
+        Transaction {
+            author: tx.author,
+            hash: tx.hash,
+            payload: tx.payload,
+            nonce: tx.nonce,
+            signature: tx.signature,
+            propagated: tx.executed,
+            executed: tx.executed,
+            state: Validated,
+        }
+    }
+
+    fn transaction_for_workflow_steps(steps: Vec<WorkflowStep>) -> Transaction<Validated> {
         let key = SecretKey::random(&mut StdRng::from_entropy());
-        Transaction::new(
+        into_validated(Transaction::new(
             Payload::Run {
                 workflow: Workflow { steps },
             },
             &key,
-        )
+        ))
     }
 
-    fn transaction_for_proof(parent: &Hash, program: &Hash) -> Transaction {
+    fn transaction_for_proof(parent: &Hash, program: &Hash) -> Transaction<Validated> {
         let key = SecretKey::random(&mut StdRng::from_entropy());
-        Transaction::new(
+        into_validated(Transaction::new(
             Payload::Proof {
                 parent: *parent,
                 prover: *program,
                 proof: "proof.".into(),
+                files: vec![],
             },
             &key,
-        )
+        ))
     }
 
-    fn transaction_for_proofkey(parent: &Hash) -> Transaction {
+    fn transaction_for_proofkey(parent: &Hash) -> Transaction<Validated> {
         let key = SecretKey::random(&mut StdRng::from_entropy());
-        Transaction::new(
+        into_validated(Transaction::new(
             Payload::ProofKey {
                 parent: *parent,
                 key: "key.".into(),
             },
             &key,
-        )
+        ))
     }
 
-    fn transaction_for_verification(parent: &Hash, program: &Hash) -> Transaction {
+    fn transaction_for_verification(parent: &Hash, program: &Hash) -> Transaction<Validated> {
         let key = SecretKey::random(&mut StdRng::from_entropy());
-        Transaction::new(
+        into_validated(Transaction::new(
             Payload::Verification {
                 parent: *parent,
                 verifier: *program,
                 verification: b"verification.".to_vec(),
+                files: vec![],
             },
             &key,
-        )
+        ))
     }
 }

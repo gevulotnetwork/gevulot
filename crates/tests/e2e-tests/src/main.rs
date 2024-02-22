@@ -1,3 +1,4 @@
+use gevulot_node::types::transaction::Created;
 use std::{
     net::SocketAddr,
     path::{Path, PathBuf},
@@ -99,7 +100,19 @@ async fn deploy_programs(
         .expect("get_transaction");
 
     assert!(read_tx.is_some());
-    assert_eq!(tx, read_tx.unwrap());
+    let read_tx = read_tx.unwrap();
+    let read_tx = Transaction {
+        author: read_tx.author,
+        hash: read_tx.hash,
+        payload: read_tx.payload,
+        nonce: read_tx.nonce,
+        signature: read_tx.signature,
+        propagated: false,
+        executed: false,
+        state: Created,
+    };
+
+    assert_eq!(tx, read_tx);
 
     Ok((tx.hash, prover.hash, verifier.hash))
 }

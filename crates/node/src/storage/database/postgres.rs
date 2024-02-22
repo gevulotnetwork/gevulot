@@ -1,15 +1,31 @@
-use std::time::Duration;
-
+use super::entity::{self};
+use crate::txvalidation::acl::AclWhiteListError;
+use crate::txvalidation::acl::AclWhitelist;
+use crate::types::file::DbFile;
+use crate::types::{
+    self,
+    transaction::{ProgramData, Validated},
+    Hash, Program, Task,
+};
 use eyre::Result;
 use gevulot_node::types::program::ResourceRequest;
+use libsecp256k1::PublicKey;
 use sqlx::{self, postgres::PgPoolOptions, FromRow, Row};
+use std::time::Duration;
 use uuid::Uuid;
-
-use super::entity::{self};
-use crate::types::{self, transaction::ProgramData, File, Hash, Program, Task};
 
 const MAX_DB_CONNS: u32 = 64;
 const DB_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
+
+#[async_trait::async_trait]
+impl AclWhitelist for Database {
+    async fn contains(&self, key: &PublicKey) -> Result<bool, AclWhiteListError> {
+        let key = entity::PublicKey(*key);
+        self.acl_whitelist_has(&key).await.map_err(|err| {
+            AclWhiteListError::InternalError(format!("Fail to query access list: {err}",))
+        })
+    }
+}
 
 #[derive(Clone)]
 pub struct Database {
@@ -137,11 +153,12 @@ impl Database {
 
         {
             let mut query_builder =
-                sqlx::QueryBuilder::new("INSERT INTO file ( task_id, name, url )");
+                sqlx::QueryBuilder::new("INSERT INTO file ( task_id, name, url, checksum )");
             query_builder.push_values(&t.files, |mut b, new_file| {
                 b.push_bind(t.id)
                     .push_bind(&new_file.name)
-                    .push_bind(&new_file.url);
+                    .push_bind(&new_file.url)
+                    .push_bind(new_file.checksum);
             });
 
             let query = query_builder.build();
@@ -166,10 +183,11 @@ impl Database {
         // Fetch accompanied Files for the Task.
         match task {
             Some(mut task) => {
-                let mut files = sqlx::query_as::<_, File>("SELECT * FROM file WHERE task_id = $1")
-                    .bind(id)
-                    .fetch_all(&mut *tx)
-                    .await?;
+                let mut files =
+                    sqlx::query_as::<_, DbFile>("SELECT * FROM file WHERE task_id = $1")
+                        .bind(id)
+                        .fetch_all(&mut *tx)
+                        .await?;
                 task.files.append(&mut files);
                 Ok(Some(task))
             }
@@ -186,7 +204,7 @@ impl Database {
             .await?;
 
         for task in &mut tasks {
-            let mut files = sqlx::query_as::<_, File>("SELECT * FROM file WHERE task_id = $1")
+            let mut files = sqlx::query_as::<_, DbFile>("SELECT * FROM file WHERE task_id = $1")
                 .bind(task.id)
                 .fetch_all(&mut *tx)
                 .await?;
@@ -206,50 +224,14 @@ impl Database {
         Ok(())
     }
 
-    pub async fn add_asset(&self, tx_hash: &Hash) -> Result<()> {
-        sqlx::query!(
-            "INSERT INTO assets ( tx ) VALUES ( $1 ) RETURNING *",
-            tx_hash.to_string(),
-        )
-        .fetch_one(&self.pool)
-        .await?;
-        Ok(())
-    }
-
-    pub async fn has_assets_loaded(&self, tx_hash: &Hash) -> Result<bool> {
-        let res: Option<i32> =
-            sqlx::query("SELECT 1 FROM assets WHERE completed IS NOT NULL AND tx = $1")
-                .bind(tx_hash)
-                .map(|row: sqlx::postgres::PgRow| row.get(0))
-                .fetch_optional(&self.pool)
-                .await?;
-
-        Ok(res.is_some())
-    }
-
-    pub async fn get_incomplete_assets(&self) -> Result<Vec<Hash>> {
-        let assets =
-            sqlx::query("SELECT tx FROM assets WHERE completed IS NULL ORDER BY created ASC")
-                .map(|row: sqlx::postgres::PgRow| row.get(0))
-                .fetch_all(&self.pool)
-                .await?;
-
-        Ok(assets)
-    }
-
-    pub async fn mark_asset_complete(&self, tx_hash: &Hash) -> Result<()> {
-        sqlx::query("UPDATE assets SET completed = NOW() WHERE tx = $1")
-            .bind(&tx_hash.to_string())
-            .execute(&self.pool)
-            .await?;
-        Ok(())
-    }
-
     // NOTE: There are plenty of opportunities for optimizations in following
     // transaction related operations. They are implemented naively on purpose
     // for now to maintain initial flexibility in development. Later on, these
     // queries here are easy low hanging fruits for optimizations.
-    pub async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<types::Transaction>> {
+    pub async fn find_transaction(
+        &self,
+        tx_hash: &Hash,
+    ) -> Result<Option<types::Transaction<Validated>>> {
         let mut db_tx = self.pool.begin().await?;
 
         let entity =
@@ -348,6 +330,13 @@ impl Database {
                     }
                 }
                 entity::transaction::Kind::Proof => {
+                    //get payload files
+                    let files =
+                        sqlx::query_as::<_, DbFile>("SELECT * FROM txfile WHERE tx_id = $1")
+                            .bind(tx_hash)
+                            .fetch_all(&mut *db_tx)
+                            .await?;
+
                     sqlx::query("SELECT parent, prover, proof FROM proof WHERE tx = $1")
                         .bind(tx_hash)
                         .map(
@@ -355,6 +344,7 @@ impl Database {
                                 parent: row.get(0),
                                 prover: row.get(1),
                                 proof: row.get(2),
+                                files: files.clone().into_iter().map(|file| file.into()).collect(),
                             },
                         )
                         .fetch_one(&mut *db_tx)
@@ -373,6 +363,12 @@ impl Database {
                         .await?
                 }
                 entity::transaction::Kind::Verification => {
+                    //get payload files
+                    let files =
+                        sqlx::query_as::<_, DbFile>("SELECT * FROM txfile WHERE tx_id = $1")
+                            .bind(tx_hash)
+                            .fetch_all(&mut *db_tx)
+                            .await?;
                     sqlx::query(
                         "SELECT parent, verifier, verification FROM verification WHERE tx = $1",
                     )
@@ -382,6 +378,7 @@ impl Database {
                             parent: row.get(0),
                             verifier: row.get(1),
                             verification: row.get(2),
+                            files: files.clone().into_iter().map(|file| file.into()).collect(),
                         },
                     )
                     .fetch_one(&mut *db_tx)
@@ -390,7 +387,7 @@ impl Database {
                 _ => types::transaction::Payload::Empty,
             };
 
-            let mut tx: types::transaction::Transaction = entity.into();
+            let mut tx: types::transaction::Transaction<Validated> = entity.into();
             tx.payload = payload;
             Ok(Some(tx))
         } else {
@@ -398,7 +395,7 @@ impl Database {
         }
     }
 
-    pub async fn get_transactions(&self) -> Result<Vec<types::Transaction>> {
+    pub async fn get_transactions(&self) -> Result<Vec<types::Transaction<Validated>>> {
         let mut db_tx = self.pool.begin().await?;
         let refs: Vec<Hash> = sqlx::query("SELECT hash FROM transaction")
             .map(|row: sqlx::postgres::PgRow| row.get(0))
@@ -416,7 +413,7 @@ impl Database {
         Ok(txs)
     }
 
-    pub async fn get_unexecuted_transactions(&self) -> Result<Vec<types::Transaction>> {
+    pub async fn get_unexecuted_transactions(&self) -> Result<Vec<types::Transaction<Validated>>> {
         let mut db_tx = self.pool.begin().await?;
         let refs: Vec<Hash> = sqlx::query("SELECT hash FROM transaction WHERE executed IS false")
             .map(|row: sqlx::postgres::PgRow| row.get(0))
@@ -450,7 +447,7 @@ impl Database {
         Ok(refs)
     }
 
-    pub async fn add_transaction(&self, tx: &types::Transaction) -> Result<()> {
+    pub async fn add_transaction(&self, tx: &types::Transaction<Validated>) -> Result<()> {
         let entity = entity::Transaction::from(tx);
 
         let mut db_tx = self.pool.begin().await?;
@@ -539,6 +536,7 @@ impl Database {
                 parent,
                 prover,
                 proof,
+                files,
             } => {
                 sqlx::query(
                     "INSERT INTO proof ( tx, parent, prover, proof ) VALUES ( $1, $2, $3, $4 ) ON CONFLICT (tx) DO NOTHING",
@@ -549,6 +547,25 @@ impl Database {
                 .bind(proof)
                 .execute(&mut *db_tx)
                 .await?;
+
+                //save payload files
+                if !files.is_empty() {
+                    let mut query_builder = sqlx::QueryBuilder::new(
+                        "INSERT INTO txfile ( tx_id, name, url, checksum )",
+                    );
+                    query_builder.push_values(files, |mut b, new_file| {
+                        b.push_bind(tx.hash)
+                            .push_bind(&new_file.name)
+                            .push_bind(&new_file.url)
+                            .push_bind(new_file.checksum);
+                    });
+
+                    let query = query_builder.build();
+                    if let Err(err) = query.execute(&mut *db_tx).await {
+                        db_tx.rollback().await?;
+                        return Err(err.into());
+                    }
+                }
             }
 
             types::transaction::Payload::ProofKey { parent, key } => {
@@ -564,7 +581,9 @@ impl Database {
                 parent,
                 verifier,
                 verification,
+                files,
             } => {
+                tracing::trace!("Postgres add_transaction tx:{}", tx.hash.to_string());
                 sqlx::query(
                     "INSERT INTO verification ( tx, parent, verifier, verification ) VALUES ( $1, $2, $3, $4 ) ON CONFLICT (tx) DO NOTHING",
                 )
@@ -574,6 +593,25 @@ impl Database {
                 .bind(verification)
                 .execute(&mut *db_tx)
                 .await?;
+
+                //save payload files
+                if !files.is_empty() {
+                    let mut query_builder = sqlx::QueryBuilder::new(
+                        "INSERT INTO txfile ( tx_id, name, url, checksum )",
+                    );
+                    query_builder.push_values(files, |mut b, new_file| {
+                        b.push_bind(tx.hash)
+                            .push_bind(&new_file.name)
+                            .push_bind(&new_file.url)
+                            .push_bind(new_file.checksum);
+                    });
+
+                    let query = query_builder.build();
+                    if let Err(err) = query.execute(&mut *db_tx).await {
+                        db_tx.rollback().await?;
+                        return Err(err.into());
+                    }
+                }
             }
             _ => { /* ignore for now */ }
         }
@@ -643,6 +681,7 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
+    use gevulot_node::types::transaction::Created;
     use libsecp256k1::{PublicKey, SecretKey};
     use rand::{rngs::StdRng, Rng, SeedableRng};
 
@@ -652,6 +691,20 @@ mod tests {
     };
 
     use super::*;
+
+    //TODO change by impl From when module declaration between main and lib are solved.
+    fn into_validated(tx: Transaction<Created>) -> Transaction<Validated> {
+        Transaction {
+            author: tx.author,
+            hash: tx.hash,
+            payload: tx.payload,
+            nonce: tx.nonce,
+            signature: tx.signature,
+            propagated: tx.executed,
+            executed: tx.executed,
+            state: Validated,
+        }
+    }
 
     #[ignore]
     #[tokio::test]
@@ -696,6 +749,7 @@ mod tests {
             signature: Signature::default(),
             propagated: false,
             executed: false,
+            state: Validated,
         };
 
         database
@@ -757,6 +811,7 @@ mod tests {
                 parent: run_tx.hash,
                 prover: prover.hash,
                 proof: vec![1],
+                files: vec![],
             },
             &key,
         );
@@ -765,6 +820,7 @@ mod tests {
                 parent: run_tx.hash,
                 prover: prover.hash,
                 proof: vec![2],
+                files: vec![],
             },
             &key,
         );
@@ -773,6 +829,7 @@ mod tests {
                 parent: run_tx.hash,
                 prover: prover.hash,
                 proof: vec![3],
+                files: vec![],
             },
             &key,
         );
@@ -781,6 +838,7 @@ mod tests {
                 parent: run_tx.hash,
                 prover: prover.hash,
                 proof: vec![4],
+                files: vec![],
             },
             &key,
         );
@@ -790,6 +848,7 @@ mod tests {
                 parent: proof1_tx.hash,
                 verifier: verifier.hash,
                 verification: vec![1],
+                files: vec![],
             },
             &key,
         );
@@ -798,6 +857,7 @@ mod tests {
                 parent: proof2_tx.hash,
                 verifier: verifier.hash,
                 verification: vec![2],
+                files: vec![],
             },
             &key,
         );
@@ -806,6 +866,7 @@ mod tests {
                 parent: proof3_tx.hash,
                 verifier: verifier.hash,
                 verification: vec![3],
+                files: vec![],
             },
             &key,
         );
@@ -814,6 +875,7 @@ mod tests {
                 parent: proof4_tx.hash,
                 verifier: verifier.hash,
                 verification: vec![4],
+                files: vec![],
             },
             &key,
         );
@@ -845,7 +907,10 @@ mod tests {
             .expect("add verifier");
 
         for tx in &txs {
-            database.add_transaction(tx).await.expect("add transaction");
+            database
+                .add_transaction(&into_validated(tx.clone()))
+                .await
+                .expect("add transaction");
         }
 
         // Pick random transaction from set.

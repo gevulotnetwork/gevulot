@@ -1,11 +1,11 @@
+use grpc::vm_service_client::VmServiceClient;
+use grpc::{FileChunk, FileData, FileMetadata};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Instant;
 use std::{path::Path, thread::sleep, time::Duration};
-
-use grpc::vm_service_client::VmServiceClient;
-use grpc::{FileChunk, FileData, FileMetadata};
 use tokio::io::AsyncReadExt;
 use tokio::runtime::Runtime;
 use tokio::{io::AsyncWriteExt, sync::Mutex};
@@ -154,9 +154,12 @@ impl GRPCClient {
         Ok(Some(task))
     }
 
-    fn submit_file(&mut self, task_id: TaskId, file_path: String) -> Result<()> {
+    fn submit_file(&mut self, task_id: TaskId, file_path: String) -> Result<[u8; 32]> {
+        let hasher = Arc::new(Mutex::new(blake3::Hasher::new()));
         self.rt.block_on(async {
+            let stream_hasher = Arc::clone(&hasher);
             let outbound = async_stream::stream! {
+
                 let fd = match tokio::fs::File::open(&file_path).await {
                     Ok(fd) => fd,
                     Err(err) => {
@@ -175,11 +178,12 @@ impl GRPCClient {
                 yield metadata;
 
                 let mut buf: [u8; DATA_STREAM_CHUNK_SIZE] = [0; DATA_STREAM_CHUNK_SIZE];
-
                 loop {
                     match file.read(&mut buf).await {
                         Ok(0) => return,
                         Ok(n) => {
+
+                            stream_hasher.lock().await.update(&buf[..n]);
                             yield FileData{ result: Some(grpc::file_data::Result::Chunk(FileChunk{ data: buf[..n].to_vec() }))};
                         },
                         Err(err) => {
@@ -194,20 +198,30 @@ impl GRPCClient {
                 println!("failed to submit file: {}", err);
             }
         });
+        let hasher = Arc::into_inner(hasher).unwrap().into_inner();
+        let hash = hasher.finalize().into();
 
-        Ok(())
+        Ok(hash)
     }
 
     fn submit_result(&mut self, result: &TaskResult) -> Result<bool> {
-        for file in &result.files {
-            self.submit_file(result.id.clone(), file.clone())?;
-        }
+        let files = result
+            .files
+            .iter()
+            .map(|file| {
+                self.submit_file(result.id.clone(), file.clone())
+                    .map(|checksum| crate::grpc::File {
+                        path: file.to_string(),
+                        checksum: checksum.to_vec(),
+                    })
+            })
+            .collect::<Result<Vec<_>>>()?;
 
         let task_result_req = grpc::TaskResultRequest {
             result: Some(grpc::task_result_request::Result::Task(grpc::TaskResult {
                 id: result.id.clone(),
                 data: result.data.clone(),
-                files: result.files.clone(),
+                files,
             })),
         };
 

@@ -141,6 +141,7 @@ impl Provider for Qemu {
         // TODO:
         //  - Builder to construct QEMU flags
         //  - Handle GPUs
+        //  - Verify that the file exists before booting the VM. Otherwise the node panics because the QEMU won't start.
 
         let img_file = Path::new(&self.config.data_directory)
             .join(IMAGES_DIR)
@@ -265,7 +266,11 @@ impl Provider for Qemu {
             cmd.stderr(Stdio::from(stderr));
         }
 
-        tracing::info!("starting QEMU. args:\n{:#?}\n", cmd.get_args());
+        tracing::info!(
+            "Program:{} starting QEMU. args:\n{:#?}\n",
+            program.hash.to_string(),
+            cmd.get_args(),
+        );
 
         qemu_vm_handle.child = Some(cmd.spawn().expect("failed to start VM"));
 
@@ -285,7 +290,7 @@ impl Provider for Qemu {
 
                 match Qmp::new(format!("localhost:{qmp_port}")).await {
                     Ok(c) => client = Some(c),
-                    Err(_) => {
+                    Err(err) => {
                         retry_count += 1;
                         sleep(Duration::from_millis(10)).await;
                     }

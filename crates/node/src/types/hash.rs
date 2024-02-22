@@ -4,7 +4,7 @@ use serde::{de, Deserialize, Serialize};
 use sqlx::{self, Decode, Encode, Postgres, Type};
 use std::fmt;
 
-const HASH_SIZE: usize = 32;
+pub const HASH_SIZE: usize = 32;
 
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct Hash([u8; HASH_SIZE]);

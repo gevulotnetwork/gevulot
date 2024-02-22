@@ -1,5 +1,6 @@
 mod account;
 mod deployment;
+pub mod file;
 mod hash;
 mod key_capsule;
 pub mod program;
@@ -15,5 +16,5 @@ pub use key_capsule::KeyCapsule;
 pub use program::Program;
 pub use signature::Signature;
 #[allow(unused_imports)]
-pub use task::{File, Task, TaskId, TaskKind, TaskResult, TaskState};
+pub use task::{Task, TaskId, TaskKind, TaskResult, TaskState};
 pub use transaction::{Transaction, TransactionTree};
