@@ -131,7 +131,6 @@ impl Scheduler {
 
             let mut task = match self.pick_task().await {
                 Some(t) => {
-                    tracing::trace!("Pick a new task:{t:#?}");
                     tracing::debug!("task {}/{} scheduled for running", t.id, t.tx);
                     t
                 }
