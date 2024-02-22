@@ -132,8 +132,11 @@ impl GRPCClient {
                 args: task.args,
                 files: task.files,
             },
-            Some(grpc::task_response::Result::Error(_err)) => {
-                todo!("construct proper error types from TaskError")
+            Some(grpc::task_response::Result::Error(code)) => {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("get_task() resulted with error code {}", code),
+                )));
             }
             None => return Ok(None),
         };
@@ -339,8 +342,7 @@ pub fn run(callback: impl Fn(&Task) -> Result<TaskResult>) -> Result<()> {
             }
             Err(err) => {
                 println!("get_task(): {}", err);
-                sleep(Duration::from_secs(5));
-                continue;
+                return Err(err);
             }
         };
 
