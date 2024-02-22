@@ -15,7 +15,7 @@ use qapi::{
     qmp,
     qmp::StatusInfo,
 };
-use rand::{self, distributions::Alphanumeric, Rng};
+use rand::{distributions::Alphanumeric, Rng};
 use serde_json::json;
 use tokio::{
     io::{ReadHalf, WriteHalf},

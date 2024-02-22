@@ -1,5 +1,5 @@
 use serde::{de, Deserialize, Serialize};
-use sqlx::{self, Decode, Encode, Postgres, Type};
+use sqlx::{Decode, Encode, Postgres, Type};
 use std::fmt;
 use thiserror::Error;
 

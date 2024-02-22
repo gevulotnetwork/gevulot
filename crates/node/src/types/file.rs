@@ -8,16 +8,67 @@ use std::path::PathBuf;
 
 pub async fn open_task_file(
     data_dir: &PathBuf,
-    task_id: &str,
     path: &str,
 ) -> Result<tokio::io::BufReader<tokio::fs::File>> {
     let mut path = Path::new(path);
     if path.is_absolute() {
         path = path.strip_prefix("/")?;
     }
-    let path = PathBuf::new().join(data_dir).join(task_id).join(path);
+    let path = PathBuf::new().join(data_dir).join(path);
     let fd = tokio::fs::File::open(path).await?;
     Ok(tokio::io::BufReader::new(fd))
+}
+
+// Describe a file use by an executed task.
+#[derive(Clone, Debug)]
+pub struct TaskVMFile {
+    pub file_path: String,
+}
+
+impl TaskVMFile {
+    pub fn try_from_prg_data(
+        tx_hash: Hash,
+        parent_output_files: &[File<ProofVerif>],
+        value: &transaction::ProgramData,
+    ) -> Result<TaskVMFile, String> {
+        match value {
+            transaction::ProgramData::Input { file_name, .. } => {
+                let mut file_path = Path::new(file_name);
+                if file_path.is_absolute() {
+                    file_path = file_path.strip_prefix("/").unwrap(); // Unwrap tested in `is_absolute()`.
+                }
+
+                let file_path = PathBuf::new()
+                    .join(tx_hash.to_string())
+                    .join(file_path)
+                    .to_str()
+                    .unwrap()
+                    .to_string();
+
+                Ok(TaskVMFile { file_path })
+            }
+            transaction::ProgramData::Output {
+                source_program: _,
+                file_name,
+            } => {
+                //get the file path from the parent tx file list.
+                match parent_output_files
+                    .iter()
+                    .find(|file| &file.name == file_name)
+                {
+                    Some(file) => {
+                        let file_path =
+                            file.get_relatif_path(tx_hash).to_str().unwrap().to_string();
+                        Ok(TaskVMFile { file_path })
+                    }
+                    None => Err(format!(
+                        "Tx:{} program output file:{file_name} not found",
+                        tx_hash,
+                    )),
+                }
+            }
+        }
+    }
 }
 
 //describe file data that is stored in the database.
@@ -27,33 +78,6 @@ pub struct DbFile {
     pub name: String,
     pub url: String,
     pub checksum: Hash,
-}
-
-impl DbFile {
-    pub fn try_from_prg_data(
-        value: &transaction::ProgramData,
-    ) -> Result<Option<Self>, &'static str> {
-        let file = match value {
-            transaction::ProgramData::Input {
-                file_name,
-                file_url,
-                checksum,
-            } => Some(DbFile {
-                name: file_name.clone(),
-                url: file_url.clone(),
-                checksum: checksum.clone().into(),
-            }),
-            transaction::ProgramData::Output {
-                source_program: _,
-                file_name: _,
-            } => {
-                //Output file are not use by Tx management.
-                None
-            }
-        };
-
-        Ok(file)
-    }
 }
 
 // Type state definition of a file to manage all the different case of file manipulation.

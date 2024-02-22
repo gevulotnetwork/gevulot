@@ -134,11 +134,10 @@ impl VmService for VMServer {
 
         let req = request.into_inner();
 
-        let mut file =
-            match file::open_task_file(&self.file_data_dir, &req.task_id, &req.path).await {
-                Ok(file) => file,
-                Err(err) => return Err(Status::new(Code::NotFound, "couldn't get task file")),
-            };
+        let mut file = match file::open_task_file(&self.file_data_dir, &req.path).await {
+            Ok(file) => file,
+            Err(err) => return Err(Status::new(Code::NotFound, "couldn't get task file")),
+        };
 
         let (tx, rx) = mpsc::channel(4);
         tokio::spawn({

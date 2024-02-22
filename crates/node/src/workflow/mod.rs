@@ -1,6 +1,8 @@
-use crate::types::file::DbFile;
+use crate::types::file::File;
 use async_trait::async_trait;
 use eyre::Result;
+use gevulot_node::types::file::ProofVerif;
+use gevulot_node::types::file::TaskVMFile;
 use gevulot_node::types::{
     transaction::{Payload, Validated, Workflow, WorkflowStep},
     Hash, Task, TaskKind, Transaction,
@@ -57,6 +59,7 @@ impl WorkflowEngine {
                         self.workflow_step_to_task(
                             cur_tx.hash,
                             &workflow.steps[0],
+                            &[], // No output file fir Run Tx.
                             TaskKind::Proof,
                         )
                         .await?,
@@ -67,7 +70,7 @@ impl WorkflowEngine {
                 parent,
                 prover,
                 proof,
-                ..
+                files,
             } => {
                 tracing::debug!("creating next task from Proof tx {}", &cur_tx.hash);
                 let Some(workflow) = opt_workflow else {
@@ -91,6 +94,7 @@ impl WorkflowEngine {
                                 self.workflow_step_to_task(
                                     cur_tx.hash,
                                     &workflow.steps[proof_step_idx + 1],
+                                    files,
                                     TaskKind::Verification,
                                 )
                                 .await?,
@@ -125,7 +129,7 @@ impl WorkflowEngine {
                     parent,
                     prover,
                     proof,
-                    ..
+                    files,
                 } = proof_tx.payload
                 {
                     let Some(workflow) = opt_workflow else {
@@ -148,6 +152,7 @@ impl WorkflowEngine {
                                     self.workflow_step_to_task(
                                         proof_tx.hash,
                                         &workflow.steps[proof_step_idx + 1],
+                                        &files,
                                         TaskKind::Verification,
                                     )
                                     .await?,
@@ -301,6 +306,7 @@ impl WorkflowEngine {
         &self,
         tx: Hash,
         step: &WorkflowStep,
+        files: &[File<ProofVerif>],
         kind: TaskKind,
     ) -> Result<Task> {
         let id = Uuid::new_v4();
@@ -308,10 +314,9 @@ impl WorkflowEngine {
         let files = step
             .inputs
             .iter()
-            .filter_map(|e| {
-                DbFile::try_from_prg_data(e)
+            .map(|e| {
+                TaskVMFile::try_from_prg_data(tx, files, e)
                     .map_err(|err| WorkflowError::FileDefinitionError(err.to_string()).into())
-                    .transpose()
             })
             .collect::<Result<Vec<_>>>()?;
 
@@ -333,10 +338,7 @@ mod tests {
     use gevulot_node::types::transaction::Created;
     use std::collections::HashMap;
 
-    use gevulot_node::types::{
-        transaction::{Payload, ProgramData, Workflow, WorkflowStep},
-        Hash, TaskKind, Transaction,
-    };
+    use gevulot_node::types::transaction::ProgramData;
     use libsecp256k1::SecretKey;
     use rand::{rngs::StdRng, SeedableRng};
 
