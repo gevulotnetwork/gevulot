@@ -244,7 +244,7 @@ impl Provider for Qemu {
             .args(["-qmp", &format!("tcp:localhost:{qmp_port},server")]);
 
         // TODO: When GPU argument handling is refactored, this should be fixed as well.
-        if self.config.gpu_devices.is_some() {
+        if self.config.gpu_devices.is_some() && req.gpus > 0 {
             cmd.args(parse_gpu_devices_into_qemu_params(
                 self.config.gpu_devices.as_ref().unwrap(),
             ));
