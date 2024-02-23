@@ -425,6 +425,7 @@ impl Transaction<Received> {
     }
 
     pub fn get_asset_list(&self) -> Result<Vec<File<Download>>> {
+        tracing::trace!("get_asset_list Transaction<Received:{self:?}");
         match &self.payload {
             transaction::Payload::Deploy {
                 prover, verifier, ..
