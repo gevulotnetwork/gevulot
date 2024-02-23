@@ -1,22 +1,22 @@
-use crate::types::file;
+use self::grpc::{
+    FileChunk, FileData, FileMetadata, GenericResponse, TaskResponse, TaskResultRequest,
+};
+use crate::types::file::{File, Vm};
 use crate::types::Hash;
+use crate::types::Task;
 use crate::vmm::vm_server::grpc::file_data;
 use async_trait::async_trait;
 use eyre::Result;
 use grpc::vm_service_server::VmService;
-use grpc::{GetFileRequest, Task, TaskRequest, TaskResultResponse};
+use grpc::{GetFileRequest, TaskRequest, TaskResultResponse};
 use std::fmt::Debug;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::sync::{mpsc, Mutex};
 use tokio_stream::wrappers::ReceiverStream;
 use tonic::{Code, Extensions, Request, Response, Status, Streaming};
-
-use self::grpc::{
-    FileChunk, FileData, FileMetadata, GenericResponse, TaskResponse, TaskResultRequest,
-};
 
 use super::VMId;
 
@@ -32,13 +32,14 @@ const DATA_STREAM_CHUNK_SIZE: usize = 4096;
 /// requesting for work and submitting results of tasks.
 #[async_trait]
 pub trait TaskManager: Send + Sync {
-    async fn get_task(&self, program: Hash, vm_id: Arc<dyn VMId>) -> Option<Task>;
+    async fn get_pending_task(&self, program: Hash, vm_id: Arc<dyn VMId>) -> Option<Task>;
+    async fn get_running_task(&self, vm_id: Arc<dyn VMId>) -> Option<Task>;
     async fn submit_result(
         &self,
         program: Hash,
         vm_id: Arc<dyn VMId>,
         result: grpc::task_result_request::Result,
-    ) -> bool;
+    ) -> Result<(), String>;
 }
 
 /// ProgramRegistry defines interface that `VMServer` uses to identify which
@@ -90,28 +91,25 @@ impl VmService for VMServer {
         request: Request<TaskRequest>,
     ) -> Result<Response<TaskResponse>, Status> {
         tracing::info!("request for task: {:?}", request);
-        let (program, vm_id) = match self
+        let (program, vm_id) = self
             .program_registry
             .lock()
             .await
             .find_by_req(request.extensions())
-        {
-            Some(instance) => instance,
-            None => {
-                return Err(Status::new(
+            .ok_or_else(|| {
+                Status::new(
                     Code::Unknown,
                     format!("unknown VM address: {:?}", request.remote_addr()),
-                ));
-            }
-        };
+                )
+            })?;
 
-        let reply = match self.task_source.get_task(program, vm_id).await {
+        let reply = match self.task_source.get_pending_task(program, vm_id).await {
             Some(task) => grpc::TaskResponse {
                 result: Some(grpc::task_response::Result::Task(grpc::Task {
-                    id: task.id.to_string(),
+                    id: task.tx.to_string(),
                     name: task.name.to_string(),
                     args: task.args,
-                    files: task.files,
+                    files: task.files.into_iter().map(|x| x.vm_file_path).collect(),
                 })),
             },
             None => grpc::TaskResponse {
@@ -132,12 +130,47 @@ impl VmService for VMServer {
     ) -> Result<Response<Self::GetFileStream>, Status> {
         tracing::info!("request for file: {:?}", request);
 
-        let req = request.into_inner();
+        let (program, vm_id) = self
+            .program_registry
+            .lock()
+            .await
+            .find_by_req(request.extensions())
+            .ok_or_else(|| {
+                Status::new(
+                    Code::Unknown,
+                    format!("unknown VM address: {:?}", request.remote_addr()),
+                )
+            })?;
 
-        let mut file = match file::open_task_file(&self.file_data_dir, &req.path).await {
-            Ok(file) => file,
-            Err(err) => return Err(Status::new(Code::NotFound, "couldn't get task file")),
-        };
+        let task = self
+            .task_source
+            .get_running_task(vm_id)
+            .await
+            .ok_or_else(|| Status::new(Code::NotFound, "couldn't find running task for request"))?;
+
+        tracing::trace!("get_file found task: {:#?}", task);
+
+        let req = request.into_inner();
+        //get VM file associated to this task file
+        let vm_file = task
+            .files
+            .iter()
+            .find(|file| file.vm_file_path == req.path)
+            .ok_or_else(|| Status::new(Code::NotFound, "couldn't get task file"))?;
+
+        tracing::trace!("get_file found vm_file: {vm_file:?}");
+
+        let mut file_stream = vm_file
+            .open_task_file(&self.file_data_dir)
+            .await
+            .map_err(|err| {
+                Status::new(
+                    Code::NotFound,
+                    format!("couldn't not open task file  :{err}"),
+                )
+            })?;
+
+        tracing::trace!("get_file file_stream created");
 
         let (tx, rx) = mpsc::channel(4);
         tokio::spawn({
@@ -145,7 +178,7 @@ impl VmService for VMServer {
                 let mut buf: [u8; DATA_STREAM_CHUNK_SIZE] = [0; DATA_STREAM_CHUNK_SIZE];
 
                 loop {
-                    match file.read(&mut buf).await {
+                    match file_stream.read(&mut buf).await {
                         Ok(0) => return Ok(()),
                         Ok(n) => {
                             if let Err(e) = tx
@@ -156,7 +189,8 @@ impl VmService for VMServer {
                                 }))
                                 .await
                             {
-                                tracing::error!("send {} bytes from file {}: {}", n, &req.path, &e);
+                                //                                tracing::error!("send {} bytes from file {}: {}", n, &req.path, &e);
+                                tracing::error!("send {} bytes from file: {}", n, &e);
                                 break;
                             }
                         }
@@ -197,27 +231,13 @@ impl VmService for VMServer {
         while let Ok(Some(grpc::FileData { result: data })) = stream.message().await {
             match data {
                 Some(grpc::file_data::Result::Metadata(FileMetadata { task_id, path })) => {
-                    let mut path = Path::new(&path);
-                    if path.is_absolute() {
-                        path = match path.strip_prefix("/") {
-                            Ok(path) => path,
-                            Err(err) => {
-                                tracing::error!(
-                                    "failed to strip '/' prefix from file path: {}",
-                                    err
-                                );
-                                return Err(Status::new(
-                                    Code::Internal,
-                                    "failed to strip '/' prefix from file path".to_string(),
-                                ));
-                            }
-                        };
-                    }
+                    let vmfile = File::<Vm>::new(path, Hash::default(), task_id);
+                    let relative_file_path = vmfile.get_relatif_path();
 
                     let file_path = PathBuf::new()
                         .join(&self.file_data_dir)
-                        .join(task_id)
-                        .join(path);
+                        .join(relative_file_path);
+                    tracing::trace!("submit_file saved in:{file_path:#?}");
 
                     // Ensure any necessary subdirectories exists.
                     if let Some(parent) = file_path.parent() {
@@ -310,7 +330,9 @@ impl VmService for VMServer {
         let result = request.into_inner().result;
 
         if let Some(result) = result {
-            self.task_source.submit_result(program, vm_id, result).await;
+            if let Err(err) = self.task_source.submit_result(program, vm_id, result).await {
+                tracing::error!("Error during submit VM execution result:{err}");
+            }
         }
 
         let reply = grpc::TaskResultResponse { r#continue: false };
