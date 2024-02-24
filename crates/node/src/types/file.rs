@@ -19,6 +19,7 @@ impl TaskVMFile {
         data_dir: &PathBuf,
     ) -> Result<tokio::io::BufReader<tokio::fs::File>> {
         let path = PathBuf::new().join(data_dir).join(&self.node_file_path);
+        tracing::trace!("TaskVMFile::open_task_file path:{path:?}",);
         let fd = tokio::fs::File::open(path).await?;
         Ok(tokio::io::BufReader::new(fd))
     }
