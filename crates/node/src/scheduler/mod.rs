@@ -435,13 +435,6 @@ impl TaskManager for Scheduler {
 
         let task_id = &result.id;
         let mut running_tasks = self.running_tasks.lock().await;
-        tracing::trace!(
-            "submit_result  running_tasks:{:?}",
-            running_tasks
-                .iter()
-                .map(|t| format!("{:?} ", t.task.tx))
-                .collect::<Vec<_>>()
-        );
 
         if let Some(idx) = running_tasks
             .iter()
@@ -453,8 +446,6 @@ impl TaskManager for Scheduler {
                 running_task.task.tx,
                 running_task.task_started.elapsed().as_secs()
             );
-
-            tracing::trace!("running_task.task.files:{:?}", running_task.task.files);
 
             // Handle tx execution's result files so that they are available as an input for next task if needed.
             let executed_files: Vec<(File<Vm>, File<ProofVerif>)> = result
@@ -516,12 +507,6 @@ impl TaskManager for Scheduler {
 
             //Move tx file from execution Tx path to new Tx path
             for (source_file, dest_file) in executed_files {
-                tracing::trace!(
-                    "Move file {} checksum:{}",
-                    dest_file.name,
-                    dest_file.checksum
-                );
-
                 move_vmfile(&source_file, &dest_file, &self.data_directory, tx.hash).await.map_err(|err| format!("failed to move excution file from: {source_file:?} to: {dest_file:?} error: {err}"))?;
             }
 

@@ -36,9 +36,6 @@ impl TaskVMFile {
                 let file =
                     File::<Vm>::new(file_name.to_string(), Hash::default(), tx_hash.to_string());
                 let node_file_path = file.get_relatif_path().to_str().unwrap().to_string();
-
-                tracing::trace!("TaskVMFile::try_from_prg_data Input node_file_path:{} vm_file_path:{file_name}", node_file_path, );
-
                 Ok(TaskVMFile {
                     node_file_path,
                     vm_file_path: file_name.to_string(),
@@ -56,7 +53,6 @@ impl TaskVMFile {
                     Some(file) => {
                         let node_file_path =
                             file.get_relatif_path(tx_hash).to_str().unwrap().to_string();
-                        tracing::trace!("TaskVMFile::try_from_prg_data Output node_file_path:{} vm_file_path:{file_name}", node_file_path, );
                         Ok(TaskVMFile {
                             node_file_path,
                             vm_file_path: file_name.to_string(),

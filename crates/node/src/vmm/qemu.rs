@@ -122,11 +122,6 @@ impl Qemu {
 impl ProgramRegistry for Qemu {
     fn find_by_req(&mut self, extensions: &Extensions) -> Option<(Hash, Arc<dyn VMId>)> {
         let conn_info = extensions.get::<VsockConnectInfo>().unwrap();
-        tracing::trace!(
-            "find_by_req: {:?}  registry:{:?}",
-            conn_info,
-            self.vm_registry
-        );
         match conn_info.peer_addr() {
             Some(addr) => {
                 self.vm_registry

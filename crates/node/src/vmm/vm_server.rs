@@ -118,8 +118,6 @@ impl VmService for VMServer {
                 )),
             },
         };
-        tracing::trace!("VMServer get_task reply: {:?}", reply);
-
         Ok(Response::new(reply))
     }
 
@@ -148,8 +146,6 @@ impl VmService for VMServer {
             .await
             .ok_or_else(|| Status::new(Code::NotFound, "couldn't find running task for request"))?;
 
-        tracing::trace!("get_file found task: {:#?}", task);
-
         let req = request.into_inner();
         //get VM file associated to this task file
         let vm_file = task
@@ -157,8 +153,6 @@ impl VmService for VMServer {
             .iter()
             .find(|file| file.vm_file_path == req.path)
             .ok_or_else(|| Status::new(Code::NotFound, "couldn't get task file"))?;
-
-        tracing::trace!("get_file found vm_file: {vm_file:?}");
 
         let mut file_stream = vm_file
             .open_task_file(&self.file_data_dir)
@@ -169,8 +163,6 @@ impl VmService for VMServer {
                     format!("couldn't not open task file  :{err}"),
                 )
             })?;
-
-        tracing::trace!("get_file file_stream created");
 
         let (tx, rx) = mpsc::channel(4);
         tokio::spawn({
