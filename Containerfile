@@ -10,7 +10,7 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y \
   libssl-dev \
   protobuf-compiler
 
-RUN cargo build --release
+RUN cargo build --features="node-binary" --release
 
 FROM debian:bookworm
 
