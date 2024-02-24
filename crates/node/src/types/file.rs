@@ -159,7 +159,17 @@ impl File<ProofVerif> {
     pub fn into_download_file(self, tx_hash: Hash) -> File<Download> {
         let relative_path = self.get_relatif_path(tx_hash).to_str().unwrap().to_string();
         let url = format!("{}/{}", self.url, relative_path);
-        File::<Download>::new(self.name, url, self.checksum, tx_hash, true)
+
+        let file_name = Path::new(&self.name).file_name().unwrap_or_default();
+        let mut path = PathBuf::from(self.checksum.to_string());
+        path.push(file_name);
+        File::<Download>::new(
+            path.to_str().unwrap().to_string(),
+            url,
+            self.checksum,
+            tx_hash,
+            true,
+        )
     }
 
     // Save Relative File path for ProofVerif files is <Tx Hash>/<self.checksum>/<filename>
