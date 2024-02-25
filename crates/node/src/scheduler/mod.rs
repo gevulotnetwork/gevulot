@@ -4,7 +4,7 @@ mod resource_manager;
 use crate::storage::Database;
 use crate::txvalidation::TxEventSender;
 use crate::txvalidation::TxResultSender;
-use crate::types::file::{move_vmfile, File, ProofVerif, Vm};
+use crate::types::file::{move_vmfile, Output, TaskVMFile, TxFile, VmOutput};
 use crate::types::TaskState;
 use crate::vmm::vm_server::grpc;
 use crate::vmm::{vm_server::TaskManager, VMId};
@@ -448,16 +448,13 @@ impl TaskManager for Scheduler {
             );
 
             // Handle tx execution's result files so that they are available as an input for next task if needed.
-            let executed_files: Vec<(File<Vm>, File<ProofVerif>)> = result
+            let executed_files: Vec<(TaskVMFile<VmOutput>, TxFile<Output>)> = result
                 .files
                 .into_iter()
                 .map(|file| {
-                    let vm_file = File::<Vm>::new(
-                        file.path.to_string(),
-                        file.checksum[..].into(),
-                        task_id.clone(),
-                    );
-                    let dest = File::<ProofVerif>::new(
+                    let vm_file =
+                        TaskVMFile::<VmOutput>::new(file.path.to_string(), task_id.clone().into());
+                    let dest = TxFile::<Output>::new(
                         file.path,
                         self.http_download_host.clone(),
                         file.checksum[..].into(),
@@ -468,7 +465,7 @@ impl TaskManager for Scheduler {
 
             //TODO -Verify that all expected files has been generated.
 
-            let new_tx_files: Vec<File<ProofVerif>> = executed_files
+            let new_tx_files: Vec<TxFile<Output>> = executed_files
                 .iter()
                 .map(|(_, file)| file)
                 .cloned()

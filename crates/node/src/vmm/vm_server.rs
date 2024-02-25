@@ -1,7 +1,7 @@
 use self::grpc::{
     FileChunk, FileData, FileMetadata, GenericResponse, TaskResponse, TaskResultRequest,
 };
-use crate::types::file::{File, Vm};
+use crate::types::file::{TaskVMFile, VmOutput};
 use crate::types::Hash;
 use crate::types::Task;
 use crate::vmm::vm_server::grpc::file_data;
@@ -109,7 +109,11 @@ impl VmService for VMServer {
                     id: task.tx.to_string(),
                     name: task.name.to_string(),
                     args: task.args,
-                    files: task.files.into_iter().map(|x| x.vm_file_path).collect(),
+                    files: task
+                        .files
+                        .into_iter()
+                        .map(|x| x.vm_file_path().to_string())
+                        .collect(),
                 })),
             },
             None => grpc::TaskResponse {
@@ -151,7 +155,7 @@ impl VmService for VMServer {
         let vm_file = task
             .files
             .iter()
-            .find(|file| file.vm_file_path == req.path)
+            .find(|file| file.vm_file_path() == req.path)
             .ok_or_else(|| Status::new(Code::NotFound, "couldn't get task file"))?;
 
         let mut file_stream = vm_file
@@ -223,7 +227,7 @@ impl VmService for VMServer {
         while let Ok(Some(grpc::FileData { result: data })) = stream.message().await {
             match data {
                 Some(grpc::file_data::Result::Metadata(FileMetadata { task_id, path })) => {
-                    let vmfile = File::<Vm>::new(path, Hash::default(), task_id);
+                    let vmfile = TaskVMFile::<VmOutput>::new(path, task_id.into());
                     let relative_file_path = vmfile.get_relatif_path();
 
                     let file_path = PathBuf::new()

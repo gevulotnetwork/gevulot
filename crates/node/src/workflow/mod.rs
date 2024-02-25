@@ -1,7 +1,6 @@
-use crate::types::file::File;
+use crate::types::file::{Output, TxFile};
 use async_trait::async_trait;
 use eyre::Result;
-use gevulot_node::types::file::ProofVerif;
 use gevulot_node::types::file::TaskVMFile;
 use gevulot_node::types::{
     transaction::{Payload, Validated, Workflow, WorkflowStep},
@@ -306,7 +305,7 @@ impl WorkflowEngine {
         &self,
         tx: Hash,
         step: &WorkflowStep,
-        files: &[File<ProofVerif>],
+        files: &[TxFile<Output>],
         kind: TaskKind,
     ) -> Result<Task> {
         let id = Uuid::new_v4();

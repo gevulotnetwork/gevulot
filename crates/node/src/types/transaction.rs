@@ -1,4 +1,4 @@
-use super::file::{Download, File, Image, ProofVerif};
+use super::file::{AssetFile, Image, Output, TxFile};
 use super::signature::Signature;
 use super::{hash::Hash, program::ResourceRequest};
 use crate::types::transaction;
@@ -157,7 +157,7 @@ pub enum Payload {
         parent: Hash,
         prover: Hash,
         proof: Vec<u8>,
-        files: Vec<File<ProofVerif>>,
+        files: Vec<TxFile<Output>>,
     },
     ProofKey {
         parent: Hash,
@@ -167,7 +167,7 @@ pub enum Payload {
         parent: Hash,
         verifier: Hash,
         verification: Vec<u8>,
-        files: Vec<File<ProofVerif>>,
+        files: Vec<TxFile<Output>>,
     },
     Cancel {
         parent: Hash,
@@ -228,7 +228,7 @@ impl Payload {
                 buf.append(&mut prover.to_vec());
                 buf.append(proof.clone().as_mut());
                 buf.append(proof.clone().as_mut());
-                buf.append(&mut File::<ProofVerif>::vec_to_bytes(files).unwrap());
+                buf.append(&mut TxFile::<Output>::vec_to_bytes(files).unwrap());
             }
             Payload::ProofKey { parent, key } => {
                 buf.append(&mut parent.to_vec());
@@ -243,7 +243,7 @@ impl Payload {
                 buf.append(&mut parent.to_vec());
                 buf.append(&mut verifier.to_vec());
                 buf.append(verification.clone().as_mut());
-                buf.append(&mut File::<ProofVerif>::vec_to_bytes(files).unwrap());
+                buf.append(&mut TxFile::<Output>::vec_to_bytes(files).unwrap());
             }
             Payload::Cancel { parent } => {
                 buf.append(&mut parent.to_vec());
@@ -424,14 +424,14 @@ impl Transaction<Received> {
         Ok(())
     }
 
-    pub fn get_asset_list(&self) -> Result<Vec<File<Download>>> {
+    pub fn get_asset_list(&self) -> Result<Vec<AssetFile>> {
         tracing::trace!("get_asset_list Transaction<Received:{self:?}");
         match &self.payload {
             transaction::Payload::Deploy {
                 prover, verifier, ..
             } => Ok(vec![
-                File::<Image>::try_from_prg_meta_data(prover).into(),
-                File::<Image>::try_from_prg_meta_data(verifier).into(),
+                TxFile::<Image>::try_from_prg_meta_data(prover).into(),
+                TxFile::<Image>::try_from_prg_meta_data(verifier).into(),
             ]),
             Payload::Run { workflow } => {
                 workflow
@@ -455,11 +455,11 @@ impl Transaction<Received> {
                     .map(|(file_name, file_url, checksum)| {
                         //verify the url is valide.
                         reqwest::Url::parse(file_url)?;
-                        Ok(File::<Download>::new(
+                        Ok(AssetFile::new(
                             file_name.to_string(),
                             file_url.clone(),
                             checksum.to_string().into(),
-                            self.hash,
+                            self.hash.to_string(),
                             false,
                         ))
                     })
