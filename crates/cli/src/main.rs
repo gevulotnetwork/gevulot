@@ -78,12 +78,14 @@ enum ConfCommands {
         /// [{
         ///     program: "Program Hash",
         ///     cmd_args: [ {name: "args name", value:"args value"}, ...],
-        ///     inputs: [{"Output":{"source_program":"Program Hash","file_name":"filename"}}],
+        ///     inputs: [
+        ///         {"Input":{"local_path":"<Path to the local file>","vm_path":"<path to read the file in the VM", "file_url":"<Optional file url if not local. In this case local_path contains the file checksum"},
+        ///         {"Output":{"source_program":"Program Hash","file_name":"<file path where the file is written in the VM"}}],
         ///     , ...
         /// }]
         /// Example for proving and verification:
         /// --tasks '[
-        /// {"program":"9616d42b0d82c1ed06eab8eaa26680261ad831012bbf3ad8303738a53bf85c7c","cmd_args":[{"name":"--nonce","value":"42"}],"inputs":[]}
+        /// {"program":"9616d42b0d82c1ed06eab8eaa26680261ad831012bbf3ad8303738a53bf85c7c","cmd_args":[{"name":"--nonce","value":"42"}],"inputs":[{"Input":{"local_path":"witness.txt","vm_path":"/workspace/witness.txt"}}]}
         ///,
         ///{
         /// "program":"37ef718f473a96e2dd56ac27fc175bfa08f4a30e34bdff5802e2f5071265a942",

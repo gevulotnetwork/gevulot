@@ -51,6 +51,11 @@ To execute the program with the specified hash with arguments `--nonce=42`:
 {"program":"9616d42b0d82c1ed06eab8eaa26680261ad831012bbf3ad8303738a53bf85c7c","cmd_args":[{"name":"--nonce","value":"42"}],"inputs":[]}
 ```
 
+To execute the program with the specified hash with arguments `--nonce=42` and an input local file `witness.txt`: 
+```
+{"program":"9616d42b0d82c1ed06eab8eaa26680261ad831012bbf3ad8303738a53bf85c7c","cmd_args":[{"name":"--nonce","value":"42"}],"inputs":[{"Input":{"local_path":"witness.txt","vm_path":"/workspace/witness.txt"}}]}
+```
+
 To execute a program with input of type output for the program data: 
 ```
 {"program":"37ef718f473a96e2dd56ac27fc175bfa08f4a30e34bdff5802e2f5071265a942", "cmd_args":[],"inputs":[{"Output":{"source_program":"9616d42b0d82c1ed06eab8eaa26680261ad831012bbf3ad8303738a53bf85c7c","file_name":"/workspace/proof.dat"}}]}
