@@ -46,6 +46,24 @@ struct RunningTask {
     task_started: Instant,
 }
 
+struct SchedulerState {
+    pending_programs: VecDeque<Hash>,
+    running_tasks: Vec<RunningTask>,
+    running_vms: Vec<ProgramHandle>,
+    task_queue: HashMap<Hash, VecDeque<(Task, Instant)>>,
+}
+
+impl SchedulerState {
+    fn new() -> Self {
+        Self {
+            pending_programs: VecDeque::new(),
+            running_tasks: vec![],
+            running_vms: vec![],
+            task_queue: HashMap::new(),
+        }
+    }
+}
+
 // TODO: I believe `Scheduler` should be rather named `Node` at some point. It
 // has started to become as a kind of central place for node logic
 // coordination.
@@ -59,11 +77,7 @@ pub struct Scheduler {
     workflow_engine: Arc<WorkflowEngine>,
     node_key: SecretKey,
 
-    pending_programs: Arc<Mutex<VecDeque<Hash>>>,
-    running_tasks: Arc<Mutex<Vec<RunningTask>>>,
-    running_vms: Arc<Mutex<Vec<ProgramHandle>>>,
-    #[allow(clippy::type_complexity)]
-    task_queue: Arc<Mutex<HashMap<Hash, VecDeque<(Task, Instant)>>>>,
+    state: Arc<Mutex<SchedulerState>>,
     data_directory: PathBuf,
     http_download_host: String,
     tx_sender: TxEventSender<TxResultSender>,
@@ -88,10 +102,7 @@ impl Scheduler {
             workflow_engine,
             node_key,
 
-            pending_programs: Arc::new(Mutex::new(VecDeque::new())),
-            running_tasks: Arc::new(Mutex::new(vec![])),
-            running_vms: Arc::new(Mutex::new(vec![])),
-            task_queue: Arc::new(Mutex::new(HashMap::new())),
+            state: Arc::new(Mutex::new(SchedulerState::new())),
             data_directory,
             http_download_host,
             tx_sender,
@@ -105,8 +116,8 @@ impl Scheduler {
 
             // Before scheduling new workload, try to start pending programs first.
             {
-                let mut pending_programs = self.pending_programs.lock().await;
-                while let Some(program_id) = pending_programs.pop_front() {
+                let mut state = self.state.lock().await;
+                while let Some(program_id) = state.pending_programs.pop_front() {
                     match self
                         .program_manager
                         .lock()
@@ -114,14 +125,14 @@ impl Scheduler {
                         .start_program(program_id, None)
                         .await
                     {
-                        Ok(p) => self.running_vms.lock().await.push(p),
+                        Ok(p) => state.running_vms.push(p),
                         Err(e) if e.is::<ResourceError>() => {
                             let err = e.downcast_ref::<ResourceError>().unwrap();
                             tracing::info!("resources unavailable: {}", err);
                             sleep(Duration::from_millis(500)).await;
 
                             // Return the popped program_id back to pending queue.
-                            pending_programs.push_front(program_id);
+                            state.pending_programs.push_front(program_id);
                             continue 'SCHEDULING_LOOP;
                         }
                         Err(e) => panic!("failed to start program: {e}"),
@@ -142,13 +153,13 @@ impl Scheduler {
 
             // Push the task into program's work queue.
             {
-                let mut task_queue_map = self.task_queue.lock().await;
-                if let Some(task_queue) = task_queue_map.get_mut(&task.program_id) {
-                    task_queue.push_back((task.clone(), Instant::now()));
+                let mut state = self.state.lock().await;
+                if let Some(program_task_queue) = state.task_queue.get_mut(&task.program_id) {
+                    program_task_queue.push_back((task.clone(), Instant::now()));
                 } else {
                     let mut queue = VecDeque::new();
                     queue.push_back((task.clone(), Instant::now()));
-                    task_queue_map.insert(task.program_id, queue);
+                    state.task_queue.insert(task.program_id, queue);
                 }
             }
 
@@ -160,7 +171,7 @@ impl Scheduler {
                 .start_program(task.program_id, None)
                 .await
             {
-                Ok(p) => self.running_vms.lock().await.push(p),
+                Ok(p) => self.state.lock().await.running_vms.push(p),
                 Err(ref err) => {
                     if let Some(err) = err.downcast_ref::<ResourceError>() {
                         let ResourceError::NotEnoughResources(msg) = err;
@@ -179,7 +190,7 @@ impl Scheduler {
                         // Drop the program's task queue. The program's not
                         // there so no need to have queue for it either.
                         let program_id = &task.program_id.clone();
-                        self.task_queue.lock().await.remove(program_id);
+                        self.state.lock().await.task_queue.remove(program_id);
                     }
                 }
             }
@@ -224,22 +235,23 @@ impl Scheduler {
     async fn reschedule(&self, task: &Task) -> Result<()> {
         // The task is already pending in program's work queue. Push program ID
         // to pending programs queue to wait available resources.
-        self.pending_programs
+        self.state
             .lock()
             .await
+            .pending_programs
             .push_back(task.program_id);
         Ok(())
     }
 
     async fn reap_zombies(&self) {
-        let mut running_tasks = self.running_tasks.lock().await;
-        let mut running_vms = self.running_vms.lock().await;
+        let mut state = self.state.lock().await;
 
         let mut zombies = vec![];
-        for task in running_tasks.iter() {
+        for task in state.running_tasks.iter() {
             // TODO: Add maximum running time limit for a task here.
 
-            if let Some(vm_handle) = running_vms
+            if let Some(vm_handle) = state
+                .running_vms
                 .iter()
                 .find(|x| x.vm_id().eq(task.vm_id.clone()))
             {
@@ -286,8 +298,12 @@ impl Scheduler {
             // - Remove the VM from the `running_vms`.
             // - Remove the task from the `running_tasks`.
             //
-            if let Some(idx) = running_vms.iter().position(|x| x.vm_id().eq(vm_id.clone())) {
-                let vm_handle = running_vms.swap_remove(idx);
+            if let Some(idx) = state
+                .running_vms
+                .iter()
+                .position(|x| x.vm_id().eq(vm_id.clone()))
+            {
+                let vm_handle = state.running_vms.swap_remove(idx);
                 if let Err(err) = self
                     .program_manager
                     .lock()
@@ -299,15 +315,23 @@ impl Scheduler {
                 }
             }
 
-            if let Some(idx) = running_tasks.iter().position(|x| x.task.id == task_id) {
-                let _ = running_tasks.swap_remove(idx);
+            if let Some(idx) = state
+                .running_tasks
+                .iter()
+                .position(|x| x.task.id == task_id)
+            {
+                let _ = state.running_tasks.swap_remove(idx);
             }
         }
 
         // Now, reap VMs that don't have running task.
         let mut zombies = vec![];
-        for vm_handle in running_vms.iter() {
-            if !running_tasks.iter().any(|x| x.vm_id.eq(vm_handle.vm_id())) {
+        for vm_handle in state.running_vms.iter() {
+            if !state
+                .running_tasks
+                .iter()
+                .any(|x| x.vm_id.eq(vm_handle.vm_id()))
+            {
                 // XXX: Following is not 100% correct. It checks the runtime
                 // from the very beginning of the whole VM's start-up, which
                 // is not the same as idle runtime. However, right now each VM
@@ -328,8 +352,12 @@ impl Scheduler {
         while let Some(vm_id) = zombies.pop() {
             tracing::debug!("reaping idle VM {}", vm_id);
 
-            if let Some(idx) = running_vms.iter().position(|x| x.vm_id().eq(vm_id.clone())) {
-                let vm_handle = running_vms.swap_remove(idx);
+            if let Some(idx) = state
+                .running_vms
+                .iter()
+                .position(|x| x.vm_id().eq(vm_id.clone()))
+            {
+                let vm_handle = state.running_vms.swap_remove(idx);
                 if let Err(err) = self
                     .program_manager
                     .lock()
@@ -347,8 +375,9 @@ impl Scheduler {
 #[async_trait]
 impl TaskManager for Scheduler {
     async fn get_running_task(&self, vm_id: Arc<dyn VMId>) -> Option<Task> {
-        let running_tasks = self.running_tasks.lock().await;
-        running_tasks
+        let state = self.state.lock().await;
+        state
+            .running_tasks
             .iter()
             .find(|rt| rt.vm_id.eq(vm_id.clone()))
             .map(|rt| rt.task.clone())
@@ -362,11 +391,15 @@ impl TaskManager for Scheduler {
         );
 
         // Ensure that the VM requesting for a task is not already executing one!
-        let mut running_tasks = self.running_tasks.lock().await;
-        if let Some(idx) = running_tasks.iter().position(|e| e.vm_id.eq(vm_id.clone())) {
+        let mut state = self.state.lock().await;
+        if let Some(idx) = state
+            .running_tasks
+            .iter()
+            .position(|e| e.vm_id.eq(vm_id.clone()))
+        {
             // A VM that is already running a task, requests for a new one.
             // Mark the existing task as executed and stop the VM.
-            let running_task = running_tasks.swap_remove(idx);
+            let running_task = state.running_tasks.swap_remove(idx);
             tracing::info!(
                 "task {} has been running {}sec but found to be orphaned. marking it as executed.",
                 running_task.task.id,
@@ -375,10 +408,12 @@ impl TaskManager for Scheduler {
 
             tracing::debug!("terminating VM {} running program {}", vm_id, program);
 
-            let mut running_vms = self.running_vms.lock().await;
-            let idx = running_vms.iter().position(|e| e.vm_id().eq(vm_id.clone()));
+            let idx = state
+                .running_vms
+                .iter()
+                .position(|e| e.vm_id().eq(vm_id.clone()));
             if idx.is_some() {
-                let program_handle = running_vms.remove(idx.unwrap());
+                let program_handle = state.running_vms.remove(idx.unwrap());
                 if let Err(err) = self
                     .program_manager
                     .lock()
@@ -393,7 +428,7 @@ impl TaskManager for Scheduler {
             return None;
         }
 
-        if let Some(task_queue) = self.task_queue.lock().await.get_mut(&program) {
+        if let Some(task_queue) = state.task_queue.get_mut(&program) {
             if let Some((task, scheduled)) = task_queue.pop_front() {
                 tracing::debug!(
                     "task {} found for program {} running in vm_id {}",
@@ -407,7 +442,7 @@ impl TaskManager for Scheduler {
                     scheduled.elapsed().as_millis()
                 );
 
-                running_tasks.push(RunningTask {
+                state.running_tasks.push(RunningTask {
                     task: task.clone(),
                     vm_id: vm_id.clone(),
                     task_scheduled: scheduled,
@@ -434,13 +469,13 @@ impl TaskManager for Scheduler {
         };
 
         let task_id = &result.id;
-        let mut running_tasks = self.running_tasks.lock().await;
-
-        if let Some(idx) = running_tasks
+        let mut state = self.state.lock().await;
+        if let Some(idx) = state
+            .running_tasks
             .iter()
             .position(|e| &e.task.tx.to_string() == task_id)
         {
-            let running_task = running_tasks.swap_remove(idx);
+            let running_task = state.running_tasks.swap_remove(idx);
             tracing::info!(
                 "task of Tx {} finished in {}sec",
                 running_task.task.tx,
@@ -514,10 +549,12 @@ impl TaskManager for Scheduler {
 
             tracing::debug!("terminating VM {} running program {}", vm_id, program);
 
-            let mut running_vms = self.running_vms.lock().await;
-            let idx = running_vms.iter().position(|e| e.vm_id().eq(vm_id.clone()));
+            let idx = state
+                .running_vms
+                .iter()
+                .position(|e| e.vm_id().eq(vm_id.clone()));
             if idx.is_some() {
-                let program_handle = running_vms.remove(idx.unwrap());
+                let program_handle = state.running_vms.remove(idx.unwrap());
                 self.program_manager
                     .lock()
                     .await
