@@ -4,7 +4,7 @@ mod resource_manager;
 use crate::storage::Database;
 use crate::txvalidation::TxEventSender;
 use crate::txvalidation::TxResultSender;
-use crate::types::file::{move_vmfile, Output, TaskVMFile, TxFile, VmOutput};
+use crate::types::file::{move_vmfile, Output, TaskVmFile, TxFile, VmOutput};
 use crate::types::TaskState;
 use crate::vmm::vm_server::grpc;
 use crate::vmm::{vm_server::TaskManager, VMId};
@@ -448,12 +448,12 @@ impl TaskManager for Scheduler {
             );
 
             // Handle tx execution's result files so that they are available as an input for next task if needed.
-            let executed_files: Vec<(TaskVMFile<VmOutput>, TxFile<Output>)> = result
+            let executed_files: Vec<(TaskVmFile<VmOutput>, TxFile<Output>)> = result
                 .files
                 .into_iter()
                 .map(|file| {
                     let vm_file =
-                        TaskVMFile::<VmOutput>::new(file.path.to_string(), task_id.clone().into());
+                        TaskVmFile::<VmOutput>::new(file.path.to_string(), task_id.clone().into());
                     let dest = TxFile::<Output>::new(
                         file.path,
                         self.http_download_host.clone(),

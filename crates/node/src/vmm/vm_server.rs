@@ -1,7 +1,7 @@
 use self::grpc::{
     FileChunk, FileData, FileMetadata, GenericResponse, TaskResponse, TaskResultRequest,
 };
-use crate::types::file::{TaskVMFile, VmOutput};
+use crate::types::file::{TaskVmFile, VmOutput};
 use crate::types::Hash;
 use crate::types::Task;
 use crate::vmm::vm_server::grpc::file_data;
@@ -227,7 +227,7 @@ impl VmService for VMServer {
         while let Ok(Some(grpc::FileData { result: data })) = stream.message().await {
             match data {
                 Some(grpc::file_data::Result::Metadata(FileMetadata { task_id, path })) => {
-                    let vmfile = TaskVMFile::<VmOutput>::new(path, task_id.into());
+                    let vmfile = TaskVmFile::<VmOutput>::new(path, task_id.into());
                     let relative_file_path = vmfile.get_relatif_path();
 
                     let file_path = PathBuf::new()

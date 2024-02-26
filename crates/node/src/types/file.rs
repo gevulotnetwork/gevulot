@@ -8,13 +8,13 @@ use std::path::PathBuf;
 
 // Describe a file use by an executed task.
 #[derive(Clone, Debug)]
-pub struct TaskVMFile<E> {
+pub struct TaskVmFile<E> {
     //    pub node_file_path: String,
     vm_file_path: String,
     extension: E,
 }
 
-impl<E> TaskVMFile<E> {
+impl<E> TaskVmFile<E> {
     pub fn vm_file_path(&self) -> &str {
         &self.vm_file_path
     }
@@ -29,13 +29,13 @@ pub struct VmInput(String);
 pub struct VmOutput(Hash);
 
 // Input file of a Task. VmInput store the node file path.
-impl TaskVMFile<VmInput> {
+impl TaskVmFile<VmInput> {
     pub async fn open_task_file(
         &self,
         data_dir: &PathBuf,
     ) -> Result<tokio::io::BufReader<tokio::fs::File>> {
         let path = PathBuf::new().join(data_dir).join(&self.extension.0);
-        tracing::trace!("TaskVMFile::open_task_file path:{path:?}",);
+        tracing::trace!("TaskVmFile::open_task_file path:{path:?}",);
         let fd = tokio::fs::File::open(path).await?;
         Ok(tokio::io::BufReader::new(fd))
     }
@@ -44,12 +44,12 @@ impl TaskVMFile<VmInput> {
         tx_hash: Hash,
         parent_output_files: &[TxFile<Output>],
         value: &transaction::ProgramData,
-    ) -> Result<TaskVMFile<VmInput>, String> {
+    ) -> Result<TaskVmFile<VmInput>, String> {
         match value {
             transaction::ProgramData::Input { file_name, .. } => {
-                let file = TaskVMFile::<VmOutput>::new(file_name.to_string(), tx_hash);
+                let file = TaskVmFile::<VmOutput>::new(file_name.to_string(), tx_hash);
                 let node_file_path = file.get_relatif_path().to_str().unwrap().to_string();
-                Ok(TaskVMFile::<VmInput> {
+                Ok(TaskVmFile::<VmInput> {
                     vm_file_path: file_name.to_string(),
                     extension: VmInput(node_file_path),
                 })
@@ -66,7 +66,7 @@ impl TaskVMFile<VmInput> {
                     Some(file) => {
                         let node_file_path =
                             file.get_relatif_path(tx_hash).to_str().unwrap().to_string();
-                        Ok(TaskVMFile::<VmInput> {
+                        Ok(TaskVmFile::<VmInput> {
                             vm_file_path: file_name.to_string(),
                             extension: VmInput(node_file_path),
                         })
@@ -84,9 +84,9 @@ impl TaskVMFile<VmInput> {
 // Output file of a Task. It's a VM generated file.
 // VmOutput store the hash to the task's Tx
 // Output file are stored in <Task Tx hash>/<VM path>
-impl TaskVMFile<VmOutput> {
+impl TaskVmFile<VmOutput> {
     pub fn new(vm_file_path: String, task_tx: Hash) -> Self {
-        TaskVMFile::<VmOutput> {
+        TaskVmFile::<VmOutput> {
             vm_file_path,
             extension: VmOutput(task_tx),
         }
@@ -110,7 +110,7 @@ impl TaskVMFile<VmOutput> {
 }
 
 pub async fn move_vmfile(
-    source: &TaskVMFile<VmOutput>,
+    source: &TaskVmFile<VmOutput>,
     dest: &TxFile<Output>,
     base_path: &Path,
     proofverif_tx_hash: Hash,
@@ -150,7 +150,7 @@ pub async fn move_vmfile(
 }
 
 // Describe file data that is stored in the database.
-// To manipulate file on disk use the equivalent type state definition TxFile<T> or TaskVMFile<T>
+// To manipulate file on disk use the equivalent type state definition TxFile<T> or TaskVmFile<T>
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize, sqlx::FromRow)]
 pub struct DbFile {
     pub name: String,

@@ -1,5 +1,5 @@
 use super::hash::Hash;
-use crate::types::file::{TaskVMFile, VmInput};
+use crate::types::file::{TaskVmFile, VmInput};
 use uuid::Uuid;
 
 pub type TaskId = Uuid;
@@ -31,7 +31,7 @@ pub struct Task {
     pub kind: TaskKind,
     pub program_id: Hash,
     pub args: Vec<String>,
-    pub files: Vec<TaskVMFile<VmInput>>,
+    pub files: Vec<TaskVmFile<VmInput>>,
     pub serial: i32,
     pub state: TaskState,
 }

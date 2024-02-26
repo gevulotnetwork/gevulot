@@ -1,7 +1,7 @@
 use crate::types::file::{Output, TxFile};
 use async_trait::async_trait;
 use eyre::Result;
-use gevulot_node::types::file::TaskVMFile;
+use gevulot_node::types::file::TaskVmFile;
 use gevulot_node::types::{
     transaction::{Payload, Validated, Workflow, WorkflowStep},
     Hash, Task, TaskKind, Transaction,
@@ -314,7 +314,7 @@ impl WorkflowEngine {
             .inputs
             .iter()
             .map(|e| {
-                TaskVMFile::try_from_prg_data(tx, files, e)
+                TaskVmFile::try_from_prg_data(tx, files, e)
                     .map_err(|err| WorkflowError::FileDefinitionError(err.to_string()).into())
             })
             .collect::<Result<Vec<_>>>()?;
