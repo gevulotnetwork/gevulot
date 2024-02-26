@@ -502,12 +502,12 @@ impl TaskManager for Scheduler {
             };
             tracing::info!("Submit result Tx created:{}", tx.hash.to_string());
 
-            //Move tx file from execution Tx path to new Tx path
+            // Move tx file from execution Tx path to new Tx path
             for (source_file, dest_file) in executed_files {
                 move_vmfile(&source_file, &dest_file, &self.data_directory, tx.hash).await.map_err(|err| format!("failed to move excution file from: {source_file:?} to: {dest_file:?} error: {err}"))?;
             }
 
-            //send tx to validation process.
+            // Send tx to validation process.
             self.tx_sender.send_tx(tx).await.map_err(|err| {
                 format!("failed to send Tx result to validation process: {}", err)
             })?;
