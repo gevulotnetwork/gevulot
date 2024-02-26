@@ -50,7 +50,7 @@ pub enum JsonProgramData {
     Input {
         // path to the local file or Hash os the distant file
         local_path: String,
-        // Path of the file in the VM containing /warspace directory
+        // Path of the file in the VM containing /workspace directory
         vm_path: String,
         // Optional url to the file if the file hash is provided by file
         file_url: Option<String>,
