@@ -1,7 +1,7 @@
 use libsecp256k1::Message;
 use rand::Rng;
 use serde::{de, Deserialize, Serialize};
-use sqlx::{self, Decode, Encode, Postgres, Type};
+use sqlx::{Decode, Encode, Postgres, Type};
 use std::fmt;
 
 pub const HASH_SIZE: usize = 32;

@@ -1,13 +1,10 @@
-use crate::types::file::DbFile;
-use serde::{Deserialize, Serialize};
+use super::hash::Hash;
+use crate::types::file::{TaskVmFile, VmInput};
 use uuid::Uuid;
-
-use super::hash::{deserialize_hash_from_json, Hash};
 
 pub type TaskId = Uuid;
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize, sqlx::Type)]
-#[sqlx(type_name = "task_state", rename_all = "lowercase")]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum TaskState {
     #[default]
     New,
@@ -17,8 +14,7 @@ pub enum TaskState {
     Failed,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize, Serialize, sqlx::Type)]
-#[sqlx(type_name = "task_kind", rename_all = "lowercase")]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum TaskKind {
     Proof,
     Verification,
@@ -27,20 +23,16 @@ pub enum TaskKind {
     Nop,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize, sqlx::FromRow)]
+#[derive(Clone, Debug, Default)]
 pub struct Task {
     pub id: TaskId,
     pub tx: Hash,
     pub name: String,
     pub kind: TaskKind,
-    #[serde(deserialize_with = "deserialize_hash_from_json")]
     pub program_id: Hash,
     pub args: Vec<String>,
-    #[sqlx(skip)]
-    pub files: Vec<DbFile>,
-    #[serde(skip_deserializing)]
+    pub files: Vec<TaskVmFile<VmInput>>,
     pub serial: i32,
-    #[serde(skip_deserializing)]
     pub state: TaskState,
 }
 

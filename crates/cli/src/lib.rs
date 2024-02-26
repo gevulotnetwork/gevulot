@@ -48,9 +48,11 @@ struct JsonExecArgs {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub enum JsonProgramData {
     Input {
-        //path to the local file or Hash os the distant file
-        file: String,
-        //optional url to the file if the file hash is provided by file
+        // path to the local file or Hash os the distant file
+        local_path: String,
+        // Path of the file in the VM containing /warspace directory
+        vm_path: String,
+        // Optional url to the file if the file hash is provided by file
         file_url: Option<String>,
     },
     Output {
@@ -61,7 +63,11 @@ pub enum JsonProgramData {
 
 fn get_file_data_from_json(prog_data: &JsonProgramData) -> Option<(String, Option<String>)> {
     match prog_data {
-        JsonProgramData::Input { file, file_url } => Some((file.clone(), file_url.clone())),
+        JsonProgramData::Input {
+            local_path,
+            file_url,
+            ..
+        } => Some((local_path.clone(), file_url.clone())),
         _ => None,
     }
 }
@@ -99,12 +105,12 @@ pub async fn run_exec_command(
             .into_iter()
             .map(|input| {
                 let ret = match input {
-                    JsonProgramData::Input { .. } => {
+                    JsonProgramData::Input { vm_path, .. } => {
                         let input_data = &file_data[counter];
                         counter += 1;
 
                         ProgramData::Input {
-                            file_name: input_data.filename.clone(),
+                            file_name: vm_path,
                             file_url: input_data.url.clone(),
                             checksum: input_data.checksum.to_string(),
                         }

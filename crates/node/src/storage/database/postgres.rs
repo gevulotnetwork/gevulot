@@ -5,14 +5,13 @@ use crate::types::file::DbFile;
 use crate::types::{
     self,
     transaction::{ProgramData, Validated},
-    Hash, Program, Task,
+    Hash, Program,
 };
 use eyre::Result;
 use gevulot_node::types::program::ResourceRequest;
 use libsecp256k1::PublicKey;
-use sqlx::{self, postgres::PgPoolOptions, FromRow, Row};
+use sqlx::{postgres::PgPoolOptions, FromRow, Row};
 use std::time::Duration;
-use uuid::Uuid;
 
 const MAX_DB_CONNS: u32 = 64;
 const DB_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
@@ -131,97 +130,6 @@ impl Database {
             .await?;
 
         Ok(programs)
-    }
-
-    pub async fn add_task(&self, t: &Task) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
-
-        if let Err(err) = sqlx::query(
-            "INSERT INTO task ( id, name, args, state, program_id ) VALUES ( $1, $2, $3, $4, $5 )",
-        )
-        .bind(t.id)
-        .bind(&t.name)
-        .bind(&t.args)
-        .bind(&t.state)
-        .bind(t.program_id)
-        .execute(&mut *tx)
-        .await
-        {
-            tx.rollback().await?;
-            return Err(err.into());
-        }
-
-        {
-            let mut query_builder =
-                sqlx::QueryBuilder::new("INSERT INTO file ( task_id, name, url, checksum )");
-            query_builder.push_values(&t.files, |mut b, new_file| {
-                b.push_bind(t.id)
-                    .push_bind(&new_file.name)
-                    .push_bind(&new_file.url)
-                    .push_bind(new_file.checksum);
-            });
-
-            let query = query_builder.build();
-            if let Err(err) = query.execute(&mut *tx).await {
-                tx.rollback().await?;
-                return Err(err.into());
-            }
-        }
-
-        tx.commit().await.map_err(|e| e.into())
-    }
-
-    pub async fn find_task(&self, id: Uuid) -> Result<Option<Task>> {
-        let mut tx = self.pool.begin().await?;
-
-        // non-macro query_as used because of sqlx limitations with enums.
-        let task = sqlx::query_as::<_, Task>("SELECT * FROM task WHERE id = $1")
-            .bind(id)
-            .fetch_optional(&mut *tx)
-            .await?;
-
-        // Fetch accompanied Files for the Task.
-        match task {
-            Some(mut task) => {
-                let mut files =
-                    sqlx::query_as::<_, DbFile>("SELECT * FROM file WHERE task_id = $1")
-                        .bind(id)
-                        .fetch_all(&mut *tx)
-                        .await?;
-                task.files.append(&mut files);
-                Ok(Some(task))
-            }
-            None => Ok(None),
-        }
-    }
-
-    pub async fn get_tasks(&self) -> Result<Vec<Task>> {
-        let mut tx = self.pool.begin().await?;
-
-        // non-macro query_as used because of sqlx limitations with enums.
-        let mut tasks = sqlx::query_as::<_, Task>("SELECT * FROM task")
-            .fetch_all(&mut *tx)
-            .await?;
-
-        for task in &mut tasks {
-            let mut files = sqlx::query_as::<_, DbFile>("SELECT * FROM file WHERE task_id = $1")
-                .bind(task.id)
-                .fetch_all(&mut *tx)
-                .await?;
-
-            task.files.append(&mut files);
-        }
-
-        Ok(tasks)
-    }
-
-    pub async fn update_task_state(&self, t: &Task) -> Result<()> {
-        sqlx::query("UPDATE task SET state = $1 WHERE id = $2")
-            .bind(&t.state)
-            .bind(t.id)
-            .execute(&self.pool)
-            .await?;
-        Ok(())
     }
 
     // NOTE: There are plenty of opportunities for optimizations in following
@@ -681,14 +589,12 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
+    use crate::types::transaction::Payload;
     use gevulot_node::types::transaction::Created;
-    use libsecp256k1::{PublicKey, SecretKey};
+    use libsecp256k1::SecretKey;
     use rand::{rngs::StdRng, Rng, SeedableRng};
 
-    use crate::types::{
-        transaction::{Payload, ProgramMetadata},
-        Signature, Transaction,
-    };
+    use crate::types::{transaction::ProgramMetadata, Signature, Transaction};
 
     use super::*;
 

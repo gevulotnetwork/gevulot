@@ -15,7 +15,7 @@ use qapi::{
     qmp,
     qmp::StatusInfo,
 };
-use rand::{self, distributions::Alphanumeric, Rng};
+use rand::{distributions::Alphanumeric, Rng};
 use serde_json::json;
 use tokio::{
     io::{ReadHalf, WriteHalf},
@@ -53,7 +53,7 @@ fn u32_from_any(x: &dyn Any) -> u32 {
         None => panic!("incompatible VMId type"),
     }
 }
-
+#[derive(Debug)]
 pub struct QEMUVMHandle {
     child: Option<Child>,
     cid: u32,

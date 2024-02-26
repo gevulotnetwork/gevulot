@@ -431,8 +431,8 @@ mod tests {
     use crate::txvalidation::CallbackSender;
     use crate::txvalidation::EventProcessError;
     use eyre::Result;
+    use gevulot_node::types::transaction::Payload;
     use gevulot_node::types::transaction::Received;
-    use gevulot_node::types::{transaction::Payload, Transaction};
     use libsecp256k1::SecretKey;
     use rand::{rngs::StdRng, SeedableRng};
     use tokio::sync::mpsc::UnboundedReceiver;

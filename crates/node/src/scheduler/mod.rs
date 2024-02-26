@@ -4,7 +4,7 @@ mod resource_manager;
 use crate::storage::Database;
 use crate::txvalidation::TxEventSender;
 use crate::txvalidation::TxResultSender;
-use crate::types::file::{move_vmfile, File, ProofVerif, Vm};
+use crate::types::file::{move_vmfile, Output, TaskVmFile, TxFile, VmOutput};
 use crate::types::TaskState;
 use crate::vmm::vm_server::grpc;
 use crate::vmm::{vm_server::TaskManager, VMId};
@@ -346,7 +346,15 @@ impl Scheduler {
 
 #[async_trait]
 impl TaskManager for Scheduler {
-    async fn get_task(&self, program: Hash, vm_id: Arc<dyn VMId>) -> Option<grpc::Task> {
+    async fn get_running_task(&self, vm_id: Arc<dyn VMId>) -> Option<Task> {
+        let running_tasks = self.running_tasks.lock().await;
+        running_tasks
+            .iter()
+            .find(|rt| rt.vm_id.eq(vm_id.clone()))
+            .map(|rt| rt.task.clone())
+    }
+
+    async fn get_pending_task(&self, program: Hash, vm_id: Arc<dyn VMId>) -> Option<Task> {
         tracing::debug!(
             "program {} running in vm_id {} requests for new task",
             program,
@@ -406,12 +414,7 @@ impl TaskManager for Scheduler {
                     task_started: Instant::now(),
                 });
 
-                return Some(grpc::Task {
-                    id: task.tx.to_string(),
-                    name: task.name.clone(),
-                    args: task.args.clone(),
-                    files: task.files.iter().map(|x| x.name.clone()).collect(),
-                });
+                return Some(task.clone());
             }
         }
 
@@ -423,8 +426,8 @@ impl TaskManager for Scheduler {
         program: Hash,
         vm_id: Arc<dyn VMId>,
         result: grpc::task_result_request::Result,
-    ) -> bool {
-        tracing::debug!("submit_result  result:{result:#?}");
+    ) -> Result<(), String> {
+        tracing::debug!("submit_result  result:{result:#?} ");
 
         let grpc::task_result_request::Result::Task(result) = result else {
             todo!("task failed; handle it correctly")
@@ -432,28 +435,26 @@ impl TaskManager for Scheduler {
 
         let task_id = &result.id;
         let mut running_tasks = self.running_tasks.lock().await;
+
         if let Some(idx) = running_tasks
             .iter()
             .position(|e| &e.task.tx.to_string() == task_id)
         {
             let running_task = running_tasks.swap_remove(idx);
             tracing::info!(
-                "task {} finished in {}sec",
-                task_id,
+                "task of Tx {} finished in {}sec",
+                running_task.task.tx,
                 running_task.task_started.elapsed().as_secs()
             );
 
             // Handle tx execution's result files so that they are available as an input for next task if needed.
-            let executed_files: Vec<(File<Vm>, File<ProofVerif>)> = result
+            let executed_files: Vec<(TaskVmFile<VmOutput>, TxFile<Output>)> = result
                 .files
                 .into_iter()
                 .map(|file| {
-                    let vm_file = File::<Vm>::new(
-                        file.path.to_string(),
-                        file.checksum[..].into(),
-                        running_task.task.tx,
-                    );
-                    let dest = File::<ProofVerif>::new(
+                    let vm_file =
+                        TaskVmFile::<VmOutput>::new(file.path.to_string(), task_id.clone().into());
+                    let dest = TxFile::<Output>::new(
                         file.path,
                         self.http_download_host.clone(),
                         file.checksum[..].into(),
@@ -462,48 +463,9 @@ impl TaskManager for Scheduler {
                 })
                 .collect();
 
-            //TODO ? -Verify that all expected files has been generated.
-            // let executed_files: Vec<(VmFile, TxFile)> =
-            //     if let Ok(Some(tx)) = self.database.find_transaction(&running_task.task.tx).await {
-            //         if let Payload::Run { workflow } = tx.payload {
-            //             workflow
-            //                 .steps
-            //                 .iter()
-            //                 .flat_map(|step| &step.inputs)
-            //                 .filter_map(|input| {
-            //                     let ProgramData::Output {
-            //                         source_program,
-            //                         file_name,
-            //                     } = input
-            //                     else {
-            //                         return None;
-            //                     };
-            //                     let vm_file = VmFile {
-            //                         task_id: running_task.task.tx,
-            //                         name: file_name.to_string(),
-            //                     };
+            //TODO -Verify that all expected files has been generated.
 
-            //                     let uuid = Uuid::new_v4();
-            //                     //format file_name to keep the current filename and the uuid.
-            //                     //put uuid at the end so that the uuid is use to save the file.
-            //                     let new_file_name = format!("{}/{}", file_name, uuid);
-            //                     let dest = TxFile {
-            //                         //Real url will be calculated during download.
-            //                         url: self.http_download_host.clone(),
-            //                         name: new_file_name,
-            //                         checksum: Hash::default(),
-            //                     };
-            //                     Some((vm_file, dest))
-            //                 })
-            //                 .collect()
-            //         } else {
-            //             vec![]
-            //         }
-            //     } else {
-            //         vec![]
-            //     };
-
-            let new_tx_files: Vec<File<ProofVerif>> = executed_files
+            let new_tx_files: Vec<TxFile<Output>> = executed_files
                 .iter()
                 .map(|(_, file)| file)
                 .cloned()
@@ -540,28 +502,15 @@ impl TaskManager for Scheduler {
             };
             tracing::info!("Submit result Tx created:{}", tx.hash.to_string());
 
-            //Move tx file from execution Tx path to new Tx path
+            // Move tx file from execution Tx path to new Tx path
             for (source_file, dest_file) in executed_files {
-                tracing::trace!(
-                    "Move file {} checksum:{}",
-                    dest_file.name,
-                    dest_file.checksum
-                );
-                if let Err(err) =
-                    move_vmfile(&source_file, &dest_file, &self.data_directory, tx.hash).await
-                {
-                    tracing::error!(
-                        "failed to move excution file from: {source_file:?} to: {dest_file:?} error: {err}",
-                    );
-                }
+                move_vmfile(&source_file, &dest_file, &self.data_directory, tx.hash).await.map_err(|err| format!("failed to move excution file from: {source_file:?} to: {dest_file:?} error: {err}"))?;
             }
 
-            //send tx to validation process.
-            if let Err(err) = self.tx_sender.send_tx(tx).await {
-                tracing::error!("failed to send Tx result to validation process: {}", err);
-            } else {
-                tracing::info!("successfully sent new tx to tx validation from task result");
-            }
+            // Send tx to validation process.
+            self.tx_sender.send_tx(tx).await.map_err(|err| {
+                format!("failed to send Tx result to validation process: {}", err)
+            })?;
 
             tracing::debug!("terminating VM {} running program {}", vm_id, program);
 
@@ -569,18 +518,16 @@ impl TaskManager for Scheduler {
             let idx = running_vms.iter().position(|e| e.vm_id().eq(vm_id.clone()));
             if idx.is_some() {
                 let program_handle = running_vms.remove(idx.unwrap());
-                if let Err(err) = self
-                    .program_manager
+                self.program_manager
                     .lock()
                     .await
                     .stop_program(program_handle)
                     .await
-                {
-                    tracing::error!("failed to stop program {}: {}", program, err);
-                }
+                    .map_err(|err| format!("failed to stop program {}: {}", program, err))?;
             }
+            Ok(())
+        } else {
+            Err(format!("submit_result task:{task_id} not found."))
         }
-
-        return false;
     }
 }

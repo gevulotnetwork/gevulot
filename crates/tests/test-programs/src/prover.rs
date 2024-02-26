@@ -1,4 +1,5 @@
 use gevulot_shim::{Task, TaskResult};
+use std::fs;
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 
@@ -16,6 +17,12 @@ fn run_task(task: &Task) -> Result<TaskResult> {
         let content = String::from_utf8(std::fs::read(path)?)?;
         println!("Prover: Read file:{name} with content:{content:?}");
     }
+    let entries = fs::read_dir("/workspace")
+        .unwrap()
+        .map(|res| res.map(|e| e.path()))
+        .collect::<std::io::Result<Vec<_>>>()
+        .unwrap();
+    println!("file entries in /workspace :: {:?}", entries);
 
     std::fs::write("/workspace/proof.dat", b"this is a proof.")?;
 

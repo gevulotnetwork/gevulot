@@ -1,4 +1,4 @@
-use crate::types::file::{Download, File};
+use crate::types::file::AssetFile;
 use eyre::eyre;
 use eyre::Result;
 use futures_util::TryStreamExt;
@@ -23,7 +23,7 @@ pub async fn download_asset_file(
     local_directory_path: &Path,
     http_peer_list: &[(SocketAddr, Option<u16>)],
     http_client: &reqwest::Client,
-    asset_file: File<Download>,
+    asset_file: AssetFile,
 ) -> Result<()> {
     let local_relative_file_path = asset_file.get_save_path();
     tracing::info!("download_file:{asset_file:?} local_directory_path:{local_directory_path:?} local_relative_file_path:{local_relative_file_path:?} http_peer_list:{http_peer_list:?}");
@@ -39,7 +39,7 @@ pub async fn download_asset_file(
 
     let mut resp = match tokio::time::timeout(
         tokio::time::Duration::from_secs(5),
-        http_client.get(asset_file.url).send(),
+        http_client.get(asset_file.file.url).send(),
     )
     .await
     {
@@ -70,13 +70,13 @@ pub async fn download_asset_file(
             }
             resp.ok_or(eyre!(
                 "Download no host found to download the file: {}",
-                asset_file.name
+                asset_file.file.name
             ))?
         }
         Err(err) => {
             return Err(eyre!(
                 "Download file: {:?}, request send timeout.",
-                asset_file.name
+                asset_file.file.name
             ));
         }
     };
@@ -111,13 +111,13 @@ pub async fn download_asset_file(
                 Ok(Err(_)) => {
                     return Err(eyre!(
                         "Download file: {:?}, connection timeout",
-                        asset_file.name
+                        asset_file.file.name
                     ));
                 }
                 Err(err) => {
                     return Err(eyre!(
                         "Download file: {:?}, http error:{err}",
-                        asset_file.name
+                        asset_file.file.name
                     ));
                 }
             }
@@ -125,11 +125,11 @@ pub async fn download_asset_file(
 
         fd.flush().await?;
         let checksum: crate::types::Hash = (&hasher.finalize()).into();
-        if checksum != asset_file.checksum {
+        if checksum != asset_file.file.checksum {
             Err(eyre!(
                 "download_file:{:?} bad checksum checksum:{checksum}  set_file.checksum:{}.",
-                asset_file.name,
-                asset_file.checksum
+                asset_file.file.name,
+                asset_file.file.checksum
             ))
         } else {
             //rename to original name
@@ -138,7 +138,7 @@ pub async fn download_asset_file(
     } else {
         Err(eyre!(
             "failed to download file: {:?} response status: {}",
-            asset_file.name,
+            asset_file.file.name,
             resp.status()
         ))
     }
