@@ -9,7 +9,6 @@ use std::path::PathBuf;
 // Describe a file use by an executed task.
 #[derive(Clone, Debug)]
 pub struct TaskVmFile<E> {
-    //    pub node_file_path: String,
     vm_file_path: String,
     extension: E,
 }

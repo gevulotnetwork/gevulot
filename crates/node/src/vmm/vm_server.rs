@@ -185,7 +185,6 @@ impl VmService for VMServer {
                                 }))
                                 .await
                             {
-                                //                                tracing::error!("send {} bytes from file {}: {}", n, &req.path, &e);
                                 tracing::error!("send {} bytes from file: {}", n, &e);
                                 break;
                             }
