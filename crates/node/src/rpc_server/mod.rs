@@ -99,6 +99,7 @@ async fn get_transaction(
     params: Params<'static>,
     ctx: Arc<Context>,
 ) -> RpcResponse<Transaction<Validated>> {
+    println!("server get_transaction");
     let tx_hash: Hash = match params.one() {
         Ok(tx_hash) => tx_hash,
         Err(e) => {

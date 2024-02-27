@@ -1,8 +1,11 @@
 use clap::Parser;
 use clap::Subcommand;
 use gevulot_node::rpc_client::RpcClient;
+use gevulot_node::types::transaction::Validated;
 use gevulot_node::types::Hash;
+use gevulot_node::types::Transaction;
 use gevulot_node::types::TransactionTree;
+use serde_json::json;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
@@ -99,6 +102,9 @@ enum ConfCommands {
     PrintTxTree {
         hash: String,
     },
+    GetTx {
+        hash: String,
+    },
     /// Calculate the Hash of the specified file.
     #[command(arg_required_else_help = true)]
     CalculateHash {
@@ -169,6 +175,13 @@ async fn main() {
                 Err(err) => println!("An error while fetching transaction tree: {err}"),
             };
         }
+        ConfCommands::GetTx { hash } => {
+            let hash = Hash::from(hash);
+            match client.get_tx(&hash).await {
+                Ok(tx) => print_tx(&tx),
+                Err(err) => println!("An error while fetching transaction tree: {err}"),
+            };
+        }
     }
 }
 
@@ -196,4 +209,11 @@ fn print_tx_tree(tree: &TransactionTree, indentation: u16) {
             );
         }
     }
+}
+
+fn print_tx(tx: &Transaction<Validated>) {
+    println!("print_tx");
+    println!("tx = {:?}", tx);
+    let jtx = json!(tx).to_string();
+    println!("{}", jtx);
 }
