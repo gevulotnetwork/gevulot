@@ -1,6 +1,7 @@
 use crate::txvalidation::P2pSender;
 use crate::txvalidation::TxEventSender;
 use futures_util::Stream;
+use libsecp256k1::PublicKey;
 use std::{
     collections::{BTreeSet, HashMap},
     io,
@@ -42,6 +43,7 @@ pub struct P2P {
     http_port: Option<u16>,
     nat_listen_addr: Option<SocketAddr>,
     psk: Vec<u8>,
+    public_node_key: PublicKey,
 
     // Send Tx to the process loop.
     tx_sender: TxEventSender<P2pSender>,
@@ -59,6 +61,7 @@ impl P2P {
         name: &str,
         listen_addr: SocketAddr,
         psk_passphrase: &str,
+        public_node_key: PublicKey,
         http_port: Option<u16>,
         nat_listen_addr: Option<SocketAddr>,
         peer_http_port_list: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>>,
@@ -83,6 +86,7 @@ impl P2P {
             node,
             noise_states: Default::default(),
             psk: psk.to_vec(),
+            public_node_key,
             peer_list: Default::default(),
             peer_addr_mapping: Default::default(),
             peer_http_port_list,
@@ -163,16 +167,19 @@ impl P2P {
         source: SocketAddr,
         req: protocol::DiagnosticsRequestKind,
     ) -> io::Result<()> {
-        let resp = protocol::DiagnosticsResponseV0::Version {
-            major: env!("CARGO_PKG_VERSION_MAJOR").parse::<u16>().unwrap(),
-            minor: env!("CARGO_PKG_VERSION_MINOR").parse::<u16>().unwrap(),
-            patch: env!("CARGO_PKG_VERSION_PATCH").parse::<u16>().unwrap(),
-            build: format!(
-                "{}: {}",
-                env!("VERGEN_BUILD_TIMESTAMP"),
-                env!("VERGEN_GIT_DESCRIBE")
-            ),
-        };
+        let resp = protocol::Message::V0(protocol::MessageV0::DiagnosticsResponse(
+            self.public_node_key,
+            protocol::DiagnosticsResponseV0::Version {
+                major: env!("CARGO_PKG_VERSION_MAJOR").parse::<u16>().unwrap(),
+                minor: env!("CARGO_PKG_VERSION_MINOR").parse::<u16>().unwrap(),
+                patch: env!("CARGO_PKG_VERSION_PATCH").parse::<u16>().unwrap(),
+                build: format!(
+                    "{}: {}",
+                    env!("VERGEN_BUILD_TIMESTAMP"),
+                    env!("VERGEN_GIT_DESCRIBE")
+                ),
+            },
+        ));
 
         let bs =
             Bytes::from(bincode::serialize(&resp).expect("diagnostics response serialization"));
@@ -392,7 +399,7 @@ impl Reading for P2P {
                     self.process_diagnostics_request(source, kind).await?;
                 }
                 // Nodes are expected to ignore the diagnostics response.
-                protocol::MessageV0::DiagnosticsResponse(_) => (),
+                protocol::MessageV0::DiagnosticsResponse(_, _) => (),
             },
             Err(err) => tracing::error!("failed to decode incoming transaction: {}", err),
         }
@@ -464,6 +471,7 @@ mod tests {
             name,
             "127.0.0.1:0".parse().unwrap(),
             "secret passphrase",
+            PublicKey::from_secret_key(&SecretKey::default()),
             None,
             None,
             http_peer_list1,
