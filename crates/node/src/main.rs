@@ -180,6 +180,8 @@ impl workflow::TransactionStore for storage::Database {
 }
 
 async fn run(config: Arc<Config>) -> Result<()> {
+    let node_key = read_node_key(&config.node_key_file)?;
+
     let database = Arc::new(Database::new(&config.db_url).await?);
 
     let http_peer_list: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>> =
@@ -213,11 +215,13 @@ async fn run(config: Arc<Config>) -> Result<()> {
         });
     }
 
+    let public_node_key = PublicKey::from_secret_key(&node_key);
     let p2p = Arc::new(
         networking::P2P::new(
             "gevulot-p2p-network",
             config.p2p_listen_addr,
             &config.p2p_psk_passphrase,
+            public_node_key,
             Some(config.http_download_port),
             config.p2p_advertised_listen_addr,
             http_peer_list,
@@ -245,8 +249,6 @@ async fn run(config: Arc<Config>) -> Result<()> {
         provider.clone(),
         resource_manager.clone(),
     );
-
-    let node_key = read_node_key(&config.node_key_file)?;
 
     let workflow_engine = Arc::new(WorkflowEngine::new(database.clone()));
     let download_url_prefix = format!(
@@ -337,6 +339,7 @@ async fn p2p_beacon(config: P2PBeaconConfig) -> Result<()> {
             "gevulot-network",
             config.p2p_listen_addr,
             &config.p2p_psk_passphrase,
+            PublicKey::from_secret_key(&SecretKey::default()), // P2P beacons don't need the key atm.
             None,
             config.p2p_advertised_listen_addr,
             http_peer_list,

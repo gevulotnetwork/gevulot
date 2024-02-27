@@ -1,6 +1,7 @@
 use std::{collections::BTreeSet, net::SocketAddr};
 
 use gevulot_node::types;
+use libsecp256k1::PublicKey;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -25,7 +26,7 @@ pub(crate) enum Message {
 pub(crate) enum MessageV0 {
     Transaction(types::Transaction<types::transaction::Validated>),
     DiagnosticsRequest(DiagnosticsRequestKind),
-    DiagnosticsResponse(DiagnosticsResponseV0),
+    DiagnosticsResponse(PublicKey, DiagnosticsResponseV0),
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
