@@ -96,9 +96,22 @@ enum ConfCommands {
         #[clap(short, long, value_name = "TASK ARRAY")]
         tasks: String,
     },
+    /// Return the tree of executed tx associated to the specified Run Tx (Exec cmd).
+    #[command(arg_required_else_help = true)]
     PrintTxTree {
+        /// Hash of the Run Tx to look for.
+        #[clap(long, value_name = "TX HASH")]
         hash: String,
     },
+
+    /// Return all output data (files and binary) of all Tx associated to the specified Run Tx (Exec cmd).
+    #[command(arg_required_else_help = true)]
+    GetTxExecutionOutput {
+        /// Hash of the Run Tx to look for.
+        #[clap(long, value_name = "TX HASH")]
+        hash: String,
+    },
+
     /// Calculate the Hash of the specified file.
     #[command(arg_required_else_help = true)]
     CalculateHash {
@@ -167,6 +180,17 @@ async fn main() {
             match client.get_tx_tree(&hash).await {
                 Ok(tx_tree) => print_tx_tree(&tx_tree, 0),
                 Err(err) => println!("An error while fetching transaction tree: {err}"),
+            };
+        }
+        ConfCommands::GetTxExecutionOutput { hash } => {
+            let hash = Hash::from(hash);
+            match client
+                .get_tx_execution_output(hash)
+                .await
+                .and_then(|tx_output| serde_json::to_string(&tx_output).map_err(|err| err.into()))
+            {
+                Ok(output_json) => println!("{output_json}"),
+                Err(err) => println!("An error while fetching Tx ouput: {err}"),
             };
         }
     }

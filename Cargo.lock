@@ -1169,6 +1169,7 @@ name = "gevulot-node"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.21.7",
  "bincode",
  "blake3",
  "bytes",

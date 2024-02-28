@@ -10,6 +10,9 @@ pub enum RpcError {
     #[error("not found: {0}")]
     NotFound(String),
 
+    #[error("A tx was missing: {0}")]
+    MissingTx(String),
+
     #[error("invalid request: {0}")]
     InvalidRequest(String),
 
