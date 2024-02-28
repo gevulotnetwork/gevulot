@@ -1,15 +1,14 @@
-use std::error::Error;
-
-use jsonrpsee::{
-    core::{client::ClientT, params::ArrayParams},
-    http_client::{HttpClient, HttpClientBuilder},
-};
-
+use crate::types::rpc_types::TransactionOutput;
 use crate::types::{
     rpc::RpcResponse,
     transaction::{Created, TransactionTree, Validated},
     Hash, Transaction,
 };
+use jsonrpsee::{
+    core::{client::ClientT, params::ArrayParams},
+    http_client::{HttpClient, HttpClientBuilder},
+};
+use std::error::Error;
 
 pub struct RpcClient {
     client: HttpClient,
@@ -66,6 +65,25 @@ impl RpcClient {
         let resp = self
             .client
             .request::<RpcResponse<TransactionTree>, ArrayParams>("getTransactionTree", params)
+            .await
+            .expect("rpc request");
+
+        Ok(resp.unwrap())
+    }
+
+    pub async fn get_tx_execution_output(
+        &self,
+        tx_hash: Hash,
+    ) -> Result<Vec<TransactionOutput>, Box<dyn Error>> {
+        let mut params = ArrayParams::new();
+        params.insert(tx_hash).expect("rpc params");
+
+        let resp = self
+            .client
+            .request::<RpcResponse<Vec<TransactionOutput>>, ArrayParams>(
+                "getTxExecutionOutput",
+                params,
+            )
             .await
             .expect("rpc request");
 

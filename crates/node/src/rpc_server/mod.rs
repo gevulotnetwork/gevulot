@@ -1,8 +1,7 @@
 use crate::txvalidation::RpcSender;
 use crate::txvalidation::TxEventSender;
-use std::rc::Rc;
-use std::{net::SocketAddr, sync::Arc};
-
+use crate::types::rpc_types::{TransactionOutput, TransactionOutputFile};
+use crate::types::transaction::Payload;
 use crate::{
     cli::Config,
     storage::Database,
@@ -11,6 +10,7 @@ use crate::{
         Transaction,
     },
 };
+use base64::Engine;
 use eyre::Result;
 use gevulot_node::types::{
     rpc::{RpcError, RpcResponse},
@@ -20,6 +20,8 @@ use jsonrpsee::{
     server::{RpcModule, Server, ServerHandle},
     types::Params,
 };
+use std::rc::Rc;
+use std::{net::SocketAddr, sync::Arc};
 
 struct Context {
     database: Arc<Database>,
@@ -52,6 +54,7 @@ impl RpcServer {
         module.register_async_method("sendTransaction", send_transaction)?;
         module.register_async_method("getTransaction", get_transaction)?;
         module.register_async_method("getTransactionTree", get_tx_tree)?;
+        module.register_async_method("getTxExecutionOutput", get_tx_execution_output)?;
 
         let local_addr = server.local_addr().unwrap();
         let server_handle = server.start(module);
@@ -188,6 +191,56 @@ fn build_tx_tree(hash: &Hash, txs: Vec<(Hash, Option<Hash>)>) -> Rc<TransactionT
     };
 
     Rc::new(tree_elem)
+}
+
+#[tracing::instrument(level = "info")]
+async fn get_tx_execution_output(
+    params: Params<'static>,
+    ctx: Arc<Context>,
+) -> RpcResponse<Vec<TransactionOutput>> {
+    let tx_hash: Hash = match params.one() {
+        Ok(tx_hash) => tx_hash,
+        Err(e) => {
+            tracing::error!("failed to parse transaction: {}", e);
+            return RpcResponse::Err(RpcError::InvalidRequest(e.to_string()));
+        }
+    };
+    let txs = ctx
+        .database
+        .get_transaction_tree(&tx_hash)
+        .await
+        .expect("get_transaction_tree");
+
+    let mut ret_list = vec![];
+    for tx_hash in txs.into_iter().map(|(hash, _)| hash) {
+        let tx = match ctx.database.find_transaction(&tx_hash).await {
+            Ok(Some(tx)) => tx,
+            Ok(None) => return RpcResponse::Err(RpcError::MissingTx(tx_hash.to_string())),
+            Err(_) => return RpcResponse::Err(RpcError::MissingTx(tx_hash.to_string())),
+        };
+        let kind = match tx.payload {
+            Payload::Proof { .. } => Some("Proof".to_string()),
+            Payload::Verification { .. } => Some("Verification".to_string()),
+            _ => None,
+        };
+        if let Some((kind, files, data)) = tx
+            .payload
+            .get_execution_output()
+            .and_then(|(files, data)| kind.map(|kind| (kind, files, data)))
+        {
+            let files = files
+                .into_iter()
+                .map(|f| TransactionOutputFile::from_txfile(f, tx_hash))
+                .collect();
+            ret_list.push(TransactionOutput {
+                tx_hash: tx_hash.to_string(),
+                kind,
+                files,
+                data: base64::engine::general_purpose::STANDARD.encode(data),
+            });
+        }
+    }
+    RpcResponse::Ok(ret_list)
 }
 
 #[cfg(test)]
