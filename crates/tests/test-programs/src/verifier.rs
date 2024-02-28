@@ -24,5 +24,5 @@ fn run_task(task: &Task) -> Result<TaskResult> {
         .unwrap();
     println!("file entries in /workspace :: {:?}", entries);
 
-    task.result(vec![], vec![])
+    task.result(vec![10, 11, 12, 13, 14, 15, 16, 17, 18, 19], vec![])
 }
