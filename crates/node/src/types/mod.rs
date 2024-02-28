@@ -5,6 +5,7 @@ mod hash;
 mod key_capsule;
 pub mod program;
 pub mod rpc;
+pub mod rpc_types;
 mod signature;
 mod task;
 pub mod transaction;
