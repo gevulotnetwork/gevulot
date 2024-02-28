@@ -6,7 +6,6 @@ use crate::{
     storage::Database,
     types::{transaction::Created, Transaction},
 };
-use base64::Engine;
 use eyre::Result;
 use gevulot_node::types::{
     rpc::{RpcError, RpcResponse},
@@ -57,7 +56,6 @@ impl RpcServer {
         module.register_async_method("sendTransaction", send_transaction)?;
         module.register_async_method("getTransaction", get_transaction)?;
         module.register_async_method("getTransactionTree", get_tx_tree)?;
-        module.register_async_method("getTxExecutionOutput", get_tx_execution_output)?;
 
         let local_addr = server.local_addr().unwrap();
         let server_handle = server.start(module);
