@@ -1,4 +1,5 @@
 use std::path::Path;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use std::{any::Any, time::Duration};
@@ -46,4 +47,44 @@ pub trait Provider: Send + Sync {
     fn stop_vm(&mut self, vm: VMHandle) -> Result<()>;
 
     fn prepare_image(&mut self, program: Program, image: &Path) -> Result<()>;
+}
+
+pub struct NoExecProvider {
+    vm_id_counter: AtomicU32,
+}
+
+impl NoExecProvider {
+    pub fn new() -> Self {
+        Self {
+            vm_id_counter: AtomicU32::new(1),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl VMClient for u32 {
+    async fn is_alive(&self) -> Result<bool> {
+        // Dummy NoExec VM is never alive.
+        Ok(false)
+    }
+}
+
+#[async_trait::async_trait]
+impl Provider for NoExecProvider {
+    async fn start_vm(&mut self, program: Program, req: ResourceRequest) -> Result<VMHandle> {
+        let vm_id = self.vm_id_counter.fetch_add(1, Ordering::Relaxed);
+        Ok(VMHandle {
+            start_time: Instant::now(),
+            vm_id: Arc::new(vm_id),
+            vm_client: Arc::new(vm_id),
+        })
+    }
+
+    fn stop_vm(&mut self, vm: VMHandle) -> Result<()> {
+        Ok(())
+    }
+
+    fn prepare_image(&mut self, program: Program, image: &Path) -> Result<()> {
+        Ok(())
+    }
 }

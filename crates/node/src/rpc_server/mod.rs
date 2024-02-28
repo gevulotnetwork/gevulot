@@ -431,6 +431,7 @@ mod tests {
             db_url: "postgres://gevulot:gevulot@localhost/gevulot".to_string(),
             json_rpc_listen_addr: "127.0.0.1:0".parse().unwrap(),
             log_directory: temp_dir(),
+            no_execution: true,
             node_key_file: PathBuf::new().join("node.key"),
             p2p_discovery_addrs: vec![],
             p2p_listen_addr: "127.0.0.1:9999".parse().unwrap(),

@@ -187,7 +187,9 @@ async fn run(config: Arc<Config>) -> Result<()> {
     let http_peer_list: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>> =
         Default::default();
 
-    let mempool = Arc::new(RwLock::new(Mempool::new(database.clone()).await?));
+    let mempool = Arc::new(RwLock::new(
+        Mempool::new(database.clone(), config.no_execution).await?,
+    ));
 
     // Start Tx process event loop.
     let (txevent_loop_jh, tx_sender, p2p_stream) = txvalidation::spawn_event_loop(
@@ -239,17 +241,6 @@ async fn run(config: Arc<Config>) -> Result<()> {
         num_gpus,
     )));
 
-    // TODO(tuommaki): Handle provider from config.
-    let qemu_provider = vmm::qemu::Qemu::new(config.clone());
-    let vsock_stream = qemu_provider.vm_server_listener().expect("vsock bind");
-
-    let provider = Arc::new(TMutex::new(qemu_provider));
-    let program_manager = scheduler::ProgramManager::new(
-        database.clone(),
-        provider.clone(),
-        resource_manager.clone(),
-    );
-
     let workflow_engine = Arc::new(WorkflowEngine::new(database.clone()));
     let download_url_prefix = format!(
         "http://{}:{}",
@@ -257,27 +248,63 @@ async fn run(config: Arc<Config>) -> Result<()> {
         config.http_download_port
     );
 
-    let scheduler = Arc::new(scheduler::Scheduler::new(
-        mempool.clone(),
-        database.clone(),
-        program_manager,
-        workflow_engine,
-        node_key,
-        config.data_directory.clone(),
-        download_url_prefix,
-        txvalidation::TxEventSender::<txvalidation::TxResultSender>::build(tx_sender.clone()),
-    ));
+    let scheduler = if config.no_execution {
+        let provider = Arc::new(tokio::sync::Mutex::new(vmm::NoExecProvider::new()));
+        let program_manager = scheduler::ProgramManager::new(
+            database.clone(),
+            provider.clone(),
+            resource_manager.clone(),
+        );
 
-    let vm_server =
-        vmm::vm_server::VMServer::new(scheduler.clone(), provider, config.data_directory.clone());
+        Arc::new(scheduler::Scheduler::new(
+            mempool.clone(),
+            database.clone(),
+            program_manager,
+            workflow_engine,
+            node_key,
+            config.data_directory.clone(),
+            download_url_prefix,
+            txvalidation::TxEventSender::<txvalidation::TxResultSender>::build(tx_sender.clone()),
+        ))
+    } else {
+        let qemu_provider = vmm::qemu::Qemu::new(config.clone());
+        let vsock_stream = qemu_provider.vm_server_listener().expect("vsock bind");
 
-    // Start gRPC VSOCK server.
-    tokio::spawn(async move {
-        Server::builder()
-            .add_service(vm_server.grpc_server())
-            .serve_with_incoming(vsock_stream)
-            .await
-    });
+        let provider = Arc::new(TMutex::new(qemu_provider));
+
+        let program_manager = scheduler::ProgramManager::new(
+            database.clone(),
+            provider.clone(),
+            resource_manager.clone(),
+        );
+
+        let scheduler = Arc::new(scheduler::Scheduler::new(
+            mempool.clone(),
+            database.clone(),
+            program_manager,
+            workflow_engine,
+            node_key,
+            config.data_directory.clone(),
+            download_url_prefix,
+            txvalidation::TxEventSender::<txvalidation::TxResultSender>::build(tx_sender.clone()),
+        ));
+
+        let vm_server = vmm::vm_server::VMServer::new(
+            scheduler.clone(),
+            provider,
+            config.data_directory.clone(),
+        );
+
+        // Start gRPC VSOCK server.
+        tokio::spawn(async move {
+            Server::builder()
+                .add_service(vm_server.grpc_server())
+                .serve_with_incoming(vsock_stream)
+                .await
+        });
+
+        scheduler
+    };
 
     // Start Scheduler.
     tokio::spawn({

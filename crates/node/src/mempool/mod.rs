@@ -23,14 +23,27 @@ pub enum MempoolError {
 pub struct Mempool {
     storage: Arc<dyn Storage>,
     deque: VecDeque<Transaction<Validated>>,
+
+    persist_only: bool,
 }
 
 impl Mempool {
-    pub async fn new(storage: Arc<dyn Storage>) -> Result<Self> {
+    // If `persist_only` flag is set as `true`, the mempool won't populate
+    // `deque` with transactions. This can be used to disable transaction
+    // execution, while keeping rest of the node functionality as-is.
+    // Main use case for this is as a JSON-RPC API + Archive node.
+    pub async fn new(storage: Arc<dyn Storage>, persist_only: bool) -> Result<Self> {
         let mut deque = VecDeque::new();
-        storage.fill_deque(&mut deque).await?;
 
-        Ok(Self { storage, deque })
+        if !persist_only {
+            storage.fill_deque(&mut deque).await?;
+        }
+
+        Ok(Self {
+            storage,
+            deque,
+            persist_only,
+        })
     }
 
     pub fn next(&mut self) -> Option<Transaction<Validated>> {
@@ -44,7 +57,13 @@ impl Mempool {
 
     pub async fn add(&mut self, tx: Transaction<Validated>) -> Result<()> {
         self.storage.set(&tx).await?;
-        self.deque.push_back(tx);
+
+        // If `persist_only` is set, don't provide transactions available
+        // for consumption.
+        if !self.persist_only {
+            self.deque.push_back(tx);
+        }
+
         Ok(())
     }
 
