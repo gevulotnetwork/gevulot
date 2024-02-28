@@ -18,6 +18,8 @@ use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 use tokio_util::io::ReaderStream;
 
+pub const HTTP_SERVER_SCHEME: &str = "http://";
+
 /// Downloads file from the given `url` and saves it to file in `local_directory_path` + / + `file path`.
 pub async fn download_asset_file(
     local_directory_path: &Path,
@@ -50,7 +52,7 @@ pub async fn download_asset_file(
                 .filter_map(|(peer, port)| {
                     port.map(|port| {
                         //use parse to create an URL, no new method.
-                        let mut url = reqwest::Url::parse("http://localhost").unwrap(); //unwrap always succeed
+                        let mut url = reqwest::Url::parse(HTTP_SERVER_SCHEME).unwrap(); //unwrap always succeed
                         url.set_ip_host(peer.ip()).unwrap(); //unwrap always succeed
                         url.set_port(Some(port)).unwrap(); //unwrap always succeed
                         url.set_path(&file_uri); //unwrap Path always ok

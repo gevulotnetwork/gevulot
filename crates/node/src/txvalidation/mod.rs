@@ -22,6 +22,7 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 
 pub mod acl;
 mod download_manager;
+pub use download_manager::HTTP_SERVER_SCHEME;
 mod event;
 
 #[allow(clippy::enum_variant_names)]

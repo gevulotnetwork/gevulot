@@ -26,6 +26,7 @@ use std::{net::SocketAddr, sync::Arc};
 struct Context {
     database: Arc<Database>,
     tx_sender: TxEventSender<RpcSender>,
+    local_http_host: SocketAddr,
 }
 
 impl std::fmt::Debug for Context {
@@ -45,10 +46,14 @@ impl RpcServer {
         database: Arc<Database>,
         tx_sender: TxEventSender<RpcSender>,
     ) -> Result<Self> {
+        let mut local_http_host = cfg.p2p_listen_addr;
+        local_http_host.set_port(cfg.http_download_port);
+
         let server = Server::builder().build(cfg.json_rpc_listen_addr).await?;
         let mut module = RpcModule::new(Context {
             database,
             tx_sender,
+            local_http_host,
         });
 
         module.register_async_method("sendTransaction", send_transaction)?;
@@ -230,7 +235,14 @@ async fn get_tx_execution_output(
         {
             let files = files
                 .into_iter()
-                .map(|f| TransactionOutputFile::from_txfile(f, tx_hash))
+                .map(|f| {
+                    TransactionOutputFile::from_txfile(
+                        f,
+                        tx_hash,
+                        crate::txvalidation::HTTP_SERVER_SCHEME,
+                        ctx.local_http_host,
+                    )
+                })
                 .collect();
             ret_list.push(TransactionOutput {
                 tx_hash: tx_hash.to_string(),
