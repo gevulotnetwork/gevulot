@@ -9,7 +9,7 @@ anyhow = "1.0.71"
 blake3 = { version = "1.5", features = [ "mmap" ] }
 clap = { version = "4.0.29", features = ["derive"] }
 futures-util = { version = "0.3", default-features = false }
-gevulot-node = { path = "../node" }
+gevulot-node = { path = "../node", default-features = false }
 hex = "0.4"
 http-body-util = "0.1"
 hyper = { version = "1", features = ["full"] }
