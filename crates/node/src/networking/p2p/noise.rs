@@ -173,7 +173,10 @@ impl Encoder<Bytes> for Codec {
     fn encode(&mut self, msg: Bytes, dst: &mut BytesMut) -> Result<(), Self::Error> {
         match self.noise {
             State::Handshake(ref mut noise) => {
-                let msg_len = noise.0.write_message(&msg, &mut self.buffer).unwrap();
+                let msg_len = noise
+                    .0
+                    .write_message(&msg, &mut self.buffer)
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
 
                 self.codec
                     .encode(Bytes::from(self.buffer[..msg_len].to_vec()), dst)
@@ -185,7 +188,7 @@ impl Encoder<Bytes> for Codec {
                     let msg_len = noise
                         .state
                         .write_message(noise.tx_nonce, msg_chunk, &mut self.buffer)
-                        .unwrap();
+                        .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))?;
                     noise.tx_nonce += 1;
 
                     encrypted_msg.extend_from_slice(&self.buffer[..msg_len]);
