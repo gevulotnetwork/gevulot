@@ -348,7 +348,10 @@ impl Handshake for P2P {
             // XXX: If `node.connect(addr)` returns an error, it's omitted because:
             // 1.) It's already logged.
             // 2.) It often happens because there is already a connection between the 2 peers.
-            let _ = node.connect(addr).await;
+            match node.connect(addr).await {
+                Ok(_) => tracing::debug!("connected to {}", &addr),
+                Err(err) => tracing::error!("failed to connect to {}: {}", &addr, err),
+            };
         }
 
         self.peer_http_port_list
