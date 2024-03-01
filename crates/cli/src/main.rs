@@ -137,27 +137,24 @@ fn resource_requirements(
     mem: Option<u64>,
     gpus: Option<u64>,
 ) -> Option<ResourceRequest> {
-    let mut req = None;
+    if cpus.is_none() && mem.is_none() && gpus.is_none() {
+        return None;
+    }
+
+    let mut req = ResourceRequest::default();
     if cpus.is_some() {
-        req = Some(ResourceRequest::default());
-        req.map(|ref mut r| r.cpus = cpus.unwrap());
+        req.cpus = cpus.unwrap();
     }
 
     if mem.is_some() {
-        if req.is_none() {
-            req = Some(ResourceRequest::default());
-        }
-        req.map(|ref mut r| r.mem = mem.unwrap());
+        req.mem = mem.unwrap();
     }
 
     if gpus.is_some() {
-        if req.is_none() {
-            req = Some(ResourceRequest::default());
-        }
-        req.map(|ref mut r| r.gpus = gpus.unwrap());
+        req.gpus = gpus.unwrap();
     }
 
-    req
+    Some(req)
 }
 
 #[tokio::main]
@@ -265,10 +262,12 @@ fn print_tx_tree(tree: &TransactionTree, indentation: u16) {
 mod tests {
     use crate::*;
 
+    #[test]
     fn test_default_resource_requirements() {
         assert_eq!(resource_requirements(None, None, None), None);
     }
 
+    #[test]
     fn test_cpus_resource_requirements() {
         assert_eq!(
             resource_requirements(Some(16), None, None),
@@ -279,6 +278,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn test_mem_resource_requirements() {
         assert_eq!(
             resource_requirements(None, Some(24576), None),
@@ -289,6 +289,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn test_gpus_resource_requirements() {
         assert_eq!(
             resource_requirements(None, None, Some(1)),
@@ -299,6 +300,7 @@ mod tests {
         );
     }
 
+    #[test]
     fn test_cpu_mem_requirements() {
         assert_eq!(
             resource_requirements(Some(4), Some(4096), None),
