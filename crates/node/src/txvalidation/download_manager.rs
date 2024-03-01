@@ -2,6 +2,7 @@ use crate::types::file::AssetFile;
 use eyre::eyre;
 use eyre::Result;
 use futures_util::TryStreamExt;
+use gevulot_node::HTTP_SERVER_SCHEME;
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Full, StreamBody};
 use hyper::body::{self, Bytes, Frame};
@@ -17,8 +18,6 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 use tokio_util::io::ReaderStream;
-
-pub const HTTP_SERVER_SCHEME: &str = "http://";
 
 /// Downloads file from the given `url` and saves it to file in `local_directory_path` + / + `file path`.
 pub async fn download_asset_file(
