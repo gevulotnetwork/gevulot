@@ -482,6 +482,13 @@ impl TaskManager for Scheduler {
                 running_task.task_started.elapsed().as_secs()
             );
 
+            if let Err(err) = self.database.mark_tx_executed(&running_task.task.tx).await {
+                tracing::error!(
+                    "failed to update transaction.executed => true - tx.hash: {}",
+                    &running_task.task.tx
+                );
+            }
+
             // Handle tx execution's result files so that they are available as an input for next task if needed.
             let executed_files: Vec<(TaskVmFile<VmOutput>, TxFile<Output>)> = result
                 .files

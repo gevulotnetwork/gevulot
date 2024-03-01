@@ -233,6 +233,9 @@ async fn run(config: Arc<Config>) -> Result<()> {
         .await,
     );
 
+    let p2p_listen_addr = p2p.node().start_listening().await?;
+    tracing::info!("listening for p2p at {}", p2p_listen_addr);
+
     // TODO(tuommaki): read total available resources from config / acquire system stats.
     let num_gpus = if config.gpu_devices.is_some() { 1 } else { 0 };
     let resource_manager = Arc::new(Mutex::new(scheduler::ResourceManager::new(
@@ -244,7 +247,10 @@ async fn run(config: Arc<Config>) -> Result<()> {
     let workflow_engine = Arc::new(WorkflowEngine::new(database.clone()));
     let download_url_prefix = format!(
         "http://{}:{}",
-        config.p2p_listen_addr.ip(),
+        config
+            .p2p_advertised_listen_addr
+            .unwrap_or(p2p_listen_addr)
+            .ip(),
         config.http_download_port
     );
 
@@ -311,9 +317,6 @@ async fn run(config: Arc<Config>) -> Result<()> {
         let scheduler = scheduler.clone();
         async move { scheduler.run().await }
     });
-
-    let p2p_addr = p2p.node().start_listening().await?;
-    tracing::info!("listening for p2p at {}", p2p_addr);
 
     for addr in config.p2p_discovery_addrs.clone() {
         tracing::info!("connecting to p2p peer {}", addr);
