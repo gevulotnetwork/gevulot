@@ -5,10 +5,7 @@ use crate::types::transaction;
 use eyre::Result;
 use libsecp256k1::{sign, verify, Message, PublicKey, SecretKey};
 use num_bigint::BigInt;
-use serde::{de, Deserialize, Serialize};
-// use serde_with::base64::{Base64, Bcrypt, BinHex, Standard};
-// use serde_with::formats::{Padded, Unpadded};
-// use serde_with::serde_as;
+use serde::{Deserialize, Serialize};
 use sha3::{Digest, Sha3_256};
 use std::{collections::HashSet, rc::Rc};
 use thiserror::Error;
@@ -133,87 +130,6 @@ impl Workflow {
     }
 }
 
-mod b64 {
-    use serde::{Deserialize, Serialize};
-    use serde::{Deserializer, Serializer};
-
-    pub fn serialize<S: Serializer>(v: &Vec<u8>, s: S) -> Result<S::Ok, S::Error> {
-        println!("perform serialize");
-        println!("  v  is {:?}", v);
-        let encoded = base64::encode(v);
-        println!("  encoded  is {:?}", encoded);
-        String::serialize(&encoded, s)
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
-        println!("perform deserialize");
-        let encoded = String::deserialize(d);
-        if encoded.is_err() {
-            println!("returing dummy array");
-            return Ok(vec![0, 1, 2]);
-        }
-        println!("  encoded  is {:?}", encoded);
-        let encoded = encoded.unwrap();
-        println!("  encoded  is {:?}", encoded);
-        base64::decode(encoded.as_bytes()).map_err(|e| serde::de::Error::custom(e))
-    }
-}
-
-// mod b64 {
-//     use base64::{decode, encode, DecodeError};
-//     use serde::{Deserialize, Serialize};
-//     use serde::{Deserializer, Serializer};
-
-//     pub fn serialize<S: Serializer>(v: &Vec<u8>, s: S) -> Result<S::Ok, S::Error> {
-//         println!("serialize!!!");
-//         println!("v  is {:?}", v);
-//         let encoded = encode(v);
-//         println!("encoded  is {:?}", encoded);
-//         // Ok(base64)
-//         String::serialize(&encoded, s)
-//     }
-
-//     // pub fn deserialize('de, D: Deserializer<'de>>(d: D) -> Result<Option<Vec<u8>>, D::Error> {
-
-//     //     let s: String = String::deserialize(d)?;
-//     //     let bytes = decode(s);
-//     //     bytes
-//     // }
-
-//     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
-//         println!("deserialize!!!");
-//         let encoded = <String>::deserialize(d);
-//         println!("encoded is {:?}", encoded);
-//         let decoded = decode(encoded.unwrap()).unwrap();
-//         println!("decoded is {:?}", decoded);
-//         Ok(decoded)
-//         // match base64 {
-//         //     Some(v) => base64::decode(v.as_bytes())
-//         //         .map(|v| Some(v))
-//         //         .map_err(|e| serde::de::Error::custom(e)),
-//         //     None => Ok(None),
-//         // }
-//     }
-// }
-
-// mod base64 {
-//     use serde::{Deserialize, Serialize};
-//     use serde::{Deserializer, Serializer};
-
-//     pub fn serialize<S: Serializer>(v: &Vec<u8>, s: S) -> Result<S::Ok, S::Error> {
-//         let base64 = base64::encode(v);
-//         <String>::serialize(&base64, s)
-//     }
-
-//     pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Vec<u8>, D::Error> {
-//         let base64 = <String>::deserialize(d)?;
-//         base64::decode(v.as_bytes())
-//             .map(|v| Some(v))
-//             .map_err(|e| serde::de::Error::custom(e))
-//     }
-// }
-
-// #[serde_as]
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub enum Payload {
@@ -250,8 +166,6 @@ pub enum Payload {
     Verification {
         parent: Hash,
         verifier: Hash,
-        // #[serde_as(as = "Base64")]
-        #[serde(with = "b64")]
         verification: Vec<u8>,
         files: Vec<TxFile<Output>>,
     },

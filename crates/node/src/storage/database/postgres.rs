@@ -274,7 +274,6 @@ impl Database {
                 }
                 entity::transaction::Kind::Verification => {
                     //get payload files
-                    println!("db verification");
                     let files =
                         sqlx::query_as::<_, DbFile>("SELECT * FROM txfile WHERE tx_id = $1")
                             .bind(tx_hash)

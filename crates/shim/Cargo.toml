@@ -16,7 +16,6 @@ tonic = "0.8.3"
 tower = "0.4.0"
 vsock = "0.3.0"
 uuid = { version = "1.4.1", features = [ "v4", "fast-rng", "macro-diagnostics" ] }
-base64 = "0.21.7"
 
 [build-dependencies]
 tonic-build = "0.8"
