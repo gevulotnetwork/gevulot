@@ -1,6 +1,6 @@
 use libsecp256k1::Message;
 use rand::Rng;
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Serialize};
 use sqlx::{Decode, Encode, Postgres, Type};
 use std::fmt;
 
