@@ -1,15 +1,11 @@
 use libsecp256k1::Message;
 use rand::Rng;
-use serde::{de, Deserialize, Serialize};
-// use serde_with::base64::{Base64, Bcrypt, BinHex, Standard};
-// use serde_with::formats::{Padded, Unpadded};
-// use serde_with::serde_as;
+use serde::{Deserialize, Serialize};
 use sqlx::{Decode, Encode, Postgres, Type};
 use std::fmt;
 
 pub const HASH_SIZE: usize = 32;
 
-// #[serde_as]
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq, Serialize, Deserialize)]
 pub struct Hash([u8; HASH_SIZE]);
 

@@ -27,7 +27,6 @@ impl RpcClient {
         &self,
         tx_hash: &Hash,
     ) -> Result<Option<Transaction<Validated>>, Box<dyn Error>> {
-        println!("client get_transaction");
         let mut params = ArrayParams::new();
         params.insert(tx_hash).expect("rpc params");
 

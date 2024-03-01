@@ -140,8 +140,6 @@ impl Database {
         &self,
         tx_hash: &Hash,
     ) -> Result<Option<types::Transaction<Validated>>> {
-        println!("find_transaction");
-
         let mut db_tx = self.pool.begin().await?;
 
         let entity =
