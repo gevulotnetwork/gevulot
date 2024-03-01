@@ -250,20 +250,6 @@ impl Payload {
             }
         }
     }
-
-    pub fn get_execution_output(self) -> Option<(Vec<TxFile<Output>>, Vec<u8>)> {
-        match self {
-            Payload::Proof {
-                proof: data, files, ..
-            }
-            | Payload::Verification {
-                verification: data,
-                files,
-                ..
-            } => Some((files, data)),
-            _ => None,
-        }
-    }
 }
 
 #[allow(clippy::enum_variant_names)]
