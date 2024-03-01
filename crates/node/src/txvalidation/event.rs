@@ -1,11 +1,11 @@
 use crate::txvalidation::acl::AclWhitelist;
 use crate::txvalidation::download_manager;
 use crate::txvalidation::EventProcessError;
+use crate::txvalidation::ValidatedTxreceiver;
 use crate::types::{
     transaction::{Received, Validated},
     Transaction,
 };
-use crate::Mempool;
 use futures::future::join_all;
 use futures_util::TryFutureExt;
 use std::fmt::Debug;
@@ -175,7 +175,10 @@ impl TxEvent<PropagateTx> {
 }
 
 impl TxEvent<NewTx> {
-    pub async fn process_event(self, mempool: &mut Mempool) -> Result<(), EventProcessError> {
+    pub async fn process_event(
+        self,
+        newtx_receiver: &mut dyn ValidatedTxreceiver,
+    ) -> Result<(), EventProcessError> {
         let tx = Transaction {
             author: self.tx.author,
             hash: self.tx.hash,
@@ -192,8 +195,8 @@ impl TxEvent<NewTx> {
             tx.hash.to_string(),
             tx.payload
         );
-        mempool
-            .add(tx)
+        newtx_receiver
+            .send_new_tx(tx)
             .map_err(|err| EventProcessError::SaveTxError(format!("{err}")))
             .await
     }

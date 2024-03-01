@@ -1,6 +1,8 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 
+use crate::txvalidation::CallbackSender;
+use crate::types::transaction::Received;
 use async_trait::async_trait;
 use clap::Parser;
 use cli::{
@@ -29,6 +31,7 @@ use tonic::transport::Server;
 use tracing_subscriber::{filter::LevelFilter, fmt::format::FmtSpan, EnvFilter};
 use types::{transaction::Validated, Hash, Transaction};
 use workflow::WorkflowEngine;
+use crate::txvalidation::ValidatedTxreceiver;
 
 mod cli;
 mod mempool;
@@ -184,22 +187,6 @@ async fn run(config: Arc<Config>) -> Result<()> {
 
     let database = Arc::new(Database::new(&config.db_url).await?);
 
-    let http_peer_list: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>> =
-        Default::default();
-
-    let mempool = Arc::new(RwLock::new(Mempool::new(database.clone()).await?));
-
-    // Start Tx process event loop.
-    let (txevent_loop_jh, tx_sender, p2p_stream) = txvalidation::spawn_event_loop(
-        config.data_directory.clone(),
-        config.p2p_listen_addr,
-        config.http_download_port,
-        http_peer_list.clone(),
-        database.clone(),
-        mempool.clone(),
-    )
-    .await?;
-
     // Launch the ACL whitelist syncing early in the startup.
     if let Some(ref whitelist_url) = config.acl_whitelist_url {
         let acl_whitelist_syncer = WhitelistSyncer::new(whitelist_url.clone(), database.clone());
@@ -214,6 +201,100 @@ async fn run(config: Arc<Config>) -> Result<()> {
             }
         });
     }
+
+    let http_peer_list: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>> =
+        Default::default();
+
+    // Define the channel that receive Tx from the outside of the node.
+    // These Tx must be validated first.
+    let (tx_sender, mut rcv_tx_event_rx) =
+        mpsc::unbounded_channel::<(Transaction<Received>, Option<CallbackSender>)>();
+
+    //To show to idea. Should use your config definition
+    let archive_node = false;
+    let new_validated_tx_receiver : Arc<RwLock<dyn ValidatedTxreceiver>> = if !archive_node {
+        let mempool = Arc::new(RwLock::new(Mempool::new(database.clone()).await?));
+
+        // TODO(tuommaki): read total available resources from config / acquire system stats.
+        let num_gpus = if config.gpu_devices.is_some() { 1 } else { 0 };
+        let resource_manager = Arc::new(Mutex::new(scheduler::ResourceManager::new(
+            config.mem_gb * 1024 * 1024 * 1024,
+            config.num_cpus,
+            num_gpus,
+        )));
+
+        // TODO(tuommaki): Handle provider from config.
+        let qemu_provider = vmm::qemu::Qemu::new(config.clone());
+        let vsock_stream = qemu_provider.vm_server_listener().expect("vsock bind");
+
+        let provider = Arc::new(TMutex::new(qemu_provider));
+        let program_manager = scheduler::ProgramManager::new(
+            database.clone(),
+            provider.clone(),
+            resource_manager.clone(),
+        );
+
+        let workflow_engine = Arc::new(WorkflowEngine::new(database.clone()));
+        let download_url_prefix = format!(
+            "http://{}:{}",
+            config.p2p_listen_addr.ip(),
+            config.http_download_port
+        );
+
+        let scheduler = Arc::new(scheduler::Scheduler::new(
+            mempool.clone(),
+            database.clone(),
+            program_manager,
+            workflow_engine,
+            node_key,
+            config.data_directory.clone(),
+            download_url_prefix,
+            txvalidation::TxEventSender::<txvalidation::TxResultSender>::build(tx_sender.clone()),
+        ));
+
+        let vm_server = vmm::vm_server::VMServer::new(
+            scheduler.clone(),
+            provider,
+            config.data_directory.clone(),
+        );
+
+        // Start gRPC VSOCK server.
+        tokio::spawn(async move {
+            Server::builder()
+                .add_service(vm_server.grpc_server())
+                .serve_with_incoming(vsock_stream)
+                .await
+        });
+
+        // Start Scheduler.
+        tokio::spawn({
+            let scheduler = scheduler.clone();
+            async move { scheduler.run().await }
+        });
+        mempool.clone()
+    } else {
+        struct ArchiveMempool(Arc<Database>);
+        #[async_trait]
+        impl ValidatedTxreceiver for ArchiveMempool {
+            async fn send_new_tx(&mut self, tx: Transaction<Validated>) -> eyre::Result<()> {
+                self.0.as_ref().add_transaction(&tx).await
+            }
+        }
+        Arc::new(RwLock::new(ArchiveMempool(database.clone())))
+    };
+
+
+        // Start Tx process event loop.
+        let (txevent_loop_jh, p2p_stream) = txvalidation::spawn_event_loop(
+            config.data_directory.clone(),
+            config.p2p_listen_addr,
+            config.http_download_port,
+            http_peer_list.clone(),
+            database.clone(),
+            rcv_tx_event_rx,
+            new_validated_tx_receiver.clone(),
+        )
+        .await?;
 
     let public_node_key = PublicKey::from_secret_key(&node_key);
     let p2p = Arc::new(
@@ -230,60 +311,6 @@ async fn run(config: Arc<Config>) -> Result<()> {
         )
         .await,
     );
-
-    // TODO(tuommaki): read total available resources from config / acquire system stats.
-    let num_gpus = if config.gpu_devices.is_some() { 1 } else { 0 };
-    let resource_manager = Arc::new(Mutex::new(scheduler::ResourceManager::new(
-        config.mem_gb * 1024 * 1024 * 1024,
-        config.num_cpus,
-        num_gpus,
-    )));
-
-    // TODO(tuommaki): Handle provider from config.
-    let qemu_provider = vmm::qemu::Qemu::new(config.clone());
-    let vsock_stream = qemu_provider.vm_server_listener().expect("vsock bind");
-
-    let provider = Arc::new(TMutex::new(qemu_provider));
-    let program_manager = scheduler::ProgramManager::new(
-        database.clone(),
-        provider.clone(),
-        resource_manager.clone(),
-    );
-
-    let workflow_engine = Arc::new(WorkflowEngine::new(database.clone()));
-    let download_url_prefix = format!(
-        "http://{}:{}",
-        config.p2p_listen_addr.ip(),
-        config.http_download_port
-    );
-
-    let scheduler = Arc::new(scheduler::Scheduler::new(
-        mempool.clone(),
-        database.clone(),
-        program_manager,
-        workflow_engine,
-        node_key,
-        config.data_directory.clone(),
-        download_url_prefix,
-        txvalidation::TxEventSender::<txvalidation::TxResultSender>::build(tx_sender.clone()),
-    ));
-
-    let vm_server =
-        vmm::vm_server::VMServer::new(scheduler.clone(), provider, config.data_directory.clone());
-
-    // Start gRPC VSOCK server.
-    tokio::spawn(async move {
-        Server::builder()
-            .add_service(vm_server.grpc_server())
-            .serve_with_incoming(vsock_stream)
-            .await
-    });
-
-    // Start Scheduler.
-    tokio::spawn({
-        let scheduler = scheduler.clone();
-        async move { scheduler.run().await }
-    });
 
     let p2p_addr = p2p.node().start_listening().await?;
     tracing::info!("listening for p2p at {}", p2p_addr);
