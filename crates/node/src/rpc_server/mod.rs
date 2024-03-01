@@ -1,16 +1,11 @@
 use crate::txvalidation::RpcSender;
 use crate::txvalidation::TxEventSender;
-use crate::types::rpc_types::{TransactionOutput, TransactionOutputFile};
-use crate::types::transaction::Payload;
+use crate::types::rpc::RpcTransaction;
 use crate::{
     cli::Config,
     storage::Database,
-    types::{
-        transaction::{Created, Validated},
-        Transaction,
-    },
+    types::{transaction::Created, Transaction},
 };
-use base64::Engine;
 use eyre::Result;
 use gevulot_node::types::{
     rpc::{RpcError, RpcResponse},
@@ -46,7 +41,9 @@ impl RpcServer {
         database: Arc<Database>,
         tx_sender: TxEventSender<RpcSender>,
     ) -> Result<Self> {
-        let mut local_http_host = cfg.p2p_listen_addr;
+        let mut local_http_host = cfg
+            .p2p_advertised_listen_addr
+            .unwrap_or(cfg.p2p_listen_addr);
         local_http_host.set_port(cfg.http_download_port);
 
         let server = Server::builder().build(cfg.json_rpc_listen_addr).await?;
@@ -59,7 +56,6 @@ impl RpcServer {
         module.register_async_method("sendTransaction", send_transaction)?;
         module.register_async_method("getTransaction", get_transaction)?;
         module.register_async_method("getTransactionTree", get_tx_tree)?;
-        module.register_async_method("getTxExecutionOutput", get_tx_execution_output)?;
 
         let local_addr = server.local_addr().unwrap();
         let server_handle = server.start(module);
@@ -106,7 +102,7 @@ async fn send_transaction(params: Params<'static>, ctx: Arc<Context>) -> RpcResp
 async fn get_transaction(
     params: Params<'static>,
     ctx: Arc<Context>,
-) -> RpcResponse<Transaction<Validated>> {
+) -> RpcResponse<RpcTransaction> {
     let tx_hash: Hash = match params.one() {
         Ok(tx_hash) => tx_hash,
         Err(e) => {
@@ -118,9 +114,9 @@ async fn get_transaction(
     tracing::info!("JSON-RPC: get_transaction()");
 
     match ctx.database.find_transaction(&tx_hash).await {
-        Ok(Some(tx)) => RpcResponse::Ok(tx),
+        Ok(Some(tx)) => RpcResponse::Ok(RpcTransaction::from_tx_validated(tx, ctx.local_http_host)),
         Ok(None) => RpcResponse::Err(RpcError::NotFound(tx_hash.to_string())),
-        Err(e) => RpcResponse::Err(RpcError::NotFound(tx_hash.to_string())),
+        Err(e) => RpcResponse::Err(RpcError::InternalError(e.to_string())),
     }
 }
 
@@ -132,7 +128,7 @@ async fn get_tx_tree(
     let tx_hash: Hash = match params.one() {
         Ok(tx_hash) => tx_hash,
         Err(e) => {
-            tracing::error!("failed to parse transaction: {}", e);
+            tracing::error!("failed to parse transaction hash: {}", e);
             return RpcResponse::Err(RpcError::InvalidRequest(e.to_string()));
         }
     };
@@ -196,63 +192,6 @@ fn build_tx_tree(hash: &Hash, txs: Vec<(Hash, Option<Hash>)>) -> Rc<TransactionT
     };
 
     Rc::new(tree_elem)
-}
-
-#[tracing::instrument(level = "info")]
-async fn get_tx_execution_output(
-    params: Params<'static>,
-    ctx: Arc<Context>,
-) -> RpcResponse<Vec<TransactionOutput>> {
-    let tx_hash: Hash = match params.one() {
-        Ok(tx_hash) => tx_hash,
-        Err(e) => {
-            tracing::error!("failed to parse transaction: {}", e);
-            return RpcResponse::Err(RpcError::InvalidRequest(e.to_string()));
-        }
-    };
-    let txs = ctx
-        .database
-        .get_transaction_tree(&tx_hash)
-        .await
-        .expect("get_transaction_tree");
-
-    let mut ret_list = vec![];
-    for tx_hash in txs.into_iter().map(|(hash, _)| hash) {
-        let tx = match ctx.database.find_transaction(&tx_hash).await {
-            Ok(Some(tx)) => tx,
-            Ok(None) => return RpcResponse::Err(RpcError::MissingTx(tx_hash.to_string())),
-            Err(_) => return RpcResponse::Err(RpcError::MissingTx(tx_hash.to_string())),
-        };
-        let kind = match tx.payload {
-            Payload::Proof { .. } => Some("Proof".to_string()),
-            Payload::Verification { .. } => Some("Verification".to_string()),
-            _ => None,
-        };
-        if let Some((kind, files, data)) = tx
-            .payload
-            .get_execution_output()
-            .and_then(|(files, data)| kind.map(|kind| (kind, files, data)))
-        {
-            let files = files
-                .into_iter()
-                .map(|f| {
-                    TransactionOutputFile::from_txfile(
-                        f,
-                        tx_hash,
-                        crate::txvalidation::HTTP_SERVER_SCHEME,
-                        ctx.local_http_host,
-                    )
-                })
-                .collect();
-            ret_list.push(TransactionOutput {
-                tx_hash: tx_hash.to_string(),
-                kind,
-                files,
-                data: base64::engine::general_purpose::STANDARD.encode(data),
-            });
-        }
-    }
-    RpcResponse::Ok(ret_list)
 }
 
 #[cfg(test)]

@@ -1,7 +1,7 @@
-use crate::types::rpc_types::TransactionOutput;
+use crate::types::rpc::RpcTransaction;
 use crate::types::{
     rpc::RpcResponse,
-    transaction::{Created, TransactionTree, Validated},
+    transaction::{Created, TransactionTree},
     Hash, Transaction,
 };
 use jsonrpsee::{
@@ -20,25 +20,6 @@ impl RpcClient {
             .build(url)
             .expect("http client");
         RpcClient { client }
-    }
-
-    pub async fn get_transaction(
-        &self,
-        tx_hash: &Hash,
-    ) -> Result<Option<Transaction<Validated>>, Box<dyn Error>> {
-        let mut params = ArrayParams::new();
-        params.insert(tx_hash).expect("rpc params");
-
-        let resp = self
-            .client
-            .request::<RpcResponse<Transaction<Validated>>, ArrayParams>("getTransaction", params)
-            .await
-            .expect("rpc request");
-
-        match resp {
-            RpcResponse::Ok(tx) => Ok(Some(tx)),
-            _ => Ok(None),
-        }
     }
 
     pub async fn send_transaction(&self, tx: &Transaction<Created>) -> Result<(), Box<dyn Error>> {
@@ -68,25 +49,19 @@ impl RpcClient {
             .await
             .expect("rpc request");
 
-        Ok(resp.unwrap())
+        resp.into()
     }
 
-    pub async fn get_tx_execution_output(
-        &self,
-        tx_hash: Hash,
-    ) -> Result<Vec<TransactionOutput>, Box<dyn Error>> {
+    pub async fn get_transaction(&self, tx_hash: &Hash) -> Result<RpcTransaction, Box<dyn Error>> {
         let mut params = ArrayParams::new();
         params.insert(tx_hash).expect("rpc params");
 
         let resp = self
             .client
-            .request::<RpcResponse<Vec<TransactionOutput>>, ArrayParams>(
-                "getTxExecutionOutput",
-                params,
-            )
+            .request::<RpcResponse<RpcTransaction>, ArrayParams>("getTransaction", params)
             .await
             .expect("rpc request");
 
-        Ok(resp.unwrap())
+        resp.into()
     }
 }

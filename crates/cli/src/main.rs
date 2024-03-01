@@ -100,15 +100,13 @@ enum ConfCommands {
     #[command(arg_required_else_help = true)]
     PrintTxTree {
         /// Hash of the Run Tx to look for.
-        #[clap(long, value_name = "TX HASH")]
         hash: String,
     },
 
-    /// Return all output data (files and binary) of all Tx associated to the specified Run Tx (Exec cmd).
+    /// Return the Tx with the specified Hash.
     #[command(arg_required_else_help = true)]
-    GetTxExecutionOutput {
+    GetTx {
         /// Hash of the Run Tx to look for.
-        #[clap(long, value_name = "TX HASH")]
         hash: String,
     },
 
@@ -182,15 +180,15 @@ async fn main() {
                 Err(err) => println!("An error while fetching transaction tree: {err}"),
             };
         }
-        ConfCommands::GetTxExecutionOutput { hash } => {
+        ConfCommands::GetTx { hash } => {
             let hash = Hash::from(hash);
             match client
-                .get_tx_execution_output(hash)
+                .get_transaction(&hash)
                 .await
                 .and_then(|tx_output| serde_json::to_string(&tx_output).map_err(|err| err.into()))
             {
                 Ok(output_json) => println!("{output_json}"),
-                Err(err) => println!("An error while fetching Tx ouput: {err}"),
+                Err(err) => println!("An error while getting Tx : {err}"),
             };
         }
     }
