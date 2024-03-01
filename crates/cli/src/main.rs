@@ -1,6 +1,8 @@
 use clap::Parser;
 use clap::Subcommand;
+use clap_num::number_range;
 use gevulot_node::rpc_client::RpcClient;
+use gevulot_node::types::program::ResourceRequest;
 use gevulot_node::types::Hash;
 use gevulot_node::types::TransactionTree;
 use std::net::SocketAddr;
@@ -52,6 +54,24 @@ enum ConfCommands {
         /// url to get the verifier image. If provided the verifier will use this URL to get the verifier image. If not the cli tool starts a local HTTP server to serve the file to the node.
         #[clap(long = "verifierimgurl", value_name = "VERIFIER URL")]
         verifier_img_url: Option<String>,
+        /// number of cpus to allocate for the proving task.
+        #[clap(long = "provercpus", value_name = "PROVER CPUS")]
+        prover_cpus: Option<u64>,
+        /// number of megabytes to allocate for the proving task.
+        #[clap(long = "provermem", value_name = "PROVER MEM")]
+        prover_mem: Option<u64>,
+        /// number of gpus to allocate for the proving task (currently only 0 or 1 allowed).
+        #[clap(long = "provermem", value_name = "PROVER GPUS", value_parser = gpus_parser)]
+        prover_gpus: Option<u64>,
+        /// number of cpus to allocate for the proving task.
+        #[clap(long = "verifiercpus", value_name = "VERIFIER CPUS")]
+        verifier_cpus: Option<u64>,
+        /// number of megabytes to allocate for the proving task.
+        #[clap(long = "verifiermem", value_name = "VERIFIER MEM")]
+        verifier_mem: Option<u64>,
+        /// number of gpus to allocate for the proving task (currently only 0 or 1 allowed).
+        #[clap(long = "verifiermem", value_name = "VERIFIER GPUS", value_parser = gpus_parser)]
+        verifier_gpus: Option<u64>,
         /// Address the local http server use by the node to download images.
         #[clap(
             short,
@@ -108,6 +128,38 @@ enum ConfCommands {
     },
 }
 
+fn gpus_parser(s: &str) -> Result<u64, String> {
+    number_range(s, 0, 1)
+}
+
+fn resource_requirements(
+    cpus: Option<u64>,
+    mem: Option<u64>,
+    gpus: Option<u64>,
+) -> Option<ResourceRequest> {
+    let mut req = None;
+    if cpus.is_some() {
+        req = Some(ResourceRequest::default());
+        req.map(|ref mut r| r.cpus = cpus.unwrap());
+    }
+
+    if mem.is_some() {
+        if req.is_none() {
+            req = Some(ResourceRequest::default());
+        }
+        req.map(|ref mut r| r.mem = mem.unwrap());
+    }
+
+    if gpus.is_some() {
+        if req.is_none() {
+            req = Some(ResourceRequest::default());
+        }
+        req.map(|ref mut r| r.gpus = gpus.unwrap());
+    }
+
+    req
+}
+
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt::init();
@@ -131,8 +183,17 @@ async fn main() {
             verifier,
             prover_img_url,
             verifier_img_url,
+            prover_cpus,
+            prover_mem,
+            prover_gpus,
+            verifier_cpus,
+            verifier_mem,
+            verifier_gpus,
             listen_addr,
         } => {
+            let prover_reqs = resource_requirements(prover_cpus, prover_mem, prover_gpus);
+            let verifier_reqs = resource_requirements(verifier_cpus, verifier_mem, verifier_gpus);
+
             println!("Start prover / verifier deployment");
             match gevulot_cli::run_deploy_command(
                 client,
@@ -142,6 +203,8 @@ async fn main() {
                 verifier,
                 prover_img_url,
                 verifier_img_url,
+                prover_reqs,
+                verifier_reqs,
                 listen_addr,
             )
             .await
@@ -195,5 +258,55 @@ fn print_tx_tree(tree: &TransactionTree, indentation: u16) {
                 (0..indentation).map(|_| "\t").collect::<String>()
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::*;
+
+    fn test_default_resource_requirements() {
+        assert_eq!(resource_requirements(None, None, None), None);
+    }
+
+    fn test_cpus_resource_requirements() {
+        assert_eq!(
+            resource_requirements(Some(16), None, None),
+            Some(ResourceRequest {
+                cpus: 16,
+                ..Default::default()
+            })
+        );
+    }
+
+    fn test_mem_resource_requirements() {
+        assert_eq!(
+            resource_requirements(None, Some(24576), None),
+            Some(ResourceRequest {
+                mem: 24576,
+                ..Default::default()
+            })
+        );
+    }
+
+    fn test_gpus_resource_requirements() {
+        assert_eq!(
+            resource_requirements(None, None, Some(1)),
+            Some(ResourceRequest {
+                gpus: 1,
+                ..Default::default()
+            })
+        );
+    }
+
+    fn test_cpu_mem_requirements() {
+        assert_eq!(
+            resource_requirements(Some(4), Some(4096), None),
+            Some(ResourceRequest {
+                cpus: 4,
+                mem: 4096,
+                ..Default::default()
+            })
+        );
     }
 }
