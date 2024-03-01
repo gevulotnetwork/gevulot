@@ -1,14 +1,21 @@
 mod program_manager;
 mod resource_manager;
 
+use crate::scheduler::program_manager::ProgramManager;
+use crate::scheduler::resource_manager::ResourceManager;
 use crate::storage::Database;
+use crate::txvalidation;
 use crate::txvalidation::TxEventSender;
 use crate::txvalidation::TxResultSender;
 use crate::types::file::{move_vmfile, Output, TaskVmFile, TxFile, VmOutput};
 use crate::types::TaskState;
+use crate::vmm::qemu::Qemu;
 use crate::vmm::vm_server::grpc;
+use crate::vmm::vm_server::VMServer;
 use crate::vmm::{vm_server::TaskManager, VMId};
 use crate::workflow::{WorkflowEngine, WorkflowError};
+use crate::CallbackSender;
+use crate::Config;
 use crate::{
     mempool::Mempool,
     types::{Hash, Task},
@@ -16,11 +23,10 @@ use crate::{
 use async_trait::async_trait;
 use eyre::Result;
 use gevulot_node::types::transaction::Payload;
+use gevulot_node::types::transaction::Received;
 use gevulot_node::types::{TaskKind, Transaction};
 use libsecp256k1::SecretKey;
-pub use program_manager::ProgramManager;
 use rand::RngCore;
-pub use resource_manager::ResourceManager;
 use std::path::PathBuf;
 use std::time::Instant;
 use std::{
@@ -28,16 +34,71 @@ use std::{
     sync::Arc,
     time::Duration,
 };
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::{
     sync::{Mutex, RwLock},
     time::sleep,
 };
+use tonic::transport::Server;
 
 use self::program_manager::{ProgramError, ProgramHandle};
 use self::resource_manager::ResourceError;
 
 // If VM doesn't have running task within `MAX_VM_IDLE_RUN_TIME`, it will be terminated.
 const MAX_VM_IDLE_RUN_TIME: Duration = Duration::from_secs(10);
+
+pub async fn start_scheduler(
+    config: Arc<Config>,
+    storage: Arc<Database>,
+    mempool: Arc<RwLock<Mempool>>,
+    node_key: SecretKey,
+    tx_sender: UnboundedSender<(Transaction<Received>, Option<CallbackSender>)>,
+) -> Arc<Scheduler> {
+    // TODO(tuommaki): read total available resources from config / acquire system stats.
+    let num_gpus = if config.gpu_devices.is_some() { 1 } else { 0 };
+    let resource_manager = Arc::new(std::sync::Mutex::new(ResourceManager::new(
+        config.mem_gb * 1024 * 1024 * 1024,
+        config.num_cpus,
+        num_gpus,
+    )));
+
+    // TODO(tuommaki): Handle provider from config.
+    let qemu_provider = Qemu::new(config.clone());
+    let vsock_stream = qemu_provider.vm_server_listener().expect("vsock bind");
+
+    let provider = Arc::new(Mutex::new(qemu_provider));
+    let program_manager =
+        ProgramManager::new(storage.clone(), provider.clone(), resource_manager.clone());
+
+    let workflow_engine = Arc::new(WorkflowEngine::new(storage.clone()));
+    let download_url_prefix = format!(
+        "http://{}:{}",
+        config.p2p_listen_addr.ip(),
+        config.http_download_port
+    );
+
+    let scheduler = Arc::new(Scheduler::new(
+        mempool.clone(),
+        storage.clone(),
+        program_manager,
+        workflow_engine,
+        node_key,
+        config.data_directory.clone(),
+        download_url_prefix,
+        txvalidation::TxEventSender::<txvalidation::TxResultSender>::build(tx_sender.clone()),
+    ));
+
+    let vm_server = VMServer::new(scheduler.clone(), provider, config.data_directory.clone());
+
+    // Start gRPC VSOCK server.
+    tokio::spawn(async move {
+        Server::builder()
+            .add_service(vm_server.grpc_server())
+            .serve_with_incoming(vsock_stream)
+            .await
+    });
+    scheduler
+}
 
 struct RunningTask {
     task: Task,
