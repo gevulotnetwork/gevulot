@@ -258,7 +258,7 @@ async fn run(config: Arc<Config>) -> Result<()> {
         "http://{}:{}",
         config
             .p2p_advertised_listen_addr
-            .unwrap_or_else(|| p2p_listen_addr)
+            .unwrap_or(p2p_listen_addr)
             .ip(),
         config.http_download_port
     );
