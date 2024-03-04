@@ -8,6 +8,7 @@ license = "MIT OR Apache-2.0"
 anyhow = "1.0.71"
 blake3 = { version = "1.5", features = [ "mmap" ] }
 clap = { version = "4.0.29", features = ["derive"] }
+clap-num = "1"
 futures-util = { version = "0.3", default-features = false }
 gevulot-node = { path = "../node", default-features = false }
 hex = "0.4"
