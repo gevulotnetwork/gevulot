@@ -26,5 +26,8 @@ fn run_task(task: &Task) -> Result<TaskResult> {
 
     std::fs::write("/workspace/proof.dat", b"this is a proof.")?;
 
-    task.result(vec![], vec![String::from("/workspace/proof.dat")])
+    task.result(
+        vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
+        vec![String::from("/workspace/proof.dat")],
+    )
 }

@@ -2,6 +2,7 @@ use crate::types::file::AssetFile;
 use eyre::eyre;
 use eyre::Result;
 use futures_util::TryStreamExt;
+use gevulot_node::HTTP_SERVER_SCHEME;
 use http_body_util::combinators::BoxBody;
 use http_body_util::{BodyExt, Full, StreamBody};
 use hyper::body::{self, Bytes, Frame};
@@ -36,7 +37,7 @@ pub async fn download_asset_file(
         );
         return Ok(());
     }
-
+    let file_uri = asset_file.get_uri();
     let mut resp = match tokio::time::timeout(
         tokio::time::Duration::from_secs(5),
         http_client.get(asset_file.file.url).send(),
@@ -50,10 +51,10 @@ pub async fn download_asset_file(
                 .filter_map(|(peer, port)| {
                     port.map(|port| {
                         //use parse to create an URL, no new method.
-                        let mut url = reqwest::Url::parse("http://localhost").unwrap(); //unwrap always succeed
+                        let mut url = reqwest::Url::parse(HTTP_SERVER_SCHEME).unwrap(); //unwrap always succeed
                         url.set_ip_host(peer.ip()).unwrap(); //unwrap always succeed
                         url.set_port(Some(port)).unwrap(); //unwrap always succeed
-                        url.set_path(local_relative_file_path.to_str().unwrap()); //unwrap Path always ok
+                        url.set_path(&file_uri); //unwrap Path always ok
                         url
                     })
                 })

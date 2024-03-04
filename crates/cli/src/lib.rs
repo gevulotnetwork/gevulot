@@ -227,14 +227,12 @@ async fn send_transaction(client: &RpcClient, tx: &Transaction<Created>) -> Resu
         .await
         .map_err(|err| format!("Error during send  get_transaction from the node:{err}"))?;
 
-    let tx_hash = read_tx
-        .as_ref()
-        .and_then(|read| (tx.hash == read.hash).then_some(read.hash))
-        .ok_or_else(|| {
-            format!(
-                "Error get_transaction doesn't return the right tx send tx:{} read tx:{:?}",
-                tx.hash, read_tx
-            )
-        })?;
-    Ok(tx_hash)
+    if tx.hash.to_string() != read_tx.hash {
+        return Err(format!(
+            "Error get_transaction doesn't return the right tx send tx:{} read tx:{:?}",
+            tx.hash, read_tx
+        ));
+    }
+
+    Ok(tx.hash)
 }
