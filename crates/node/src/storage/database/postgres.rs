@@ -535,6 +535,14 @@ impl Database {
         Ok(())
     }
 
+    pub async fn get_acl_whitelist(&self) -> Result<Vec<entity::PublicKey>> {
+        let dbkey_set: Vec<entity::PublicKey> = sqlx::query("SELECT 1 FROM acl_whitelist")
+            .map(|row: sqlx::postgres::PgRow| row.get(0))
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(dbkey_set)
+    }
+
     pub async fn acl_whitelist_has(&self, key: &entity::PublicKey) -> Result<bool> {
         let res: Option<i32> = sqlx::query("SELECT 1 FROM acl_whitelist WHERE key = $1")
             .bind(key)
@@ -545,7 +553,7 @@ impl Database {
         Ok(res.is_some())
     }
 
-    pub async fn acl_whitelist(&self, key: &entity::PublicKey) -> Result<()> {
+    pub async fn acl_whitelist(&self, key: entity::PublicKey) -> Result<()> {
         sqlx::query("INSERT INTO acl_whitelist ( key ) VALUES ( $1 ) ON CONFLICT (key) DO NOTHING")
             .bind(key)
             .execute(&self.pool)

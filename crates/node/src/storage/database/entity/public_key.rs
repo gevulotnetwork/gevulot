@@ -1,4 +1,6 @@
 use std::fmt;
+use std::hash::Hash;
+use std::hash::Hasher;
 
 use serde::{Deserialize, Serialize};
 use sqlx::{Decode, Encode, Postgres, Type};
@@ -11,7 +13,7 @@ pub enum PublicKeyError {
     ParseError(String),
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct PublicKey(pub libsecp256k1::PublicKey);
 
 impl Default for PublicKey {
@@ -19,6 +21,12 @@ impl Default for PublicKey {
         PublicKey(libsecp256k1::PublicKey::from_secret_key(
             &libsecp256k1::SecretKey::default(),
         ))
+    }
+}
+
+impl Hash for PublicKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.0.serialize().hash(state);
     }
 }
 
