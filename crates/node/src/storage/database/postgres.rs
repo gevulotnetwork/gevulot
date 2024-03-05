@@ -10,7 +10,6 @@ use crate::types::{
 use eyre::Result;
 use gevulot_node::types::program::ResourceRequest;
 use libsecp256k1::PublicKey;
-use sqlx::Acquire;
 use sqlx::{postgres::PgPoolOptions, FromRow, Row};
 use std::time::Duration;
 
