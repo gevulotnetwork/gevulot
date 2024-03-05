@@ -79,7 +79,11 @@ where
     let mut db_keys: HashSet<crate::entity::PublicKey> = HashSet::from_iter(db_keys.into_iter());
 
     let mut new_keys = vec![];
-    while let Ok(Some(line)) = lines.next_line().await {
+    // Received list shouldn't be empty.
+    let mut non_empry_list = false;
+    // If an error occurs during fetch cancel merge to avoid removing all db keys.
+    while let Some(line) = lines.next_line().await? {
+        non_empry_list = true;
         match crate::entity::PublicKey::try_from(line.as_str()) {
             Ok(public_key) => {
                 if !db_keys.contains(&public_key) {
@@ -100,9 +104,14 @@ where
         database.acl_whitelist(public_key).await?;
     }
     let removed_key_count = db_keys.len();
-    for public_key in db_keys {
-        database.acl_deny(&public_key).await?;
+
+    // Do not remove all list if received list is empty.
+    if non_empry_list {
+        for public_key in db_keys {
+            database.acl_deny(&public_key).await?;
+        }
     }
+
 
     tracing::info!("{key_count} new keys whitelisted and {removed_key_count} keys removed",);
     Ok(())
@@ -110,7 +119,8 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    
+use super::*;
     use tokio::sync::Mutex;
 
     struct TestDb(Mutex<HashSet<String>>);
@@ -140,7 +150,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_acl_merge() {
+    async fn test_acl_merge_multiple() {
         let db = TestDb(Mutex::new(HashSet::new()));
         {
             let mut set = db.0.lock().await;
@@ -149,19 +159,85 @@ mod tests {
             set.insert("04485539698460eb21864f22fdc2ff595980f67d6b43c90b35e022ea40a7465806144bdfe79e571ee196ce52f7d0c88da915733e838420b347f8e6f7920c2c91e7".to_string());
         }
 
-        let remove_acl = vec![
+        let to_merge_acl = vec![
             Ok("043a1d3d3bfa8b91b18be20009f58616683695765c90c37a404af7635a3e047de50ee62b5da0c02a1ba54489294974aa6a3733ec82e34c8f6a26c29d6aa000e88d\n".as_bytes()),
             Ok("040f28123df7a638647d867dfe186395999a276048c76c1bd56d4b792eca56449751944d6cd0b208f44b9aec332b4b6d0630406ebb07ccfb17e7c505a07156a792\n".as_bytes()),
         ];
-        let reader = StreamReader::new(tokio_stream::iter(remove_acl));
+        let reader = StreamReader::new(tokio_stream::iter(to_merge_acl));
         let res = merge_acl_white_list(reader, &db).await;
 
         assert!(res.is_ok());
-        let set = db.0.lock().await;
-        assert_eq!(2, set.len());
-        assert!(set.get("043a1d3d3bfa8b91b18be20009f58616683695765c90c37a404af7635a3e047de50ee62b5da0c02a1ba54489294974aa6a3733ec82e34c8f6a26c29d6aa000e88d").is_some());
-        assert!(set.get("040f28123df7a638647d867dfe186395999a276048c76c1bd56d4b792eca56449751944d6cd0b208f44b9aec332b4b6d0630406ebb07ccfb17e7c505a07156a792").is_some());
-        assert!(set.get("0479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8").is_none());
-        assert!(set.get("04485539698460eb21864f22fdc2ff595980f67d6b43c90b35e022ea40a7465806144bdfe79e571ee196ce52f7d0c88da915733e838420b347f8e6f7920c2c91e7").is_none());
+        {
+            let set = db.0.lock().await;
+            assert_eq!(2, set.len());
+            assert!(set.get("043a1d3d3bfa8b91b18be20009f58616683695765c90c37a404af7635a3e047de50ee62b5da0c02a1ba54489294974aa6a3733ec82e34c8f6a26c29d6aa000e88d").is_some());
+            assert!(set.get("040f28123df7a638647d867dfe186395999a276048c76c1bd56d4b792eca56449751944d6cd0b208f44b9aec332b4b6d0630406ebb07ccfb17e7c505a07156a792").is_some());
+            assert!(set.get("0479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8").is_none());
+            assert!(set.get("04485539698460eb21864f22fdc2ff595980f67d6b43c90b35e022ea40a7465806144bdfe79e571ee196ce52f7d0c88da915733e838420b347f8e6f7920c2c91e7").is_none());
+        }
+    }
+
+    #[tokio::test]
+    async fn test_acl_merge_from_empty() {
+        let db = TestDb(Mutex::new(HashSet::new()));
+
+        let to_merge_acl = vec![
+            Ok("043a1d3d3bfa8b91b18be20009f58616683695765c90c37a404af7635a3e047de50ee62b5da0c02a1ba54489294974aa6a3733ec82e34c8f6a26c29d6aa000e88d\n".as_bytes()),
+            Ok("040f28123df7a638647d867dfe186395999a276048c76c1bd56d4b792eca56449751944d6cd0b208f44b9aec332b4b6d0630406ebb07ccfb17e7c505a07156a792\n".as_bytes()),
+        ];
+        let reader = StreamReader::new(tokio_stream::iter(to_merge_acl));
+        let res = merge_acl_white_list(reader, &db).await;
+
+        assert!(res.is_ok());
+        {
+            let set = db.0.lock().await;
+            assert_eq!(2, set.len());
+            assert!(set.get("043a1d3d3bfa8b91b18be20009f58616683695765c90c37a404af7635a3e047de50ee62b5da0c02a1ba54489294974aa6a3733ec82e34c8f6a26c29d6aa000e88d").is_some());
+            assert!(set.get("040f28123df7a638647d867dfe186395999a276048c76c1bd56d4b792eca56449751944d6cd0b208f44b9aec332b4b6d0630406ebb07ccfb17e7c505a07156a792").is_some());
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_acl_merge_with_empty() {
+        let db = TestDb(Mutex::new(HashSet::new()));
+        {
+            let mut set = db.0.lock().await;
+            set.insert("0479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8".to_string());
+        }
+
+        let to_merge_acl: Vec<Result<&[u8], std::io::Error>> = vec![];
+        let reader = StreamReader::new(tokio_stream::iter(to_merge_acl));
+        let res = merge_acl_white_list(reader, &db).await;
+
+        assert!(res.is_ok());
+        {
+            let set = db.0.lock().await;
+            assert_eq!(1, set.len());
+            assert!(set.get("0479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8").is_some());
+        }
+    }
+    
+    #[tokio::test]
+    async fn test_acl_merge_with_error() {
+        let db = TestDb(Mutex::new(HashSet::new()));
+        {
+            let mut set = db.0.lock().await;
+            set.insert("0479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8".to_string());
+        }
+
+        let to_merge_acl = vec![
+            Ok("043a1d3d3bfa8b91b18be20009f58616683695765c90c37a404af7635a3e047de50ee62b5da0c02a1ba54489294974aa6a3733ec82e34c8f6a26c29d6aa000e88d\n".as_bytes()),
+            Err(std::io::Error::new(std::io::ErrorKind::Other, "a test")), 
+            Ok("040f28123df7a638647d867dfe186395999a276048c76c1bd56d4b792eca56449751944d6cd0b208f44b9aec332b4b6d0630406ebb07ccfb17e7c505a07156a792\n".as_bytes()),
+        ];
+        let reader = StreamReader::new(tokio_stream::iter(to_merge_acl));
+        let res = merge_acl_white_list(reader, &db).await;
+
+        assert!(res.is_err());
+        {
+            let set = db.0.lock().await;
+            assert_eq!(1, set.len());
+            assert!(set.get("0479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8").is_some());
+        }
     }
 }
