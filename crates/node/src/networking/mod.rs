@@ -112,15 +112,14 @@ where
         }
     }
 
-
     tracing::info!("{key_count} new keys whitelisted and {removed_key_count} keys removed",);
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    
-use super::*;
+
+    use super::*;
     use tokio::sync::Mutex;
 
     struct TestDb(Mutex<HashSet<String>>);
@@ -137,12 +136,10 @@ use super::*;
                 .map_err(|err| err.into())
         }
         async fn acl_whitelist(&self, key: crate::entity::PublicKey) -> Result<()> {
-            println!("insert:{}", key.to_string());
             self.0.lock().await.insert(key.to_string());
             Ok(())
         }
         async fn acl_deny(&self, key: &crate::entity::PublicKey) -> Result<()> {
-            println!("remove:{}", key.to_string());
             let str_key = key.to_string();
             self.0.lock().await.remove(&str_key);
             Ok(())
@@ -196,7 +193,7 @@ use super::*;
             assert!(set.get("040f28123df7a638647d867dfe186395999a276048c76c1bd56d4b792eca56449751944d6cd0b208f44b9aec332b4b6d0630406ebb07ccfb17e7c505a07156a792").is_some());
         }
     }
-    
+
     #[tokio::test]
     async fn test_acl_merge_with_empty() {
         let db = TestDb(Mutex::new(HashSet::new()));
@@ -216,7 +213,7 @@ use super::*;
             assert!(set.get("0479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8").is_some());
         }
     }
-    
+
     #[tokio::test]
     async fn test_acl_merge_with_error() {
         let db = TestDb(Mutex::new(HashSet::new()));
