@@ -61,7 +61,7 @@ enum ConfCommands {
         #[clap(long = "provermem", value_name = "PROVER MEM")]
         prover_mem: Option<u64>,
         /// number of gpus to allocate for the proving task (currently only 0 or 1 allowed).
-        #[clap(long = "provermem", value_name = "PROVER GPUS", value_parser = gpus_parser)]
+        #[clap(long = "provergpus", value_name = "PROVER GPUS", value_parser = gpus_parser)]
         prover_gpus: Option<u64>,
         /// number of cpus to allocate for the proving task.
         #[clap(long = "verifiercpus", value_name = "VERIFIER CPUS")]
@@ -70,7 +70,7 @@ enum ConfCommands {
         #[clap(long = "verifiermem", value_name = "VERIFIER MEM")]
         verifier_mem: Option<u64>,
         /// number of gpus to allocate for the proving task (currently only 0 or 1 allowed).
-        #[clap(long = "verifiermem", value_name = "VERIFIER GPUS", value_parser = gpus_parser)]
+        #[clap(long = "verifiergpus", value_name = "VERIFIER GPUS", value_parser = gpus_parser)]
         verifier_gpus: Option<u64>,
         /// Address the local http server use by the node to download images.
         #[clap(
