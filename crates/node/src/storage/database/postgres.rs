@@ -10,6 +10,7 @@ use crate::types::{
 use eyre::Result;
 use gevulot_node::types::program::ResourceRequest;
 use libsecp256k1::PublicKey;
+use sqlx::Acquire;
 use sqlx::{postgres::PgPoolOptions, FromRow, Row};
 use std::time::Duration;
 
@@ -69,11 +70,11 @@ impl Database {
     }
 
     pub async fn find_program(&self, hash: impl AsRef<Hash>) -> Result<Option<Program>> {
-        // non-macro query_as used because of sqlx limitations with enums.
-        let program = sqlx::query_as::<_, Program>("SELECT * FROM program WHERE hash = $1")
-            .bind(hash.as_ref())
-            .fetch_optional(&self.pool)
-            .await?;
+        let mut conn = self.pool.acquire().await?;
+        let program = match self.get_program(&mut conn, hash).await {
+            Ok(program) => Some(program),
+            Err(_) => None,
+        };
 
         Ok(program)
     }
