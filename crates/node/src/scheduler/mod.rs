@@ -47,7 +47,7 @@ struct RunningTask {
 }
 
 struct SchedulerState {
-    pending_programs: VecDeque<Hash>,
+    pending_programs: VecDeque<(Hash, Hash)>,
     running_tasks: Vec<RunningTask>,
     running_vms: Vec<ProgramHandle>,
     task_queue: HashMap<Hash, VecDeque<(Task, Instant)>>,
@@ -117,12 +117,12 @@ impl Scheduler {
             // Before scheduling new workload, try to start pending programs first.
             {
                 let mut state = self.state.lock().await;
-                while let Some(program_id) = state.pending_programs.pop_front() {
+                while let Some((tx_hash, program_id)) = state.pending_programs.pop_front() {
                     match self
                         .program_manager
                         .lock()
                         .await
-                        .start_program(program_id, None)
+                        .start_program(tx_hash, program_id, None)
                         .await
                     {
                         Ok(p) => state.running_vms.push(p),
@@ -132,7 +132,7 @@ impl Scheduler {
                             sleep(Duration::from_millis(500)).await;
 
                             // Return the popped program_id back to pending queue.
-                            state.pending_programs.push_front(program_id);
+                            state.pending_programs.push_front((tx_hash, program_id));
                             continue 'SCHEDULING_LOOP;
                         }
                         Err(e) => panic!("failed to start program: {e}"),
@@ -154,12 +154,12 @@ impl Scheduler {
             // Push the task into program's work queue.
             {
                 let mut state = self.state.lock().await;
-                if let Some(program_task_queue) = state.task_queue.get_mut(&task.program_id) {
+                if let Some(program_task_queue) = state.task_queue.get_mut(&task.tx) {
                     program_task_queue.push_back((task.clone(), Instant::now()));
                 } else {
                     let mut queue = VecDeque::new();
                     queue.push_back((task.clone(), Instant::now()));
-                    state.task_queue.insert(task.program_id, queue);
+                    state.task_queue.insert(task.tx, queue);
                 }
             }
 
@@ -168,7 +168,7 @@ impl Scheduler {
                 .program_manager
                 .lock()
                 .await
-                .start_program(task.program_id, None)
+                .start_program(task.tx, task.program_id, None)
                 .await
             {
                 Ok(p) => self.state.lock().await.running_vms.push(p),
@@ -190,7 +190,7 @@ impl Scheduler {
                         // Drop the program's task queue. The program's not
                         // there so no need to have queue for it either.
                         let program_id = &task.program_id.clone();
-                        self.state.lock().await.task_queue.remove(program_id);
+                        self.state.lock().await.task_queue.remove(&task.tx);
                     }
                 }
             }
@@ -239,7 +239,7 @@ impl Scheduler {
             .lock()
             .await
             .pending_programs
-            .push_back(task.program_id);
+            .push_back((task.tx, task.program_id));
         Ok(())
     }
 
@@ -383,10 +383,10 @@ impl TaskManager for Scheduler {
             .map(|rt| rt.task.clone())
     }
 
-    async fn get_pending_task(&self, program: Hash, vm_id: Arc<dyn VMId>) -> Option<Task> {
+    async fn get_pending_task(&self, tx_hash: Hash, vm_id: Arc<dyn VMId>) -> Option<Task> {
         tracing::debug!(
-            "program {} running in vm_id {} requests for new task",
-            program,
+            "tx {} running in vm_id {} requests for new task",
+            tx_hash,
             vm_id
         );
 
@@ -406,7 +406,7 @@ impl TaskManager for Scheduler {
                 running_task.task_started.elapsed().as_secs()
             );
 
-            tracing::debug!("terminating VM {} running program {}", vm_id, program);
+            tracing::debug!("terminating VM {} running tx {}", vm_id, tx_hash);
 
             let idx = state
                 .running_vms
@@ -421,19 +421,19 @@ impl TaskManager for Scheduler {
                     .stop_program(program_handle)
                     .await
                 {
-                    tracing::error!("failed to stop program {}: {}", program, err);
+                    tracing::error!("failed to stop program {}: {}", tx_hash, err);
                 }
             }
 
             return None;
         }
 
-        if let Some(task_queue) = state.task_queue.get_mut(&program) {
+        if let Some(task_queue) = state.task_queue.get_mut(&tx_hash) {
             if let Some((task, scheduled)) = task_queue.pop_front() {
                 tracing::debug!(
-                    "task {} found for program {} running in vm_id {}",
+                    "task {} found for tx {} running in vm_id {}",
                     task.id,
-                    program,
+                    tx_hash,
                     vm_id
                 );
                 tracing::info!(

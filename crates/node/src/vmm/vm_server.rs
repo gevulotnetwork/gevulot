@@ -32,7 +32,7 @@ const DATA_STREAM_CHUNK_SIZE: usize = 4096;
 /// requesting for work and submitting results of tasks.
 #[async_trait]
 pub trait TaskManager: Send + Sync {
-    async fn get_pending_task(&self, program: Hash, vm_id: Arc<dyn VMId>) -> Option<Task>;
+    async fn get_pending_task(&self, tx_hash: Hash, vm_id: Arc<dyn VMId>) -> Option<Task>;
     async fn get_running_task(&self, vm_id: Arc<dyn VMId>) -> Option<Task>;
     async fn submit_result(
         &self,
@@ -45,7 +45,7 @@ pub trait TaskManager: Send + Sync {
 /// ProgramRegistry defines interface that `VMServer` uses to identify which
 /// `Program` sent corresponding request.
 pub trait ProgramRegistry: Send {
-    fn find_by_req(&mut self, extensions: &Extensions) -> Option<(Hash, Arc<dyn VMId>)>;
+    fn find_by_req(&mut self, extensions: &Extensions) -> Option<(Hash, Hash, Arc<dyn VMId>)>;
 }
 
 /// VMServer is the integration point between Gevulot node and individual
@@ -91,7 +91,7 @@ impl VmService for VMServer {
         request: Request<TaskRequest>,
     ) -> Result<Response<TaskResponse>, Status> {
         tracing::info!("request for task: {:?}", request);
-        let (program, vm_id) = self
+        let (tx_hash, program_id, vm_id) = self
             .program_registry
             .lock()
             .await
@@ -103,7 +103,7 @@ impl VmService for VMServer {
                 )
             })?;
 
-        let reply = match self.task_source.get_pending_task(program, vm_id).await {
+        let reply = match self.task_source.get_pending_task(tx_hash, vm_id).await {
             Some(task) => grpc::TaskResponse {
                 result: Some(grpc::task_response::Result::Task(grpc::Task {
                     id: task.tx.to_string(),
@@ -132,7 +132,7 @@ impl VmService for VMServer {
     ) -> Result<Response<Self::GetFileStream>, Status> {
         tracing::info!("request for file: {:?}", request);
 
-        let (program, vm_id) = self
+        let (tx_hash, program_id, vm_id) = self
             .program_registry
             .lock()
             .await
@@ -205,7 +205,7 @@ impl VmService for VMServer {
         &self,
         request: Request<Streaming<FileData>>,
     ) -> Result<Response<GenericResponse>, Status> {
-        let (program, vm_id) = match self
+        let (tx_hash, program_id, vm_id) = match self
             .program_registry
             .lock()
             .await
@@ -302,7 +302,7 @@ impl VmService for VMServer {
         &self,
         request: Request<TaskResultRequest>,
     ) -> Result<Response<TaskResultResponse>, Status> {
-        let (program, vm_id) = match self
+        let (tx_hash, program_id, vm_id) = match self
             .program_registry
             .lock()
             .await
@@ -319,13 +319,17 @@ impl VmService for VMServer {
 
         tracing::trace!(
             "VMServer submit_result program:{}, vm_id:{vm_id}",
-            program.to_string()
+            program_id.to_string()
         );
 
         let result = request.into_inner().result;
 
         if let Some(result) = result {
-            if let Err(err) = self.task_source.submit_result(program, vm_id, result).await {
+            if let Err(err) = self
+                .task_source
+                .submit_result(program_id, vm_id, result)
+                .await
+            {
                 tracing::error!("Error during submit VM execution result:{err}");
             }
         }

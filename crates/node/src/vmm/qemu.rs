@@ -57,7 +57,8 @@ fn u32_from_any(x: &dyn Any) -> u32 {
 pub struct QEMUVMHandle {
     child: Option<Child>,
     cid: u32,
-    program_id: Hash,
+    tx_hash: Hash,
+    program_idd: Hash,
     workspace_volume_label: String,
     //qmp: Arc<Mutex<Qmp>>,
 }
@@ -120,14 +121,15 @@ impl Qemu {
 }
 
 impl ProgramRegistry for Qemu {
-    fn find_by_req(&mut self, extensions: &Extensions) -> Option<(Hash, Arc<dyn VMId>)> {
+    fn find_by_req(&mut self, extensions: &Extensions) -> Option<(Hash, Hash, Arc<dyn VMId>)> {
         let conn_info = extensions.get::<VsockConnectInfo>().unwrap();
         match conn_info.peer_addr() {
             Some(addr) => {
                 self.vm_registry
                     .get(&addr.cid())
-                    .map(|handle| -> (Hash, Arc<dyn VMId>) {
-                        (handle.program_id, Arc::new(addr.cid()))
+                    //                    .map(|handle| -> (Hash, Arc<dyn VMId>) {
+                    .map(|handle| -> (Hash, Hash, Arc<dyn VMId>) {
+                        (handle.tx_hash, handle.program_idd, Arc::new(addr.cid()))
                     })
             }
             None => None,
@@ -137,7 +139,12 @@ impl ProgramRegistry for Qemu {
 
 #[async_trait]
 impl Provider for Qemu {
-    async fn start_vm(&mut self, program: Program, req: ResourceRequest) -> Result<VMHandle> {
+    async fn start_vm(
+        &mut self,
+        tx_hash: Hash,
+        program: Program,
+        req: ResourceRequest,
+    ) -> Result<VMHandle> {
         // TODO:
         //  - Builder to construct QEMU flags
         //  - Handle GPUs
@@ -172,11 +179,12 @@ impl Provider for Qemu {
         // watchdog will reap it.
         let qmp_port = (cid % 64512) + 1024;
 
-        let program_id = program.hash;
+        let program_idd = program.hash;
         let qemu_vm_handle = QEMUVMHandle {
             child: None,
             cid,
-            program_id,
+            tx_hash,
+            program_idd,
             workspace_volume_label,
             //qmp: Arc::new(Mutex::new(qmp)),
         };
@@ -252,7 +260,8 @@ impl Provider for Qemu {
 
         // Setup stdout & stderr log to VM execution.
         {
-            let log_dir_path = Path::new(&self.config.log_directory).join(program.hash.to_string());
+            // Change to have an unique log per Tx so that log are not mix between program execution.
+            let log_dir_path = Path::new(&self.config.log_directory).join(tx_hash.to_string());
             std::fs::create_dir_all(&log_dir_path)?;
             let stdout = File::options()
                 .create(true)
@@ -267,7 +276,7 @@ impl Provider for Qemu {
         }
 
         tracing::info!(
-            "Program:{} starting QEMU. args:\n{:#?}\n",
+            "Tx:{tx_hash} Program:{} starting QEMU. args:\n{:#?}\n",
             program.hash.to_string(),
             cmd.get_args(),
         );
