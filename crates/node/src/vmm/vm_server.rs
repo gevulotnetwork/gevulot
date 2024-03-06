@@ -32,12 +32,11 @@ const DATA_STREAM_CHUNK_SIZE: usize = 4096;
 /// requesting for work and submitting results of tasks.
 #[async_trait]
 pub trait TaskManager: Send + Sync {
-    async fn get_pending_task(&self, tx_hash: Hash, vm_id: Arc<dyn VMId>) -> Option<Task>;
-    async fn get_running_task(&self, vm_id: Arc<dyn VMId>) -> Option<Task>;
+    async fn get_pending_task(&self, tx_hash: Hash) -> Option<Task>;
+    async fn get_running_task(&self, tx_hash: Hash) -> Option<Task>;
     async fn submit_result(
         &self,
         program: Hash,
-        vm_id: Arc<dyn VMId>,
         result: grpc::task_result_request::Result,
     ) -> Result<(), String>;
 }
@@ -103,7 +102,7 @@ impl VmService for VMServer {
                 )
             })?;
 
-        let reply = match self.task_source.get_pending_task(tx_hash, vm_id).await {
+        let reply = match self.task_source.get_pending_task(tx_hash).await {
             Some(task) => grpc::TaskResponse {
                 result: Some(grpc::task_response::Result::Task(grpc::Task {
                     id: task.tx.to_string(),
@@ -146,7 +145,7 @@ impl VmService for VMServer {
 
         let task = self
             .task_source
-            .get_running_task(vm_id)
+            .get_running_task(tx_hash)
             .await
             .ok_or_else(|| Status::new(Code::NotFound, "couldn't find running task for request"))?;
 
@@ -325,11 +324,7 @@ impl VmService for VMServer {
         let result = request.into_inner().result;
 
         if let Some(result) = result {
-            if let Err(err) = self
-                .task_source
-                .submit_result(program_id, vm_id, result)
-                .await
-            {
+            if let Err(err) = self.task_source.submit_result(program_id, result).await {
                 tracing::error!("Error during submit VM execution result:{err}");
             }
         }
