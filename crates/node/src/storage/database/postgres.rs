@@ -536,7 +536,7 @@ impl Database {
     }
 
     pub async fn get_acl_whitelist(&self) -> Result<Vec<entity::PublicKey>> {
-        let dbkey_set: Vec<entity::PublicKey> = sqlx::query("SELECT 1 FROM acl_whitelist")
+        let dbkey_set: Vec<entity::PublicKey> = sqlx::query("SELECT key FROM acl_whitelist")
             .map(|row: sqlx::postgres::PgRow| row.get(0))
             .fetch_all(&self.pool)
             .await?;

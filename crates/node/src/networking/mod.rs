@@ -237,4 +237,29 @@ mod tests {
             assert!(set.get("0479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8").is_some());
         }
     }
+
+    #[tokio::test]
+    async fn test_acl_merge_with_keyparseerror() {
+        let db = TestDb(Mutex::new(HashSet::new()));
+        {
+            let mut set = db.0.lock().await;
+            set.insert("0479be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8".to_string());
+        }
+
+        let to_merge_acl = vec![
+            Ok("043a1d3d3bfa8b91b18be20009f58616683695765c90c37a404af7635a3e047de50ee62b5da0c02a1ba54489294974aa6a3733ec82e34c8f6a26c29d6aa000e88d\n".as_bytes()),
+            Ok("0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000\n".as_bytes()),
+            Ok("040f28123df7a638647d867dfe186395999a276048c76c1bd56d4b792eca56449751944d6cd0b208f44b9aec332b4b6d0630406ebb07ccfb17e7c505a07156a792\n".as_bytes()),
+        ];
+        let reader = StreamReader::new(tokio_stream::iter(to_merge_acl));
+        let res = merge_acl_white_list(reader, &db).await;
+
+        assert!(res.is_ok());
+        {
+            let set = db.0.lock().await;
+            assert_eq!(2, set.len());
+            assert!(set.get("043a1d3d3bfa8b91b18be20009f58616683695765c90c37a404af7635a3e047de50ee62b5da0c02a1ba54489294974aa6a3733ec82e34c8f6a26c29d6aa000e88d").is_some());
+            assert!(set.get("040f28123df7a638647d867dfe186395999a276048c76c1bd56d4b792eca56449751944d6cd0b208f44b9aec332b4b6d0630406ebb07ccfb17e7c505a07156a792").is_some());
+        }
+    }
 }
