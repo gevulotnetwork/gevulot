@@ -58,7 +58,7 @@ pub struct QEMUVMHandle {
     child: Option<Child>,
     cid: u32,
     tx_hash: Hash,
-    program_idd: Hash,
+    program_id: Hash,
     workspace_volume_label: String,
     //qmp: Arc<Mutex<Qmp>>,
 }
@@ -129,7 +129,7 @@ impl ProgramRegistry for Qemu {
                     .get(&addr.cid())
                     //                    .map(|handle| -> (Hash, Arc<dyn VMId>) {
                     .map(|handle| -> (Hash, Hash, Arc<dyn VMId>) {
-                        (handle.tx_hash, handle.program_idd, Arc::new(addr.cid()))
+                        (handle.tx_hash, handle.program_id, Arc::new(addr.cid()))
                     })
             }
             None => None,
@@ -179,12 +179,12 @@ impl Provider for Qemu {
         // watchdog will reap it.
         let qmp_port = (cid % 64512) + 1024;
 
-        let program_idd = program.hash;
+        let program_id = program.hash;
         let qemu_vm_handle = QEMUVMHandle {
             child: None,
             cid,
             tx_hash,
-            program_idd,
+            program_id,
             workspace_volume_label,
             //qmp: Arc::new(Mutex::new(qmp)),
         };

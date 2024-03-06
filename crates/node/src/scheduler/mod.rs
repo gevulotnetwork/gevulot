@@ -325,7 +325,7 @@ impl Scheduler {
                         vm_handle.vm_id(),
                         vm_handle.run_time()
                     );
-                    zombies.push(tx_hash.clone());
+                    zombies.push(*tx_hash);
                 }
             }
         }
@@ -445,8 +445,7 @@ impl TaskManager for Scheduler {
                 .files
                 .into_iter()
                 .map(|file| {
-                    let vm_file =
-                        TaskVmFile::<VmOutput>::new(file.path.to_string(), tx_hash.clone().into());
+                    let vm_file = TaskVmFile::<VmOutput>::new(file.path.to_string(), tx_hash);
                     let dest = TxFile::<Output>::new(
                         file.path,
                         self.http_download_host.clone(),
