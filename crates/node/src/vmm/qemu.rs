@@ -127,7 +127,6 @@ impl ProgramRegistry for Qemu {
             Some(addr) => {
                 self.vm_registry
                     .get(&addr.cid())
-                    //                    .map(|handle| -> (Hash, Arc<dyn VMId>) {
                     .map(|handle| -> (Hash, Hash, Arc<dyn VMId>) {
                         (handle.tx_hash, handle.program_id, Arc::new(addr.cid()))
                     })
