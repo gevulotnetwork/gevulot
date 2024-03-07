@@ -22,6 +22,7 @@ use std::{
     thread::sleep,
     time::Duration,
 };
+use systemstat::{ByteSize, Platform, System};
 use tokio::sync::mpsc;
 use tokio::sync::{Mutex as TMutex, RwLock};
 use tokio_stream::wrappers::UnboundedReceiverStream;
@@ -234,11 +235,30 @@ async fn run(config: Arc<Config>) -> Result<()> {
     let p2p_listen_addr = p2p.node().start_listening().await?;
     tracing::info!("listening for p2p at {}", p2p_listen_addr);
 
-    // TODO(tuommaki): read total available resources from config / acquire system stats.
+    let sys = System::new();
     let num_gpus = if config.gpu_devices.is_some() { 1 } else { 0 };
+    let num_cpus = match config.num_cpus {
+        Some(cpus) => cpus,
+        None => num_cpus::get() as u64,
+    };
+    let available_mem = match config.mem_gb {
+        Some(mem_gb) => mem_gb * 1024 * 1024 * 1024,
+        None => {
+            let mem = sys.memory()?;
+            mem.total.as_u64()
+        }
+    };
+
+    tracing::info!(
+        "node configured with {} CPUs, {} MEM and {} GPUs",
+        num_cpus,
+        ByteSize(available_mem).to_string_as(true),
+        num_gpus
+    );
+
     let resource_manager = Arc::new(Mutex::new(scheduler::ResourceManager::new(
-        config.mem_gb * 1024 * 1024 * 1024,
-        config.num_cpus,
+        available_mem,
+        num_cpus,
         num_gpus,
     )));
 
