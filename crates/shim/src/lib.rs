@@ -159,6 +159,8 @@ impl GRPCClient {
 
     fn submit_file(&mut self, task_id: TaskId, file_path: String) -> Result<[u8; 32]> {
         let hasher = Arc::new(Mutex::new(blake3::Hasher::new()));
+        let stream_err = Arc::new(Mutex::new(None));
+
         self.rt.block_on(async {
             let stream_hasher = Arc::clone(&hasher);
             let outbound = async_stream::stream! {
@@ -199,8 +201,19 @@ impl GRPCClient {
 
             if let Err(err) = self.client.lock().await.submit_file(Request::new(outbound)).await {
                 println!("failed to submit file: {}", err);
+                let mut stream_err = stream_err.lock().await;
+                *stream_err = Some(err);
             }
         });
+
+        let stream_err = Arc::into_inner(stream_err).unwrap().into_inner();
+        if let Some(err) = stream_err {
+            return Err(Box::new(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                err,
+            )));
+        }
+
         let hasher = Arc::into_inner(hasher).unwrap().into_inner();
         let hash = hasher.finalize().into();
 
