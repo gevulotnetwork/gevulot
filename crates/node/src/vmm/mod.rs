@@ -1,3 +1,4 @@
+use gevulot_node::types::Hash;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
@@ -42,7 +43,12 @@ impl VMHandle {
 
 #[async_trait]
 pub trait Provider: Send + Sync {
-    async fn start_vm(&mut self, program: Program, req: ResourceRequest) -> Result<VMHandle>;
+    async fn start_vm(
+        &mut self,
+        tx_hash: Hash,
+        program: Program,
+        req: ResourceRequest,
+    ) -> Result<VMHandle>;
     fn stop_vm(&mut self, vm: VMHandle) -> Result<()>;
 
     fn prepare_image(&mut self, program: Program, image: &Path) -> Result<()>;

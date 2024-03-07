@@ -57,18 +57,24 @@ impl ProgramManager {
 
     pub async fn start_program(
         &mut self,
-        id: Hash,
+        tx_hash: Hash,
+        program_id: Hash,
         limits: Option<ResourceRequest>,
     ) -> Result<ProgramHandle> {
-        let program = match self.storage.find_program(&id).await? {
+        let program = match self.storage.find_program(&program_id).await? {
             Some(program) => program,
-            None => return Err(ProgramError::ProgramNotFound(id.to_string()).into()),
+            None => return Err(ProgramError::ProgramNotFound(program_id.to_string()).into()),
         };
 
         let req = limits.unwrap_or(program.limits.unwrap_or(ResourceRequest::default()));
         let resource_allocation =
             ResourceManager::try_allocate(self.resource_manager.clone(), &req)?;
-        let vm_handle = self.vm_provider.lock().await.start_vm(program, req).await?;
+        let vm_handle = self
+            .vm_provider
+            .lock()
+            .await
+            .start_vm(tx_hash, program, req)
+            .await?;
 
         Ok(ProgramHandle {
             resource_allocation,
