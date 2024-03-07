@@ -22,7 +22,7 @@ mod grpc {
 
 /// DATA_STREAM_CHUNK_SIZE controls the chunk size for streaming byte
 /// transfers, e.g. when transferring the result file back to node.
-const DATA_STREAM_CHUNK_SIZE: usize = 4096;
+const DATA_STREAM_CHUNK_SIZE: usize = 10000;
 
 /// MOUNT_TIMEOUT is maximum amount of time to wait for workspace mount to be
 /// present in /proc/mounts.
@@ -159,7 +159,7 @@ impl GRPCClient {
 
     fn submit_file(&mut self, task_id: TaskId, file_path: String) -> Result<[u8; 32]> {
         let hasher = Arc::new(Mutex::new(blake3::Hasher::new()));
-        self.rt.block_on(async {
+        let res = self.rt.block_on(async {
             let stream_hasher = Arc::clone(&hasher);
             let outbound = async_stream::stream! {
 
@@ -185,26 +185,24 @@ impl GRPCClient {
                     match file.read(&mut buf).await {
                         Ok(0) => return,
                         Ok(n) => {
-
                             stream_hasher.lock().await.update(&buf[..n]);
                             yield FileData{ result: Some(grpc::file_data::Result::Chunk(FileChunk{ data: buf[..n].to_vec() }))};
                         },
                         Err(err) => {
                             println!("failed to read file: {}", err);
                             yield FileData{ result: Some(grpc::file_data::Result::Error(1))};
+                            break;
                         }
                     }
                 }
             };
 
-            if let Err(err) = self.client.lock().await.submit_file(Request::new(outbound)).await {
-                println!("failed to submit file: {}", err);
-            }
+            self.client.lock().await.submit_file(Request::new(outbound)).await
         });
         let hasher = Arc::into_inner(hasher).unwrap().into_inner();
-        let hash = hasher.finalize().into();
+        let checksum = hasher.finalize().into();
 
-        Ok(hash)
+        res.map(|_| checksum).map_err(|err| err.into())
     }
 
     fn submit_result(&mut self, result: &TaskResult) -> Result<bool> {
@@ -348,7 +346,13 @@ pub fn run(callback: impl Fn(&Task) -> Result<TaskResult>) -> Result<()> {
 
         let result = callback(&task)?;
 
-        let should_continue = client.submit_result(&result)?;
+        let should_continue = match client.submit_result(&result) {
+            Ok(res) => res,
+            Err(err) => {
+                println!("An error occurs during submit_result {err}");
+                return Err(err);
+            }
+        };
         if !should_continue {
             break;
         }
