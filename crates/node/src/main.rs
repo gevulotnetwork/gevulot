@@ -89,7 +89,7 @@ async fn main() -> Result<()> {
             PeerCommand::Whitelist { db_url } => {
                 let db = storage::Database::new(&db_url).await?;
                 let key = entity::PublicKey::try_from(peer.as_str())?;
-                db.acl_whitelist(&key).await
+                db.acl_whitelist(key).await
             }
             PeerCommand::Deny { db_url } => {
                 let db = storage::Database::new(&db_url).await?;
