@@ -15,10 +15,6 @@ mod grpc {
     tonic::include_proto!("vm_service");
 }
 
-// DATA_STREAM_CHUNK_SIZE controls the chunk size for streaming byte
-// transfers, e.g. when transferring the result file back to node.
-//const DATA_STREAM_CHUNK_SIZE: usize = 4096;
-
 /// MOUNT_TIMEOUT is maximum amount of time to wait for workspace mount to be
 /// present in /proc/mounts.
 const MOUNT_TIMEOUT: Duration = Duration::from_secs(30);
