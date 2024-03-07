@@ -38,6 +38,9 @@ use self::resource_manager::ResourceError;
 
 // If VM doesn't have running task within `MAX_VM_IDLE_RUN_TIME`, it will be terminated.
 const MAX_VM_IDLE_RUN_TIME: Duration = Duration::from_secs(10);
+// MAX_VM_RUN_TIME is the maximum time a VM can run no matter what.
+// The proof must be generated within this time limit.
+const MAX_VM_RUN_TIME: Duration = Duration::from_secs(1800);
 
 struct RunningTask {
     task: Task,
@@ -251,8 +254,6 @@ impl Scheduler {
 
         let mut zombies = vec![];
         for task in state.running_tasks.values() {
-            // TODO: Add maximum running time limit for a task here.
-
             if let Some(vm_handle) = state.running_vms.get(&task.task.tx) {
                 tracing::trace!(
                     "inspecting if VM for task id {} is still alive",
@@ -260,8 +261,16 @@ impl Scheduler {
                 );
                 match vm_handle.is_alive().await {
                     Ok(true) => {
-                        tracing::trace!("VM is still alive.");
-                        continue; // All good
+                        if task.task_started.elapsed() > MAX_VM_RUN_TIME {
+                            tracing::trace!("VM is still alive but has exceeded MAX_VM_RUN_TIME ({:#?} > {:#?}) - terminating it.", task.task_started.elapsed(), MAX_VM_RUN_TIME);
+                            zombies.push(task.task.tx);
+                        } else {
+                            tracing::trace!(
+                                "VM is still alive (run time: {:#?}).",
+                                task.task_started.elapsed()
+                            );
+                            continue; // All good
+                        }
                     }
                     Ok(false) => {
                         // VM is not running anymore.
