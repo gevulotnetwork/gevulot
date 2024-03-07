@@ -22,7 +22,7 @@ mod grpc {
 
 /// DATA_STREAM_CHUNK_SIZE controls the chunk size for streaming byte
 /// transfers, e.g. when transferring the result file back to node.
-const DATA_STREAM_CHUNK_SIZE: usize = 4096;
+const DATA_STREAM_CHUNK_SIZE: usize = 10000;
 
 /// MOUNT_TIMEOUT is maximum amount of time to wait for workspace mount to be
 /// present in /proc/mounts.
