@@ -80,10 +80,10 @@ where
 
     let mut new_keys = vec![];
     // Received list shouldn't be empty.
-    let mut non_empry_list = false;
+    let mut non_empty_list = false;
     // If an error occurs during fetch cancel merge to avoid removing all db keys.
     while let Some(line) = lines.next_line().await? {
-        non_empry_list = true;
+        non_empty_list = true;
         match crate::entity::PublicKey::try_from(line.as_str()) {
             Ok(public_key) => {
                 if !db_keys.contains(&public_key) {
@@ -106,7 +106,7 @@ where
     let removed_key_count = db_keys.len();
 
     // Do not remove all list if received list is empty.
-    if non_empry_list {
+    if non_empty_list {
         for public_key in db_keys {
             database.acl_deny(&public_key).await?;
         }
