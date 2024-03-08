@@ -211,7 +211,7 @@ async fn server_process_file(
             let (status_code, message) = if file_path.as_path().exists() {
                 (
                     StatusCode::PARTIAL_CONTENT,
-                    "Update in progess, retry later",
+                    "Update in progress, retry later",
                 )
             } else {
                 (StatusCode::NOT_FOUND, "File not found")
