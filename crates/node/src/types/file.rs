@@ -18,6 +18,14 @@ impl<E> TaskVmFile<E> {
         &self.vm_file_path
     }
 }
+impl TaskVmFile<()> {
+    pub fn get_workspace_path(data_directory: &Path, tx_hash: Hash) -> PathBuf {
+        PathBuf::new()
+            .join(data_directory)
+            .join(&tx_hash.to_string())
+            .join(gevulot_shim::WORKSPACE_NAME)
+    }
+}
 
 // Define A task file send to the VM. Extension contains the node file path.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]

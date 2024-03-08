@@ -1189,6 +1189,7 @@ dependencies = [
  "eyre",
  "futures",
  "futures-util",
+ "gevulot-shim",
  "hex",
  "home",
  "http-body-util",
