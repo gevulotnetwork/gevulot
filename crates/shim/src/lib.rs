@@ -159,9 +159,7 @@ impl GRPCClient {
 
     fn submit_file(&mut self, task_id: TaskId, file_path: String) -> Result<[u8; 32]> {
         let hasher = Arc::new(Mutex::new(blake3::Hasher::new()));
-        let stream_err = Arc::new(Mutex::new(None));
-
-        self.rt.block_on(async {
+        let res = self.rt.block_on(async {
             let stream_hasher = Arc::clone(&hasher);
             let outbound = async_stream::stream! {
 
@@ -187,37 +185,24 @@ impl GRPCClient {
                     match file.read(&mut buf).await {
                         Ok(0) => return,
                         Ok(n) => {
-
                             stream_hasher.lock().await.update(&buf[..n]);
                             yield FileData{ result: Some(grpc::file_data::Result::Chunk(FileChunk{ data: buf[..n].to_vec() }))};
                         },
                         Err(err) => {
                             println!("failed to read file: {}", err);
                             yield FileData{ result: Some(grpc::file_data::Result::Error(1))};
+                            break;
                         }
                     }
                 }
             };
 
-            if let Err(err) = self.client.lock().await.submit_file(Request::new(outbound)).await {
-                println!("failed to submit file: {}", err);
-                let mut stream_err = stream_err.lock().await;
-                *stream_err = Some(err);
-            }
+            self.client.lock().await.submit_file(Request::new(outbound)).await
         });
-
-        let stream_err = Arc::into_inner(stream_err).unwrap().into_inner();
-        if let Some(err) = stream_err {
-            return Err(Box::new(std::io::Error::new(
-                std::io::ErrorKind::BrokenPipe,
-                err,
-            )));
-        }
-
         let hasher = Arc::into_inner(hasher).unwrap().into_inner();
-        let hash = hasher.finalize().into();
+        let checksum = hasher.finalize().into();
 
-        Ok(hash)
+        res.map(|_| checksum).map_err(|err| err.into())
     }
 
     fn submit_result(&mut self, result: &TaskResult) -> Result<bool> {
@@ -361,7 +346,13 @@ pub fn run(callback: impl Fn(&Task) -> Result<TaskResult>) -> Result<()> {
 
         let result = callback(&task)?;
 
-        let should_continue = client.submit_result(&result)?;
+        let should_continue = match client.submit_result(&result) {
+            Ok(res) => res,
+            Err(err) => {
+                println!("An error occurs during submit_result {err}");
+                return Err(err);
+            }
+        };
         if !should_continue {
             break;
         }
