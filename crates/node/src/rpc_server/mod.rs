@@ -442,8 +442,8 @@ mod tests {
             p2p_advertised_listen_addr: None,
             provider: "qemu".to_string(),
             vsock_listen_port: 8080,
-            num_cpus: 8,
-            mem_gb: 8,
+            num_cpus: None,
+            mem_gb: None,
             gpu_devices: None,
             http_download_port: 0,
         });
