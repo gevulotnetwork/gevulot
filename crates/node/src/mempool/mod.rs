@@ -1,3 +1,4 @@
+use crate::txvalidation::ValidatedTxReceiver;
 use crate::types::{transaction::Validated, Hash, Transaction};
 use async_trait::async_trait;
 use eyre::Result;
@@ -23,27 +24,14 @@ pub enum MempoolError {
 pub struct Mempool {
     storage: Arc<dyn Storage>,
     deque: VecDeque<Transaction<Validated>>,
-
-    persist_only: bool,
 }
 
 impl Mempool {
-    // If `persist_only` flag is set as `true`, the mempool won't populate
-    // `deque` with transactions. This can be used to disable transaction
-    // execution, while keeping rest of the node functionality as-is.
-    // Main use case for this is as a JSON-RPC API + Archive node.
-    pub async fn new(storage: Arc<dyn Storage>, persist_only: bool) -> Result<Self> {
+    pub async fn new(storage: Arc<dyn Storage>) -> Result<Self> {
         let mut deque = VecDeque::new();
+        storage.fill_deque(&mut deque).await?;
 
-        if !persist_only {
-            storage.fill_deque(&mut deque).await?;
-        }
-
-        Ok(Self {
-            storage,
-            deque,
-            persist_only,
-        })
+        Ok(Self { storage, deque })
     }
 
     pub fn next(&mut self) -> Option<Transaction<Validated>> {
@@ -57,17 +45,18 @@ impl Mempool {
 
     pub async fn add(&mut self, tx: Transaction<Validated>) -> Result<()> {
         self.storage.set(&tx).await?;
-
-        // If `persist_only` is set, don't provide transactions available
-        // for consumption.
-        if !self.persist_only {
-            self.deque.push_back(tx);
-        }
-
+        self.deque.push_back(tx);
         Ok(())
     }
 
     pub fn size(&self) -> usize {
         self.deque.len()
+    }
+}
+
+#[async_trait::async_trait]
+impl ValidatedTxReceiver for Mempool {
+    async fn send_new_tx(&mut self, tx: Transaction<Validated>) -> eyre::Result<()> {
+        self.add(tx).await
     }
 }

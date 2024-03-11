@@ -3,7 +3,6 @@ use crate::types::{
     transaction::{Created, Received, Validated},
     Transaction,
 };
-use crate::Mempool;
 use futures_util::Stream;
 use futures_util::TryFutureExt;
 use std::collections::HashMap;
@@ -13,8 +12,8 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use thiserror::Error;
-use tokio::sync::mpsc;
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::mpsc::{self, UnboundedReceiver};
 use tokio::sync::oneshot;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
@@ -23,6 +22,13 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 pub mod acl;
 mod download_manager;
 mod event;
+
+// `ValidatedTxReceiver` provides a simple trait to decouple event based
+// transaction handling from the execution part.
+#[async_trait::async_trait]
+pub trait ValidatedTxReceiver: Send + Sync {
+    async fn send_new_tx(&mut self, tx: Transaction<Validated>) -> eyre::Result<()>;
+}
 
 #[allow(clippy::enum_variant_names)]
 #[derive(Error, Debug)]
@@ -121,14 +127,13 @@ pub async fn spawn_event_loop(
     http_download_port: u16,
     http_peer_list: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>>,
     acl_whitelist: Arc<impl acl::AclWhitelist + 'static>,
-    //New Tx are added to the mempool directly.
-    //Like for the p2p a stream can be use to decouple both process.
-    mempool: Arc<RwLock<Mempool>>,
+    // Used to receive new transactions that arrive to the node from the outside.
+    mut rcv_tx_event_rx: UnboundedReceiver<(Transaction<Received>, Option<CallbackSender>)>,
+    // Endpoint where validated transactions are sent to. Usually configured with Mempool.
+    newtx_receiver: Arc<RwLock<dyn ValidatedTxReceiver + 'static>>,
 ) -> eyre::Result<(
     JoinHandle<()>,
-    //channel use to send RcvTx event to the processing
-    UnboundedSender<(Transaction<Received>, Option<CallbackSender>)>,
-    //output stream use to propagate Tx.
+    // Output stream used to propagate transactions.
     impl Stream<Item = Transaction<Validated>>,
 )> {
     let local_directory_path = Arc::new(local_directory_path);
@@ -136,9 +141,6 @@ pub async fn spawn_event_loop(
     let download_jh =
         download_manager::serve_files(bind_addr, http_download_port, local_directory_path.clone())
             .await?;
-
-    let (tx, mut rcv_tx_event_rx) =
-        mpsc::unbounded_channel::<(Transaction<Received>, Option<CallbackSender>)>();
 
     let (p2p_sender, p2p_recv) = mpsc::unbounded_channel::<Transaction<Validated>>();
     let p2p_stream = UnboundedReceiverStream::new(p2p_recv);
@@ -160,7 +162,7 @@ pub async fn spawn_event_loop(
                     let p2p_sender = p2p_sender.clone();
                     let local_directory_path = local_directory_path.clone();
                     let acl_whitelist = acl_whitelist.clone();
-                    let mempool = mempool.clone();
+                    let newtx_receiver = newtx_receiver.clone();
                     async move {
                         let res = event
                             .process_event(acl_whitelist.as_ref())
@@ -171,7 +173,9 @@ pub async fn spawn_event_loop(
                                 if let Some(propagate_tx) = propagate_tx {
                                     propagate_tx.process_event(&p2p_sender).await?;
                                 }
-                                new_tx.process_event(&mut *(mempool.write().await)).await?;
+                                new_tx
+                                    .process_event(&mut *(newtx_receiver.write().await))
+                                    .await?;
 
                                 Ok(())
                             })
@@ -190,7 +194,7 @@ pub async fn spawn_event_loop(
             }
         }
     });
-    Ok((jh, tx, p2p_stream))
+    Ok((jh, p2p_stream))
 }
 
 async fn convert_peer_list_to_vec(
