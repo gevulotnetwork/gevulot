@@ -27,6 +27,7 @@ pub struct Transaction {
     pub signature: Signature,
     pub propagated: bool,
     pub executed: bool,
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl From<&types::Transaction<transaction::Validated>> for Transaction {
@@ -52,6 +53,7 @@ impl From<&types::Transaction<transaction::Validated>> for Transaction {
             signature: value.signature,
             propagated: value.propagated,
             executed: value.executed,
+            created_at: None,
         }
     }
 }
