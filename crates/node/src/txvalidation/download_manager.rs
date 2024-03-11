@@ -52,7 +52,7 @@ pub async fn download_asset_file(
                     port.map(|port| {
                         //use parse to create an URL, no new method.
                         let mut url =
-                            reqwest::Url::parse(format!("{HTTP_SERVER_SCHEME}localhost")).unwrap(); //unwrap always succeed
+                            reqwest::Url::parse(&format!("{HTTP_SERVER_SCHEME}localhost")).unwrap(); //unwrap always succeed
                         url.set_ip_host(peer.ip()).unwrap(); //unwrap always succeed
                         url.set_port(Some(port)).unwrap(); //unwrap always succeed
                         url.set_path(&file_uri); //unwrap Path always ok
