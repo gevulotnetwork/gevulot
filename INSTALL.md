@@ -158,7 +158,7 @@ Volume=/var/lib/postgresql/data:/var/lib/postgresql/data:z
 
 In order to create initial tables or perform latest migrations, run:
 ```
-podman run -it --network=host quay.io/gevulot/node:latest migrate [--db-url=postgres://<username>:<password>@<dbhost>/gevulot]
+sudo podman run -it --network=host quay.io/gevulot/node:latest migrate [--db-url=postgres://<username>:<password>@<dbhost>/gevulot]
 ```
 
 ## Gevulot networking
@@ -176,7 +176,7 @@ If Gevulot node is behind NAT, one must configure the public address that extern
 Gevulot help
 
 ```
-podman run -it quay.io/gevulot/node:latest run -h
+sudo podman run -it quay.io/gevulot/node:latest run -h
 ```
 
 ...displays all possible configuration directives. When running the node as a systemd unit, an environment variable based configuration is preferred for easy configuration management.
@@ -193,7 +193,7 @@ This guide uses `/var/lib/gevulot`, which is also the default, but it is configu
 
 Each Gevulot node requires a keypair for operation. It can be generated with Gevulot node container:
 ```
-podman run -it -v /var/lib/gevulot:/var/lib/gevulot:z quay.io/gevulot/node:latest generate key
+sudo podman run -it -v /var/lib/gevulot:/var/lib/gevulot:z quay.io/gevulot/node:latest generate key
 ```
 
 ## Gevulot node systemd unit

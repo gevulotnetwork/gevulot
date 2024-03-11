@@ -69,11 +69,11 @@ impl Database {
     }
 
     pub async fn find_program(&self, hash: impl AsRef<Hash>) -> Result<Option<Program>> {
-        // non-macro query_as used because of sqlx limitations with enums.
-        let program = sqlx::query_as::<_, Program>("SELECT * FROM program WHERE hash = $1")
-            .bind(hash.as_ref())
-            .fetch_optional(&self.pool)
-            .await?;
+        let mut conn = self.pool.acquire().await?;
+        let program = match self.get_program(&mut conn, hash).await {
+            Ok(program) => Some(program),
+            Err(_) => None,
+        };
 
         Ok(program)
     }
@@ -491,7 +491,6 @@ impl Database {
                 verification,
                 files,
             } => {
-                tracing::trace!("Postgres add_transaction tx:{}", tx.hash.to_string());
                 sqlx::query(
                     "INSERT INTO verification ( tx, parent, verifier, verification ) VALUES ( $1, $2, $3, $4 ) ON CONFLICT (tx) DO NOTHING",
                 )
@@ -535,6 +534,14 @@ impl Database {
         Ok(())
     }
 
+    pub async fn get_acl_whitelist(&self) -> Result<Vec<entity::PublicKey>> {
+        let dbkey_set: Vec<entity::PublicKey> = sqlx::query("SELECT key FROM acl_whitelist")
+            .map(|row: sqlx::postgres::PgRow| row.get(0))
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(dbkey_set)
+    }
+
     pub async fn acl_whitelist_has(&self, key: &entity::PublicKey) -> Result<bool> {
         let res: Option<i32> = sqlx::query("SELECT 1 FROM acl_whitelist WHERE key = $1")
             .bind(key)
@@ -545,7 +552,7 @@ impl Database {
         Ok(res.is_some())
     }
 
-    pub async fn acl_whitelist(&self, key: &entity::PublicKey) -> Result<()> {
+    pub async fn acl_whitelist(&self, key: entity::PublicKey) -> Result<()> {
         sqlx::query("INSERT INTO acl_whitelist ( key ) VALUES ( $1 ) ON CONFLICT (key) DO NOTHING")
             .bind(key)
             .execute(&self.pool)

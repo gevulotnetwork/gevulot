@@ -1,15 +1,10 @@
 use crate::txvalidation::RpcSender;
 use crate::txvalidation::TxEventSender;
-use std::rc::Rc;
-use std::{net::SocketAddr, sync::Arc};
-
+use crate::types::rpc::RpcTransaction;
 use crate::{
     cli::Config,
     storage::Database,
-    types::{
-        transaction::{Created, Validated},
-        Transaction,
-    },
+    types::{transaction::Created, Transaction},
 };
 use eyre::Result;
 use gevulot_node::types::{
@@ -20,10 +15,13 @@ use jsonrpsee::{
     server::{RpcModule, Server, ServerHandle},
     types::Params,
 };
+use std::rc::Rc;
+use std::{net::SocketAddr, sync::Arc};
 
 struct Context {
     database: Arc<Database>,
     tx_sender: TxEventSender<RpcSender>,
+    local_http_host: SocketAddr,
 }
 
 impl std::fmt::Debug for Context {
@@ -43,10 +41,16 @@ impl RpcServer {
         database: Arc<Database>,
         tx_sender: TxEventSender<RpcSender>,
     ) -> Result<Self> {
+        let mut local_http_host = cfg
+            .p2p_advertised_listen_addr
+            .unwrap_or(cfg.p2p_listen_addr);
+        local_http_host.set_port(cfg.http_download_port);
+
         let server = Server::builder().build(cfg.json_rpc_listen_addr).await?;
         let mut module = RpcModule::new(Context {
             database,
             tx_sender,
+            local_http_host,
         });
 
         module.register_async_method("sendTransaction", send_transaction)?;
@@ -98,7 +102,7 @@ async fn send_transaction(params: Params<'static>, ctx: Arc<Context>) -> RpcResp
 async fn get_transaction(
     params: Params<'static>,
     ctx: Arc<Context>,
-) -> RpcResponse<Transaction<Validated>> {
+) -> RpcResponse<RpcTransaction> {
     let tx_hash: Hash = match params.one() {
         Ok(tx_hash) => tx_hash,
         Err(e) => {
@@ -110,9 +114,9 @@ async fn get_transaction(
     tracing::info!("JSON-RPC: get_transaction()");
 
     match ctx.database.find_transaction(&tx_hash).await {
-        Ok(Some(tx)) => RpcResponse::Ok(tx),
+        Ok(Some(tx)) => RpcResponse::Ok(RpcTransaction::from_tx_validated(tx, ctx.local_http_host)),
         Ok(None) => RpcResponse::Err(RpcError::NotFound(tx_hash.to_string())),
-        Err(e) => RpcResponse::Err(RpcError::NotFound(tx_hash.to_string())),
+        Err(e) => RpcResponse::Err(RpcError::InternalError(e.to_string())),
     }
 }
 
@@ -124,7 +128,7 @@ async fn get_tx_tree(
     let tx_hash: Hash = match params.one() {
         Ok(tx_hash) => tx_hash,
         Err(e) => {
-            tracing::error!("failed to parse transaction: {}", e);
+            tracing::error!("failed to parse transaction hash: {}", e);
             return RpcResponse::Err(RpcError::InvalidRequest(e.to_string()));
         }
     };
@@ -439,8 +443,8 @@ mod tests {
             p2p_advertised_listen_addr: None,
             provider: "qemu".to_string(),
             vsock_listen_port: 8080,
-            num_cpus: 8,
-            mem_gb: 8,
+            num_cpus: None,
+            mem_gb: None,
             gpu_devices: None,
             http_download_port: 0,
         });

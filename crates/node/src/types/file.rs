@@ -198,6 +198,12 @@ impl AssetFile {
         path
     }
 
+    // Get relative File path for downloaded files to be saved on the node.
+    // The path is is <Tx Hash>/<self.name>
+    pub fn get_uri(&self) -> String {
+        self.get_save_path().to_str().unwrap().to_string()
+    }
+
     pub async fn exist(&self, root_path: &Path) -> bool {
         if self.verify_exist {
             let file_path = root_path.join(self.get_save_path());

@@ -1,4 +1,5 @@
 use crate::file::FileData;
+use gevulot_node::types::program::ResourceRequest;
 use gevulot_node::types::transaction::{Created, ProgramMetadata};
 use gevulot_node::types::Hash;
 use gevulot_node::{
@@ -164,6 +165,8 @@ pub async fn run_deploy_command(
     verifier: String,
     prover_img_url: Option<String>,
     verifier_img_url: Option<String>,
+    prover_reqs: Option<ResourceRequest>,
+    verifier_reqs: Option<ResourceRequest>,
     listen_addr: SocketAddr,
 ) -> BoxResult<(String, String, String)> {
     let key = keyfile::read_key_file(&keyfile).map_err(|err| {
@@ -182,9 +185,13 @@ pub async fn run_deploy_command(
     let prover_data: FileData = file_data.swap_remove(0);
     let verifier_data: FileData = file_data.swap_remove(0);
 
-    let prover_prg_data: ProgramMetadata = prover_data.into();
+    let mut prover_prg_data: ProgramMetadata = prover_data.into();
+    prover_prg_data.resource_requirements = prover_reqs;
+    prover_prg_data.update_hash();
     let prover_prg_hash = prover_prg_data.hash;
-    let verifier_prg_data: ProgramMetadata = verifier_data.into();
+    let mut verifier_prg_data: ProgramMetadata = verifier_data.into();
+    verifier_prg_data.resource_requirements = verifier_reqs;
+    verifier_prg_data.update_hash();
     let verifier_prg_hash = verifier_prg_data.hash;
 
     let tx = Transaction::new(
@@ -220,14 +227,12 @@ async fn send_transaction(client: &RpcClient, tx: &Transaction<Created>) -> Resu
         .await
         .map_err(|err| format!("Error during send  get_transaction from the node:{err}"))?;
 
-    let tx_hash = read_tx
-        .as_ref()
-        .and_then(|read| (tx.hash == read.hash).then_some(read.hash))
-        .ok_or_else(|| {
-            format!(
-                "Error get_transaction doesn't return the right tx send tx:{} read tx:{:?}",
-                tx.hash, read_tx
-            )
-        })?;
-    Ok(tx_hash)
+    if tx.hash.to_string() != read_tx.hash {
+        return Err(format!(
+            "Error get_transaction doesn't return the right tx send tx:{} read tx:{:?}",
+            tx.hash, read_tx
+        ));
+    }
+
+    Ok(tx.hash)
 }

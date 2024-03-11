@@ -1,11 +1,3 @@
-use gevulot_node::types::transaction::Created;
-use std::{
-    net::SocketAddr,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
-
 use clap::Parser;
 use gevulot_node::{
     rpc_client::RpcClient,
@@ -16,6 +8,12 @@ use gevulot_node::{
 };
 use libsecp256k1::SecretKey;
 use server::FileServer;
+use std::{
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 use tokio::time::sleep;
 
 mod server;
@@ -99,20 +97,7 @@ async fn deploy_programs(
         .await
         .expect("get_transaction");
 
-    assert!(read_tx.is_some());
-    let read_tx = read_tx.unwrap();
-    let read_tx = Transaction {
-        author: read_tx.author,
-        hash: read_tx.hash,
-        payload: read_tx.payload,
-        nonce: read_tx.nonce,
-        signature: read_tx.signature,
-        propagated: false,
-        executed: false,
-        state: Created,
-    };
-
-    assert_eq!(tx, read_tx);
+    assert_eq!(tx.hash, read_tx.hash.into());
 
     Ok((tx.hash, prover.hash, verifier.hash))
 }
