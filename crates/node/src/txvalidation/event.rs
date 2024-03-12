@@ -2,7 +2,6 @@ use crate::mempool::Storage;
 use crate::txvalidation::acl::AclWhitelist;
 use crate::txvalidation::download_manager;
 use crate::txvalidation::EventProcessError;
-use crate::txvalidation::MAX_CACHED_TX_FOR_VERIFICATION;
 use crate::types::Hash;
 use crate::types::{
     transaction::{Received, Validated},
@@ -207,12 +206,12 @@ impl TxEvent<WaitTx> {
                     .map_err(|err| EventProcessError::StorageError(format!("{err}")))?
                     .is_some()
             {
-                let mut new_txs = cache.remove_children_txs(parent);
+                let mut new_txs = cache.remove_waiting_children_txs(parent);
                 new_txs.push(self);
                 new_txs
             } else {
                 //parent is missing add to waiting list
-                cache.add_wait_tx(*parent, self);
+                cache.add_new_waiting_tx(*parent, self);
                 vec![]
             }
         } else {
@@ -220,7 +219,13 @@ impl TxEvent<WaitTx> {
             vec![self]
         };
 
-        let ret = new_txs.into_iter().map(|tx| tx.into()).collect();
+        let ret = new_txs
+            .into_iter()
+            .map(|tx| {
+                cache.add_cached_tx(tx.tx.hash);
+                tx.into()
+            })
+            .collect();
 
         Ok(ret)
     }
@@ -262,9 +267,9 @@ pub struct TXCache {
 }
 
 impl TXCache {
-    pub fn new() -> Self {
+    pub fn new(cache_size: usize) -> Self {
         let cachedtx_for_verification =
-            LruCache::new(std::num::NonZeroUsize::new(MAX_CACHED_TX_FOR_VERIFICATION).unwrap());
+            LruCache::new(std::num::NonZeroUsize::new(cache_size).unwrap());
         TXCache {
             waiting_tx: HashMap::new(),
             cachedtx_for_verification,
@@ -279,12 +284,110 @@ impl TXCache {
         self.cachedtx_for_verification.put(hash, WaitTx);
     }
 
-    pub fn add_wait_tx(&mut self, parent: Hash, tx: TxEvent<WaitTx>) {
+    pub fn add_new_waiting_tx(&mut self, parent: Hash, tx: TxEvent<WaitTx>) {
         let waiting_txs = self.waiting_tx.entry(parent).or_insert(vec![]);
         waiting_txs.push(tx);
     }
 
-    pub fn remove_children_txs(&mut self, parent: &Hash) -> Vec<TxEvent<WaitTx>> {
+    pub fn remove_waiting_children_txs(&mut self, parent: &Hash) -> Vec<TxEvent<WaitTx>> {
         self.waiting_tx.remove(parent).unwrap_or(vec![])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    use super::*;
+    use crate::txvalidation::Created;
+    use crate::types::transaction::Payload;
+    use eyre::Result;
+    use libsecp256k1::SecretKey;
+    use rand::{rngs::StdRng, SeedableRng};
+    use std::collections::VecDeque;
+    use tokio::sync::Mutex;
+
+    struct TestDb(Mutex<HashMap<Hash, Transaction<Validated>>>);
+
+    #[async_trait::async_trait]
+    impl Storage for TestDb {
+        async fn get(&self, hash: &Hash) -> Result<Option<Transaction<Validated>>> {
+            Ok(self.0.lock().await.get(hash).cloned())
+        }
+        async fn set(&self, tx: &Transaction<Validated>) -> Result<()> {
+            self.0.lock().await.insert(tx.hash, tx.clone());
+            Ok(())
+        }
+        async fn fill_deque(&self, deque: &mut VecDeque<Transaction<Validated>>) -> Result<()> {
+            Ok(())
+        }
+    }
+
+    fn new_empty_tx() -> Transaction<Received> {
+        new_tx(Payload::Empty)
+    }
+
+    fn new_proof_tx(parent: Hash) -> Transaction<Received> {
+        let payload = Payload::Proof {
+            parent: parent,
+            prover: Hash::default(),
+            proof: vec![],
+            files: vec![],
+        };
+
+        new_tx(payload)
+    }
+
+    fn new_tx(payload: Payload) -> Transaction<Received> {
+        let rng = &mut StdRng::from_entropy();
+
+        let tx = Transaction::<Created>::new(Payload::Empty, &SecretKey::random(rng));
+
+        Transaction {
+            author: tx.author,
+            hash: tx.hash,
+            payload: tx.payload,
+            nonce: tx.nonce,
+            signature: tx.signature,
+            propagated: tx.executed,
+            executed: tx.executed,
+            state: Received::P2P,
+        }
+    }
+
+    fn into_receive(tx: Transaction<Received>) -> Transaction<Validated> {
+        Transaction {
+            author: tx.author,
+            hash: tx.hash,
+            payload: tx.payload,
+            nonce: tx.nonce,
+            signature: tx.signature,
+            propagated: tx.executed,
+            executed: tx.executed,
+            state: Validated,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_waittx_process_event() {
+        let db = TestDb(Mutex::new(HashMap::new()));
+        let mut wait_tx_cache = TXCache::new(2);
+        let new_tx1 = new_empty_tx();
+        let tx1_hash = new_tx1.hash;
+        let tx1_event = TxEvent {
+            tx: new_tx1.clone(),
+            tx_type: WaitTx,
+        };
+        // Test a new tx without parent. No wait and added to cache.
+        let res = tx1_event.process_event(&mut wait_tx_cache, &db).await;
+        // Save the Tx in db to test cache miss.
+        let _ = db.set(&into_receive(new_tx1)).await;
+        assert!(res.is_ok());
+        // Not cached because no parent.
+        assert_eq!(wait_tx_cache.waiting_tx.len(), 0);
+        assert!(wait_tx_cache.is_tx_cached(&tx1_hash));
+
+        let new_tx2 = new_proof_tx(tx1_hash);
+
+        let tx2_hash = new_tx2.hash;
     }
 }

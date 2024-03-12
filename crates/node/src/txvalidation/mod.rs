@@ -156,7 +156,7 @@ pub async fn spawn_event_loop(
     let p2p_stream = UnboundedReceiverStream::new(p2p_recv);
     let jh = tokio::spawn({
         let local_directory_path = local_directory_path.clone();
-        let mut wait_tx_cache = TXCache::new();
+        let mut wait_tx_cache = TXCache::new(MAX_CACHED_TX_FOR_VERIFICATION);
         let mut validated_txs_futures = FuturesUnordered::new();
         let mut validation_okresult_futures = FuturesUnordered::new();
         let mut validation_errresult_futures = FuturesUnordered::new();
