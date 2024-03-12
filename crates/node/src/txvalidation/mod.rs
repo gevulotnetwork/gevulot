@@ -1,9 +1,12 @@
+use crate::mempool::Storage;
+use crate::txvalidation::event::TXCache;
 use crate::txvalidation::event::{ReceivedTx, TxEvent};
 use crate::types::{
     transaction::{Created, Received, Validated},
     Transaction,
 };
 use crate::Mempool;
+use futures::stream::FuturesUnordered;
 use futures_util::Stream;
 use futures_util::TryFutureExt;
 use std::collections::HashMap;
@@ -13,16 +16,20 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use thiserror::Error;
+use tokio::select;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::oneshot;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
 use tokio_stream::wrappers::UnboundedReceiverStream;
+use tokio_stream::StreamExt;
 
 pub mod acl;
 mod download_manager;
 mod event;
+
+const MAX_CACHED_TX_FOR_VERIFICATION: usize = 2;
 
 #[allow(clippy::enum_variant_names)]
 #[derive(Error, Debug)]
@@ -42,6 +49,8 @@ pub enum EventProcessError {
     DownloadAssetError(String),
     #[error("Save Tx error: {0}")]
     SaveTxError(String),
+    #[error("Storage access error: {0}")]
+    StorageError(String),
     #[error("AclWhite list authenticate error: {0}")]
     AclWhiteListAuthError(#[from] acl::AclWhiteListError),
 }
@@ -124,6 +133,7 @@ pub async fn spawn_event_loop(
     //New Tx are added to the mempool directly.
     //Like for the p2p a stream can be use to decouple both process.
     mempool: Arc<RwLock<Mempool>>,
+    storage: Arc<impl Storage + 'static>,
 ) -> eyre::Result<(
     JoinHandle<()>,
     //channel use to send RcvTx event to the processing
@@ -144,50 +154,99 @@ pub async fn spawn_event_loop(
     let p2p_stream = UnboundedReceiverStream::new(p2p_recv);
     let jh = tokio::spawn({
         let local_directory_path = local_directory_path.clone();
+        let mut wait_tx_cache = TXCache::new();
+        let mut validated_txs_futures = FuturesUnordered::new();
+        let mut validation_okresult_futures = FuturesUnordered::new();
+        let mut validation_errresult_futures = FuturesUnordered::new();
 
         async move {
-            while let Some((tx, callback)) = rcv_tx_event_rx.recv().await {
-                //create new event with the Tx
-                let event: TxEvent<ReceivedTx> = tx.into();
+            loop {
+                select! {
+                    // Execute Tx verification in a separate task.
+                    Some((tx, callback)) = rcv_tx_event_rx.recv() => {
+                        //create new event with the Tx
+                        let event: TxEvent<ReceivedTx> = tx.into();
 
-                //process RcvTx(EventTx<SourceTxType>) event
-                let http_peer_list = convert_peer_list_to_vec(&http_peer_list).await;
+                        //process RcvTx(EventTx<SourceTxType>) event
+                        let http_peer_list = convert_peer_list_to_vec(&http_peer_list).await;
 
-                tracing::trace!("txvalidation receive event:{}", event.tx.hash.to_string());
+                        tracing::trace!("txvalidation receive event:{}", event.tx.hash.to_string());
 
-                //process the receive event
-                tokio::spawn({
-                    let p2p_sender = p2p_sender.clone();
-                    let local_directory_path = local_directory_path.clone();
-                    let acl_whitelist = acl_whitelist.clone();
-                    let mempool = mempool.clone();
-                    async move {
-                        let res = event
-                            .process_event(acl_whitelist.as_ref())
-                            .and_then(|download_event| {
-                                download_event.process_event(&local_directory_path, http_peer_list)
-                            })
-                            .and_then(|(new_tx, propagate_tx)| async move {
-                                if let Some(propagate_tx) = propagate_tx {
-                                    propagate_tx.process_event(&p2p_sender).await?;
+                        //process the receive event
+                        let validate_jh = tokio::spawn({
+                            let p2p_sender = p2p_sender.clone();
+                            let local_directory_path = local_directory_path.clone();
+                            let acl_whitelist = acl_whitelist.clone();
+                            let mempool = mempool.clone();
+                            async move {
+                                event
+                                    .process_event(acl_whitelist.as_ref())
+                                    .and_then(|download_event| {
+                                        download_event.process_event(&local_directory_path, http_peer_list)
+                                    })
+                                    .and_then(|(wait_tx, propagate_tx)| async move {
+                                        if let Some(propagate_tx) = propagate_tx {
+                                            propagate_tx.process_event(&p2p_sender).await?;
+                                        }
+                                        Ok(wait_tx)
+                                    })
+                                    .await
+                            }
+                        });
+                        let fut = validate_jh
+                            .or_else(|err| async move {Err(EventProcessError::ValidateError(format!("Process execution error:{err}")))} )
+                            .and_then(|res| async move {Ok((res,callback))});
+                        validated_txs_futures.push(fut);
+                    }
+                    // Verify Tx parent and send to mempool all ready Tx.
+                    Some(Ok((wait_tx_res, callback))) = validated_txs_futures.next() =>  {
+                        match wait_tx_res {
+                            Ok(wait_tx) => {
+                               match wait_tx.process_event(&mut wait_tx_cache, storage.as_ref()).await {
+                                    Ok(new_tx_list) => {
+                                        //
+                                        let jh  = tokio::spawn({
+                                            let mempool = mempool.clone();
+                                            async move {
+                                                for new_tx in new_tx_list {
+                                                    if let Err(err) = new_tx.process_event(&mut *(mempool.write().await)).await {
+                                                        return Err(err);
+                                                    }
+                                                }
+                                                Ok(())
+                                            }
+                                        });
+                                        let fut = jh
+                                            .or_else(|err| async move {Err(EventProcessError::ValidateError(format!("Process execution error:{err}")))} )
+                                            .and_then(|res| async move {Ok((res,callback))});
+                                        validation_okresult_futures.push(fut);
+                                    }
+                                    Err(err) => {
+                                        validation_errresult_futures.push(futures::future::ready((err, callback)));
+                                    }
                                 }
-                                new_tx.process_event(&mut *(mempool.write().await)).await?;
 
-                                Ok(())
-                            })
-                            .await;
-                        //log the error if any error is return
-                        if let Err(ref err) = res {
-                            tracing::error!("An error occurs during Tx validation: {err}",);
+                            }
+                            Err(err)  => {
+                                validation_errresult_futures.push(futures::future::ready((err, callback)));
+                            }
                         }
-                        //send the execution result back if needed.
+                     }
+                     Some(Ok((res, callback))) = validation_okresult_futures.next() =>  {
                         if let Some(callback) = callback {
                             //forget the result because if the RPC connection is closed the send can fail.
                             let _ = callback.send(res);
                         }
-                    }
-                });
-            }
+                     }
+                     Some((res, callback)) = validation_errresult_futures.next() =>  {
+                        if let Some(callback) = callback {
+                            //forget the result because if the RPC connection is closed the send can fail.
+                            let _ = callback.send(Err(res));
+                        }
+                     }
+
+                } // End select!
+            } // End loop
         }
     });
     Ok((jh, tx, p2p_stream))
