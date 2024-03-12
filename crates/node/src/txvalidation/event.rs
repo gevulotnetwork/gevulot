@@ -197,8 +197,8 @@ impl TxEvent<WaitTx> {
         cache: &mut TXCache,
         storage: &impl Storage,
     ) -> Result<Vec<TxEvent<NewTx>>, EventProcessError> {
-        // Verify Tx'x parent is already present.
-        let new_txs = if let Some(parent) = self.tx.payload.get_parent_tx() {
+        // Verify Tx'x parent is present or not.
+        let new_tx = if let Some(parent) = self.tx.payload.get_parent_tx() {
             if cache.is_tx_cached(parent)
                 || storage
                     .get(parent)
@@ -206,19 +206,28 @@ impl TxEvent<WaitTx> {
                     .map_err(|err| EventProcessError::StorageError(format!("{err}")))?
                     .is_some()
             {
-                let mut new_txs = cache.remove_waiting_children_txs(parent);
-                new_txs.push(self);
-                new_txs
+                // Present return the Tx
+                Some(self)
             } else {
                 //parent is missing add to waiting list
                 cache.add_new_waiting_tx(*parent, self);
-                vec![]
+                None
             }
         } else {
             //no parent always new Tx.
-            vec![self]
+            Some(self)
         };
 
+        //remove child Tx if any from waiting list.
+        let new_txs = new_tx
+            .map(|tx| {
+                let mut ret = cache.remove_waiting_children_txs(&tx.tx.hash);
+                ret.push(tx);
+                ret
+            })
+            .unwrap_or(vec![]);
+
+        // Add new tx to the cache.
         let ret = new_txs
             .into_iter()
             .map(|tx| {
@@ -259,6 +268,7 @@ impl TxEvent<NewTx> {
     }
 }
 
+// Use to cache New tx and store waiting Tx that have missing parent.
 pub struct TXCache {
     // List of Tx waiting for parent.let waiting_txs =
     waiting_tx: HashMap<Hash, Vec<TxEvent<WaitTx>>>,
@@ -322,11 +332,11 @@ mod tests {
         }
     }
 
-    fn new_empty_tx() -> Transaction<Received> {
-        new_tx(Payload::Empty)
+    fn new_empty_tx_event() -> TxEvent<WaitTx> {
+        new_tx_event(Payload::Empty)
     }
 
-    fn new_proof_tx(parent: Hash) -> Transaction<Received> {
+    fn new_proof_tx_event(parent: Hash) -> TxEvent<WaitTx> {
         let payload = Payload::Proof {
             parent: parent,
             prover: Hash::default(),
@@ -334,15 +344,15 @@ mod tests {
             files: vec![],
         };
 
-        new_tx(payload)
+        new_tx_event(payload)
     }
 
-    fn new_tx(payload: Payload) -> Transaction<Received> {
+    fn new_tx_event(payload: Payload) -> TxEvent<WaitTx> {
         let rng = &mut StdRng::from_entropy();
 
-        let tx = Transaction::<Created>::new(Payload::Empty, &SecretKey::random(rng));
+        let tx = Transaction::<Created>::new(payload, &SecretKey::random(rng));
 
-        Transaction {
+        let tx = Transaction {
             author: tx.author,
             hash: tx.hash,
             payload: tx.payload,
@@ -351,6 +361,10 @@ mod tests {
             propagated: tx.executed,
             executed: tx.executed,
             state: Received::P2P,
+        };
+        TxEvent {
+            tx: tx,
+            tx_type: WaitTx,
         }
     }
 
@@ -371,23 +385,63 @@ mod tests {
     async fn test_waittx_process_event() {
         let db = TestDb(Mutex::new(HashMap::new()));
         let mut wait_tx_cache = TXCache::new(2);
-        let new_tx1 = new_empty_tx();
-        let tx1_hash = new_tx1.hash;
-        let tx1_event = TxEvent {
-            tx: new_tx1.clone(),
-            tx_type: WaitTx,
-        };
+
         // Test a new tx without parent. No wait and added to cache.
-        let res = tx1_event.process_event(&mut wait_tx_cache, &db).await;
-        // Save the Tx in db to test cache miss.
-        let _ = db.set(&into_receive(new_tx1)).await;
+        let tx_event1 = new_empty_tx_event();
+        let tx1_hash = tx_event1.tx.hash;
+        let tx1 = tx_event1.tx.clone();
+        let res = tx_event1.process_event(&mut wait_tx_cache, &db).await;
         assert!(res.is_ok());
-        // Not cached because no parent.
+        // Save the Tx in db to test cache miss.
+        let _ = db.set(&into_receive(tx1)).await;
+        // Not in wait cache because no parent.
         assert_eq!(wait_tx_cache.waiting_tx.len(), 0);
         assert!(wait_tx_cache.is_tx_cached(&tx1_hash));
 
-        let new_tx2 = new_proof_tx(tx1_hash);
+        // Test a new tx with a present parent. No wait and added to cache.
+        let tx2_event = new_proof_tx_event(tx1_hash);
+        let tx2_hash = tx2_event.tx.hash;
+        let tx2 = tx2_event.tx.clone();
+        let res = tx2_event.process_event(&mut wait_tx_cache, &db).await;
+        // Save the Tx in db to test cache miss.
+        assert!(res.is_ok());
+        let _ = db.set(&into_receive(tx2)).await;
+        // Not cached because no parent.
+        assert_eq!(wait_tx_cache.waiting_tx.len(), 0);
+        assert!(wait_tx_cache.is_tx_cached(&tx2_hash));
 
-        let tx2_hash = new_tx2.hash;
+        // Test a new Tx with a missing parent. Waiting / not cached.
+        let parent_tx_event = new_empty_tx_event();
+        let parent_hash = parent_tx_event.tx.hash;
+        let parent_tx = parent_tx_event.tx.clone();
+        let tx_event3 = new_proof_tx_event(parent_tx_event.tx.hash);
+        let tx3_hash = tx_event3.tx.hash;
+        let tx3 = tx_event3.tx.clone();
+        let res = tx_event3.process_event(&mut wait_tx_cache, &db).await;
+        assert!(res.is_ok());
+        assert_eq!(wait_tx_cache.waiting_tx.len(), 1);
+        assert!(!wait_tx_cache.is_tx_cached(&tx3_hash));
+
+        // Test process parent Tx: Tx3 removed from waiting, Tx3 and parent added to cached. Return Tx3 and parent.
+        let res = parent_tx_event.process_event(&mut wait_tx_cache, &db).await;
+        assert!(res.is_ok());
+        assert_eq!(wait_tx_cache.waiting_tx.len(), 0);
+        assert!(wait_tx_cache.is_tx_cached(&parent_hash));
+        assert!(wait_tx_cache.is_tx_cached(&tx3_hash));
+        let ret_events = res.unwrap();
+        assert_eq!(ret_events.len(), 2);
+        assert!(ret_events[0].tx.hash == parent_hash || ret_events[1].tx.hash == parent_hash);
+        assert!(ret_events[0].tx.hash == tx3_hash || ret_events[1].tx.hash == tx3_hash);
+
+        //Test a cache miss, get the parent from the DB. No wait + cached
+        assert!(!wait_tx_cache.is_tx_cached(&tx1_hash));
+        let tx4_event = new_proof_tx_event(tx1_hash); // tx1_hash not in the cache but in the DB
+        let tx4_hash = tx4_event.tx.hash;
+        let tx4 = tx4_event.tx.clone();
+        let res = tx4_event.process_event(&mut wait_tx_cache, &db).await;
+        assert!(res.is_ok());
+        // Not cached because parent in db
+        assert_eq!(wait_tx_cache.waiting_tx.len(), 0);
+        assert!(wait_tx_cache.is_tx_cached(&tx4_hash));
     }
 }
