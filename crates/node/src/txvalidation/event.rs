@@ -1,3 +1,4 @@
+use super::ValidatedTxReceiver;
 use crate::mempool::Storage;
 use crate::txvalidation::acl::AclWhitelist;
 use crate::txvalidation::download_manager;
@@ -14,9 +15,13 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 use std::net::SocketAddr;
 use std::path::Path;
+use std::time::Duration;
+use std::time::Instant;
 use tokio::sync::mpsc::UnboundedSender;
 
-use super::ValidatedTxReceiver;
+const MAX_CACHED_TX_FOR_VERIFICATION: usize = 50;
+const MAX_WAITING_TX_FOR_VERIFICATION: usize = 100;
+const MAX_WAITING_TIME_IN_MS: u64 = 3600 * 1000; // One hour.
 
 //event type.
 #[derive(Debug, Clone)]
@@ -272,18 +277,31 @@ impl TxEvent<NewTx> {
 // Use to cache New tx and store waiting Tx that have missing parent.
 pub struct TXCache {
     // List of Tx waiting for parent.let waiting_txs =
-    waiting_tx: HashMap<Hash, Vec<TxEvent<WaitTx>>>,
+    waiting_tx: HashMap<Hash, (Vec<TxEvent<WaitTx>>, Instant)>,
     // Cache of the last saved Tx in the DB. To avoid to query the db for Tx.
     cachedtx_for_verification: LruCache<Hash, WaitTx>,
+    // Number of Waiting Tx that trigger the Tx eviction process.
+    max_waiting_tx: usize,
+    // Max time a Tx can wait in millisecond.
+    max_waiting_time: Duration,
 }
 
 impl TXCache {
-    pub fn new(cache_size: usize) -> Self {
+    pub fn new() -> Self {
+        Self::build(
+            MAX_CACHED_TX_FOR_VERIFICATION,
+            MAX_WAITING_TX_FOR_VERIFICATION,
+            MAX_WAITING_TIME_IN_MS,
+        )
+    }
+    pub fn build(cache_size: usize, max_waiting_tx: usize, max_waiting_time: u64) -> Self {
         let cachedtx_for_verification =
             LruCache::new(std::num::NonZeroUsize::new(cache_size).unwrap());
         TXCache {
             waiting_tx: HashMap::new(),
             cachedtx_for_verification,
+            max_waiting_tx,
+            max_waiting_time: Duration::from_millis(max_waiting_time),
         }
     }
 
@@ -296,12 +314,47 @@ impl TXCache {
     }
 
     pub fn add_new_waiting_tx(&mut self, parent: Hash, tx: TxEvent<WaitTx>) {
-        let waiting_txs = self.waiting_tx.entry(parent).or_default();
+        // Try to evict when the max waiting Tx is reach.
+        if self.waiting_tx.len() >= self.max_waiting_tx {
+            self.evict_old_waiting_tx();
+        }
+        let (waiting_txs, _) = self
+            .waiting_tx
+            .entry(parent)
+            .or_insert((vec![], Instant::now()));
         waiting_txs.push(tx);
     }
 
     pub fn remove_waiting_children_txs(&mut self, parent: &Hash) -> Vec<TxEvent<WaitTx>> {
-        self.waiting_tx.remove(parent).unwrap_or_default()
+        self.waiting_tx
+            .remove(parent)
+            .map(|(txs, _)| txs)
+            .unwrap_or_default()
+    }
+
+    fn evict_old_waiting_tx(&mut self) {
+        let now = Instant::now();
+        let to_remove_hash: Vec<_> = self
+            .waiting_tx
+            .iter()
+            .filter_map(|(hash, (_, ts))| {
+                (now.duration_since(*ts) > self.max_waiting_time).then_some(*hash)
+            })
+            .collect();
+        if !to_remove_hash.is_empty() {
+            // Warn if some Tx are evicted because it shouldn't.
+            tracing::warn!("Tx validation, Evict some Tx from waiting for parent tx list.");
+            for hash in to_remove_hash {
+                tracing::warn!("Tx validation, Evict Tx:{hash}.");
+                self.waiting_tx.remove(&hash);
+            }
+        }
+    }
+}
+
+impl Default for TXCache {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -383,9 +436,57 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_evict_wait_tx() {
+        let db = TestDb(Mutex::new(HashMap::new()));
+        // Set parameters to have Tx eviction
+        let mut wait_tx_cache = TXCache::build(2, 2, 10);
+
+        // Create the parent Txs that will only be processed at the end.
+        // Create 2 parents to have 2 waiting child Tx
+        let parent1_tx_event = new_empty_tx_event();
+        let parent1_hash = parent1_tx_event.tx.hash;
+        let parent2_tx_event = new_empty_tx_event();
+        let parent2_hash = parent2_tx_event.tx.hash;
+
+        // New Tx that will wait.
+        let tx_event = new_proof_tx_event(parent1_hash);
+        let res = tx_event.process_event(&mut wait_tx_cache, &db).await;
+        assert!(res.is_ok());
+        assert_eq!(wait_tx_cache.waiting_tx.len(), 1);
+
+        // New Tx that will wait.
+        let tx_event = new_proof_tx_event(parent2_hash);
+        let res = tx_event.process_event(&mut wait_tx_cache, &db).await;
+        assert!(res.is_ok());
+        assert_eq!(wait_tx_cache.waiting_tx.len(), 2);
+
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Add new Tx to evict the old one.
+        let tx_event = new_proof_tx_event(parent1_hash);
+        let tx_hash = tx_event.tx.hash;
+        let res = tx_event.process_event(&mut wait_tx_cache, &db).await;
+        assert!(res.is_ok());
+        // Evicted but new ket added.
+        assert_eq!(wait_tx_cache.waiting_tx.len(), 1);
+
+        //Process the parent Tx. Do child Tx return because they have been evicted.
+        let res = parent1_tx_event
+            .process_event(&mut wait_tx_cache, &db)
+            .await;
+        assert!(res.is_ok());
+        let ret_txs = res.unwrap();
+        // Return only the parent Tx. The other has been evicted during parent Tx add.
+        assert_eq!(ret_txs.len(), 2);
+        assert!(ret_txs[0].tx.hash == parent1_hash || ret_txs[1].tx.hash == parent1_hash);
+        assert!(ret_txs[0].tx.hash == tx_hash || ret_txs[1].tx.hash == tx_hash);
+    }
+
+    #[tokio::test]
     async fn test_waittx_process_event() {
         let db = TestDb(Mutex::new(HashMap::new()));
-        let mut wait_tx_cache = TXCache::new(2);
+        // Set parameters to avoid wait tx eviction.
+        let mut wait_tx_cache = TXCache::build(2, 10, 1000);
 
         // Test a new tx without parent. No wait and added to cache.
         let tx_event1 = new_empty_tx_event();
@@ -404,8 +505,8 @@ mod tests {
         let tx2_hash = tx2_event.tx.hash;
         let tx2 = tx2_event.tx.clone();
         let res = tx2_event.process_event(&mut wait_tx_cache, &db).await;
-        // Save the Tx in db to test cache miss.
         assert!(res.is_ok());
+        // Save the Tx in db to test cache miss.
         let _ = db.set(&into_receive(tx2)).await;
         // Not cached because no parent.
         assert_eq!(wait_tx_cache.waiting_tx.len(), 0);
@@ -417,7 +518,6 @@ mod tests {
         let parent_tx = parent_tx_event.tx.clone();
         let tx_event3 = new_proof_tx_event(parent_tx_event.tx.hash);
         let tx3_hash = tx_event3.tx.hash;
-        let tx3 = tx_event3.tx.clone();
         let res = tx_event3.process_event(&mut wait_tx_cache, &db).await;
         assert!(res.is_ok());
         assert_eq!(wait_tx_cache.waiting_tx.len(), 1);
@@ -438,7 +538,6 @@ mod tests {
         assert!(!wait_tx_cache.is_tx_cached(&tx1_hash));
         let tx4_event = new_proof_tx_event(tx1_hash); // tx1_hash not in the cache but in the DB
         let tx4_hash = tx4_event.tx.hash;
-        let tx4 = tx4_event.tx.clone();
         let res = tx4_event.process_event(&mut wait_tx_cache, &db).await;
         assert!(res.is_ok());
         // Not cached because parent in db
