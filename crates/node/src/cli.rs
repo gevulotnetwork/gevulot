@@ -45,6 +45,14 @@ pub struct Config {
 
     #[arg(
         long,
+        long_help = "No execution flag. When set as true, the node does not execute transactions.",
+        env = "GEVULOT_NODE_NO_EXECUTION",
+        default_value_t = false
+    )]
+    pub no_execution: bool,
+
+    #[arg(
+        long,
         long_help = "File where the node key is persisted",
         env = "GEVULOT_NODE_KEY_FILE",
         default_value_os_t = PathBuf::from("/var/lib/gevulot/node.key"),

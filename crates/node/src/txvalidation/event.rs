@@ -5,13 +5,14 @@ use crate::types::{
     transaction::{Received, Validated},
     Transaction,
 };
-use crate::Mempool;
 use futures::future::join_all;
 use futures_util::TryFutureExt;
 use std::fmt::Debug;
 use std::net::SocketAddr;
 use std::path::Path;
 use tokio::sync::mpsc::UnboundedSender;
+
+use super::ValidatedTxReceiver;
 
 //event type.
 #[derive(Debug, Clone)]
@@ -175,7 +176,10 @@ impl TxEvent<PropagateTx> {
 }
 
 impl TxEvent<NewTx> {
-    pub async fn process_event(self, mempool: &mut Mempool) -> Result<(), EventProcessError> {
+    pub async fn process_event(
+        self,
+        newtx_receiver: &mut dyn ValidatedTxReceiver,
+    ) -> Result<(), EventProcessError> {
         let tx = Transaction {
             author: self.tx.author,
             hash: self.tx.hash,
@@ -192,8 +196,8 @@ impl TxEvent<NewTx> {
             tx.hash.to_string(),
             tx.payload
         );
-        mempool
-            .add(tx)
+        newtx_receiver
+            .send_new_tx(tx)
             .map_err(|err| EventProcessError::SaveTxError(format!("{err}")))
             .await
     }

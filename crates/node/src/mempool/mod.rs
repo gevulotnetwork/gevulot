@@ -1,3 +1,4 @@
+use crate::txvalidation::ValidatedTxReceiver;
 use crate::types::{transaction::Validated, Hash, Transaction};
 use async_trait::async_trait;
 use eyre::Result;
@@ -50,5 +51,12 @@ impl Mempool {
 
     pub fn size(&self) -> usize {
         self.deque.len()
+    }
+}
+
+#[async_trait::async_trait]
+impl ValidatedTxReceiver for Mempool {
+    async fn send_new_tx(&mut self, tx: Transaction<Validated>) -> eyre::Result<()> {
+        self.add(tx).await
     }
 }
