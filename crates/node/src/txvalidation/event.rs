@@ -279,7 +279,7 @@ pub struct TxCache {
     // List of Tx waiting for parent.let waiting_txs =
     waiting_tx: HashMap<Hash, (Vec<TxEvent<WaitTx>>, Instant)>,
     // Cache of the last saved Tx in the DB. To avoid to query the db for Tx.
-    cachedtx_for_verification: LruCache<Hash, WaitTx>,
+    cached_tx_for_verification: LruCache<Hash, WaitTx>,
     // Number of Waiting Tx that trigger the Tx eviction process.
     max_waiting_tx: usize,
     // Max time a Tx can wait in millisecond.
@@ -295,22 +295,22 @@ impl TxCache {
         )
     }
     pub fn build(cache_size: usize, max_waiting_tx: usize, max_waiting_time: u64) -> Self {
-        let cachedtx_for_verification =
+        let cached_tx_for_verification =
             LruCache::new(std::num::NonZeroUsize::new(cache_size).unwrap());
         TxCache {
             waiting_tx: HashMap::new(),
-            cachedtx_for_verification,
+            cached_tx_for_verification,
             max_waiting_tx,
             max_waiting_time: Duration::from_millis(max_waiting_time),
         }
     }
 
     pub fn is_tx_cached(&self, hash: &Hash) -> bool {
-        self.cachedtx_for_verification.contains(hash)
+        self.cached_tx_for_verification.contains(hash)
     }
 
     pub fn add_cached_tx(&mut self, hash: Hash) {
-        self.cachedtx_for_verification.put(hash, WaitTx);
+        self.cached_tx_for_verification.put(hash, WaitTx);
     }
 
     pub fn add_new_waiting_tx(&mut self, parent: Hash, tx: TxEvent<WaitTx>) {
