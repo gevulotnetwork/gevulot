@@ -22,7 +22,7 @@ impl TaskVmFile<()> {
     pub fn get_workspace_path(data_directory: &Path, tx_hash: Hash) -> PathBuf {
         PathBuf::new()
             .join(data_directory)
-            .join(&tx_hash.to_string())
+            .join(tx_hash.to_string())
             .join(gevulot_shim::WORKSPACE_NAME)
     }
 }

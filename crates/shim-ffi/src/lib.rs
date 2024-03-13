@@ -62,41 +62,52 @@ pub unsafe extern "C" fn add_file_to_result(result: *mut TaskResult, file_name: 
 
 #[no_mangle]
 pub extern "C" fn run(callback: extern "C" fn(*const Task) -> *mut TaskResult) {
-    let res = gevulot_shim::run(|task: &gevulot_shim::Task| -> Result<gevulot_shim::TaskResult, Box<dyn std::error::Error>> {
-        let id_cstr = CString::new(task.id.clone()).expect("task.id");
+    let res = gevulot_shim::run(
+        |task: gevulot_shim::Task| -> Result<gevulot_shim::TaskResult, Box<dyn std::error::Error>> {
+            let id_cstr = CString::new(task.id.clone()).expect("task.id");
 
-        // Convert Vec<String> -> *const *const c_char.
-        let cstr_args: Vec<CString> = task.args.iter().map(|s| CString::new(s.as_str()).expect("task.arg")).collect();
-        let cstr_files: Vec<CString> = task.files.iter().map(|s| CString::new(s.as_str()).expect("task.file")).collect();
+            // Convert Vec<String> -> *const *const c_char.
+            let cstr_args: Vec<CString> = task
+                .args
+                .iter()
+                .map(|s| CString::new(s.as_str()).expect("task.arg"))
+                .collect();
+            let cstr_files: Vec<CString> = task
+                .files
+                .iter()
+                .map(|s| CString::new(s.as_str()).expect("task.file"))
+                .collect();
 
-        let mut carr_args: Vec<*const c_char> = cstr_args.iter().map(|s| s.as_ptr()).collect();
-        let mut carr_files: Vec<*const c_char> = cstr_files.iter().map(|s| s.as_ptr()).collect();
+            let mut carr_args: Vec<*const c_char> = cstr_args.iter().map(|s| s.as_ptr()).collect();
+            let mut carr_files: Vec<*const c_char> =
+                cstr_files.iter().map(|s| s.as_ptr()).collect();
 
-        // Terminate the arrays.
-        carr_args.push(std::ptr::null());
-        carr_files.push(std::ptr::null());
+            // Terminate the arrays.
+            carr_args.push(std::ptr::null());
+            carr_files.push(std::ptr::null());
 
-        let c_task = Task{
-            id: id_cstr.as_ptr(),
-            args: carr_args.as_ptr(),
-            files: carr_files.as_ptr(),
-        };
+            let c_task = Task {
+                id: id_cstr.as_ptr(),
+                args: carr_args.as_ptr(),
+                files: carr_files.as_ptr(),
+            };
 
-        let result = callback(&c_task);
+            let result = callback(&c_task);
 
-        let data;
-        let files;
+            let data;
+            let files;
 
-        // SAFETY: Given that pointer of `result` is valid, the internals of 
-        // TaskResult are handled within this library and are therefore
-        // expected to be safe.
-        unsafe {
-            files = (*result).files.clone();
-            data = (*result).data.clone();
-        }
+            // SAFETY: Given that pointer of `result` is valid, the internals of
+            // TaskResult are handled within this library and are therefore
+            // expected to be safe.
+            unsafe {
+                files = (*result).files.clone();
+                data = (*result).data.clone();
+            }
 
-        task.result(data, files)
-    });
+            task.result(data, files)
+        },
+    );
 
     if res.is_err() {
         eprintln!("error: {:#?}", res.unwrap())

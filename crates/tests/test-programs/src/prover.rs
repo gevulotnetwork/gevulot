@@ -30,8 +30,8 @@ fn run_task(task: Task) -> Result<TaskResult> {
     task.result(
         vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
         vec![
-            String::from(format!("{WORKSPACE_PATH}/proof.dat")),
-            String::from(format!("{WORKSPACE_PATH}/bigfile.bin")),
+            format!("{WORKSPACE_PATH}/proof.dat"),
+            format!("{WORKSPACE_PATH}/bigfile.bin"),
         ],
     )
 }
