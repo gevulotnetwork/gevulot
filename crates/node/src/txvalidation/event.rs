@@ -209,12 +209,12 @@ impl TxEvent<WaitTx> {
                 // Present return the Tx
                 Some(self)
             } else {
-                //parent is missing add to waiting list
+                // Parent is missing add to waiting list
                 cache.add_new_waiting_tx(*parent, self);
                 None
             }
         } else {
-            //no parent always new Tx.
+            // No parent always new Tx.
             Some(self)
         };
 

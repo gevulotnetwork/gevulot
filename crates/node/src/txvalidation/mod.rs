@@ -147,7 +147,7 @@ pub async fn spawn_event_loop(
     impl Stream<Item = Transaction<Validated>>,
 )> {
     let local_directory_path = Arc::new(local_directory_path);
-    //start http download manager
+    // Start http download manager
     let download_jh =
         download_manager::serve_files(bind_addr, http_download_port, local_directory_path.clone())
             .await?;
@@ -169,12 +169,12 @@ pub async fn spawn_event_loop(
                         //create new event with the Tx
                         let event: TxEvent<ReceivedTx> = tx.into();
 
-                        //process RcvTx(EventTx<SourceTxType>) event
+                        // Process RcvTx(EventTx<SourceTxType>) event
                         let http_peer_list = convert_peer_list_to_vec(&http_peer_list).await;
 
                         tracing::trace!("txvalidation receive event:{}", event.tx.hash.to_string());
 
-                        //process the receive event
+                        // Process the receive event
                         let validate_jh = tokio::spawn({
                             let p2p_sender = p2p_sender.clone();
                             let local_directory_path = local_directory_path.clone();
@@ -235,13 +235,13 @@ pub async fn spawn_event_loop(
                      }
                      Some(Ok((res, callback))) = validation_okresult_futures.next() =>  {
                         if let Some(callback) = callback {
-                            //forget the result because if the RPC connection is closed the send can fail.
+                            // Forget the result because if the RPC connection is closed the send can fail.
                             let _ = callback.send(res);
                         }
                      }
                      Some((res, callback)) = validation_errresult_futures.next() =>  {
                         if let Some(callback) = callback {
-                            //forget the result because if the RPC connection is closed the send can fail.
+                            // Forget the result because if the RPC connection is closed the send can fail.
                             let _ = callback.send(Err(res));
                         }
                      }
