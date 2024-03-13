@@ -483,7 +483,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_waittx_process_event() {
+    async fn test_wait_tx_process_event() {
         let db = TestDb(Mutex::new(HashMap::new()));
         // Set parameters to avoid wait tx eviction.
         let mut wait_tx_cache = TxCache::build(2, 10, 1000);
