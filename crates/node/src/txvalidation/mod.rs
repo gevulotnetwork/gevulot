@@ -130,6 +130,7 @@ impl TxEventSender<TxResultSender> {
 }
 
 //Main event processing loog.
+#[allow(clippy::too_many_arguments)]
 pub async fn spawn_event_loop(
     local_directory_path: PathBuf,
     bind_addr: SocketAddr,
@@ -210,9 +211,7 @@ pub async fn spawn_event_loop(
                                             let newtx_receiver = newtx_receiver.clone();
                                             async move {
                                                 for new_tx in new_tx_list {
-                                                    if let Err(err) = new_tx.process_event(&mut *(newtx_receiver.write().await)).await {
-                                                        return Err(err);
-                                                    }
+                                                   new_tx.process_event(&mut *(newtx_receiver.write().await)).await?;
                                                 }
                                                 Ok(())
                                             }

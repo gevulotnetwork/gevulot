@@ -296,12 +296,12 @@ impl TXCache {
     }
 
     pub fn add_new_waiting_tx(&mut self, parent: Hash, tx: TxEvent<WaitTx>) {
-        let waiting_txs = self.waiting_tx.entry(parent).or_insert(vec![]);
+        let waiting_txs = self.waiting_tx.entry(parent).or_default();
         waiting_txs.push(tx);
     }
 
     pub fn remove_waiting_children_txs(&mut self, parent: &Hash) -> Vec<TxEvent<WaitTx>> {
-        self.waiting_tx.remove(parent).unwrap_or(vec![])
+        self.waiting_tx.remove(parent).unwrap_or_default()
     }
 }
 
@@ -339,7 +339,7 @@ mod tests {
 
     fn new_proof_tx_event(parent: Hash) -> TxEvent<WaitTx> {
         let payload = Payload::Proof {
-            parent: parent,
+            parent,
             prover: Hash::default(),
             proof: vec![],
             files: vec![],
@@ -364,7 +364,7 @@ mod tests {
             state: Received::P2P,
         };
         TxEvent {
-            tx: tx,
+            tx,
             tx_type: WaitTx,
         }
     }
