@@ -237,12 +237,6 @@ impl Provider for Qemu {
                 "-drive",
                 &format!("file={},format=raw,if=none,id=hd1", &workspace_file),
             ])*/
-            // NETWORKING
-            .args([
-                "-device",
-                "virtio-net,bus=pci.3,addr=0x0,netdev=n0,mac=8e:97:45:7c:fb:3d",
-            ])
-            .args(["-netdev", "user,id=n0"])
             .args(["-display", "none"])
             .args(["-serial", "stdio"])
             // VSOCK
