@@ -199,7 +199,7 @@ impl TxEvent<PropagateTx> {
 impl TxEvent<WaitTx> {
     pub async fn process_event(
         self,
-        cache: &mut TXCache,
+        cache: &mut TxCache,
         storage: &impl Storage,
     ) -> Result<Vec<TxEvent<NewTx>>, EventProcessError> {
         // Verify Tx'x parent is present or not.
@@ -275,7 +275,7 @@ impl TxEvent<NewTx> {
 }
 
 // Use to cache New tx and store waiting Tx that have missing parent.
-pub struct TXCache {
+pub struct TxCache {
     // List of Tx waiting for parent.let waiting_txs =
     waiting_tx: HashMap<Hash, (Vec<TxEvent<WaitTx>>, Instant)>,
     // Cache of the last saved Tx in the DB. To avoid to query the db for Tx.
@@ -286,7 +286,7 @@ pub struct TXCache {
     max_waiting_time: Duration,
 }
 
-impl TXCache {
+impl TxCache {
     pub fn new() -> Self {
         Self::build(
             MAX_CACHED_TX_FOR_VERIFICATION,
@@ -297,7 +297,7 @@ impl TXCache {
     pub fn build(cache_size: usize, max_waiting_tx: usize, max_waiting_time: u64) -> Self {
         let cachedtx_for_verification =
             LruCache::new(std::num::NonZeroUsize::new(cache_size).unwrap());
-        TXCache {
+        TxCache {
             waiting_tx: HashMap::new(),
             cachedtx_for_verification,
             max_waiting_tx,
@@ -352,7 +352,7 @@ impl TXCache {
     }
 }
 
-impl Default for TXCache {
+impl Default for TxCache {
     fn default() -> Self {
         Self::new()
     }
@@ -439,7 +439,7 @@ mod tests {
     async fn test_evict_wait_tx() {
         let db = TestDb(Mutex::new(HashMap::new()));
         // Set parameters to have Tx eviction
-        let mut wait_tx_cache = TXCache::build(2, 2, 10);
+        let mut wait_tx_cache = TxCache::build(2, 2, 10);
 
         // Create the parent Txs that will only be processed at the end.
         // Create 2 parents to have 2 waiting child Tx
@@ -467,7 +467,7 @@ mod tests {
         let tx_hash = tx_event.tx.hash;
         let res = tx_event.process_event(&mut wait_tx_cache, &db).await;
         assert!(res.is_ok());
-        // Evicted but new ket added.
+        // Evicted but new tx added => len=1.
         assert_eq!(wait_tx_cache.waiting_tx.len(), 1);
 
         //Process the parent Tx. Do child Tx return because they have been evicted.
@@ -486,7 +486,7 @@ mod tests {
     async fn test_waittx_process_event() {
         let db = TestDb(Mutex::new(HashMap::new()));
         // Set parameters to avoid wait tx eviction.
-        let mut wait_tx_cache = TXCache::build(2, 10, 1000);
+        let mut wait_tx_cache = TxCache::build(2, 10, 1000);
 
         // Test a new tx without parent. No wait and added to cache.
         let tx_event1 = new_empty_tx_event();

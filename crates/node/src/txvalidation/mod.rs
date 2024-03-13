@@ -1,5 +1,5 @@
 use crate::mempool::Storage;
-use crate::txvalidation::event::TXCache;
+use crate::txvalidation::event::TxCache;
 use crate::txvalidation::event::{ReceivedTx, TxEvent};
 use crate::types::{
     transaction::{Created, Received, Validated},
@@ -138,7 +138,7 @@ pub async fn spawn_event_loop(
     // Used to receive new transactions that arrive to the node from the outside.
     mut rcv_tx_event_rx: UnboundedReceiver<(Transaction<Received>, Option<CallbackSender>)>,
     // Endpoint where validated transactions are sent to. Usually configured with Mempool.
-    newtx_receiver: Arc<RwLock<dyn ValidatedTxReceiver + 'static>>,
+    new_tx_receiver: Arc<RwLock<dyn ValidatedTxReceiver + 'static>>,
     storage: Arc<impl Storage + 'static>,
 ) -> eyre::Result<(
     JoinHandle<()>,
@@ -155,7 +155,7 @@ pub async fn spawn_event_loop(
     let p2p_stream = UnboundedReceiverStream::new(p2p_recv);
     let jh = tokio::spawn({
         let local_directory_path = local_directory_path.clone();
-        let mut wait_tx_cache = TXCache::new();
+        let mut wait_tx_cache = TxCache::new();
         let mut validated_txs_futures = FuturesUnordered::new();
         let mut validation_okresult_futures = FuturesUnordered::new();
         let mut validation_errresult_futures = FuturesUnordered::new();
@@ -206,10 +206,10 @@ pub async fn spawn_event_loop(
                                     Ok(new_tx_list) => {
                                         //
                                         let jh  = tokio::spawn({
-                                            let newtx_receiver = newtx_receiver.clone();
+                                            let new_tx_receiver = new_tx_receiver.clone();
                                             async move {
                                                 for new_tx in new_tx_list {
-                                                   new_tx.process_event(&mut *(newtx_receiver.write().await)).await?;
+                                                   new_tx.process_event(&mut *(new_tx_receiver.write().await)).await?;
                                                 }
                                                 Ok(())
                                             }
