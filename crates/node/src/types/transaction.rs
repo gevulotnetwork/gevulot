@@ -193,7 +193,7 @@ impl std::fmt::Display for Payload {
 }
 
 impl Payload {
-    //return the parent tx associated to the payloas if any.
+    // Return the parent tx associated to the payloads, if any.
     pub fn get_parent_tx(&self) -> Option<&Hash> {
         match self {
             Payload::Proof { parent, .. } => Some(parent),
