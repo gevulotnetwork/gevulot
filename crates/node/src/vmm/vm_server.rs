@@ -162,11 +162,11 @@ impl VmService for VMServer {
             );
         }
 
-        //clean VM /Workspace data
+        // Clean VM `/workspace` data.
         let workspace_path = TaskVmFile::get_workspace_path(&self.file_data_dir, request_tx_hash);
         if let Err(err) = std::fs::remove_dir_all(workspace_path) {
             tracing::warn!(
-                "Execution workplace for Tx:{} didn't clean correctly because {err}",
+                "Execution workspace for Tx:{} didn't clean correctly because {err}",
                 tx_hash
             );
         }

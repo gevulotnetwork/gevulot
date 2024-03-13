@@ -90,7 +90,6 @@ impl GRPCClient {
         }
 
         Ok(GRPCClient {
-            //    workspace: workspace.to_string(),
             client: Mutex::new(client),
             rt,
         })
