@@ -222,7 +222,8 @@ impl TxEvent<WaitTx> {
         let new_txs = new_tx
             .map(|tx| {
                 let mut ret = cache.remove_waiting_children_txs(&tx.tx.hash);
-                ret.push(tx);
+                // Add the parent Tx first to be processed the first.
+                ret.insert(0, tx);
                 ret
             })
             .unwrap_or(vec![]);
