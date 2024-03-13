@@ -198,6 +198,7 @@ async fn run(config: Arc<Config>) -> Result<()> {
         http_peer_list.clone(),
         database.clone(),
         mempool.clone(),
+        database.clone(),
     )
     .await?;
 
