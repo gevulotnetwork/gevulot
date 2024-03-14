@@ -4,9 +4,6 @@ package vm_service;
 
 service VMService {
   rpc GetTask (TaskRequest) returns (TaskResponse) {}
-  rpc GetFile (GetFileRequest) returns (stream FileData) {}
-
-  rpc SubmitFile(stream FileData) returns (GenericResponse) {}
   rpc SubmitResult(TaskResultRequest) returns (TaskResultResponse) {}
 }
 
@@ -18,7 +15,7 @@ message GenericResponse {
 message TaskRequest {}
 
 message Task {
-  string id = 1;
+  string tx_hash = 1;
   string name = 2;
   repeated string args = 3;
   repeated string files = 4;
@@ -68,15 +65,15 @@ message FileData {
 }
 
 message TaskResult {
-  string id = 1;
   bytes data = 2;
   repeated File files = 3;
 }
 
 message TaskResultRequest {
+  string tx_hash = 1;
   oneof result {
-    TaskResult task = 1;
-    TaskError error = 2;
+    TaskResult task = 2;
+    TaskError error = 3;
   }
 }
 

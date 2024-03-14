@@ -1,24 +1,17 @@
-use self::grpc::{
-    FileChunk, FileData, FileMetadata, GenericResponse, TaskResponse, TaskResultRequest,
-};
-use crate::types::file::{TaskVmFile, VmOutput};
+use self::grpc::{TaskResponse, TaskResultRequest};
+use super::VMId;
 use crate::types::Hash;
 use crate::types::Task;
-use crate::vmm::vm_server::grpc::file_data;
 use async_trait::async_trait;
 use eyre::Result;
+use gevulot_node::types::file::TaskVmFile;
 use grpc::vm_service_server::VmService;
-use grpc::{GetFileRequest, TaskRequest, TaskResultResponse};
+use grpc::{TaskRequest, TaskResultResponse};
 use std::fmt::Debug;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::io::AsyncReadExt;
-use tokio::io::AsyncWriteExt;
-use tokio::sync::{mpsc, Mutex};
-use tokio_stream::wrappers::ReceiverStream;
-use tonic::{Code, Extensions, Request, Response, Status, Streaming};
-
-use super::VMId;
+use tokio::sync::Mutex;
+use tonic::{Code, Extensions, Request, Response, Status};
 
 pub mod grpc {
     tonic::include_proto!("vm_service");
@@ -36,6 +29,7 @@ pub trait TaskManager: Send + Sync {
     async fn get_running_task(&self, tx_hash: Hash) -> Option<Task>;
     async fn submit_result(
         &self,
+        tx_hash: Hash,
         program: Hash,
         result: grpc::task_result_request::Result,
     ) -> Result<(), String>;
@@ -82,8 +76,6 @@ impl VMServer {
 
 #[tonic::async_trait]
 impl VmService for VMServer {
-    type GetFileStream = ReceiverStream<Result<FileData, Status>>;
-
     #[tracing::instrument]
     async fn get_task(
         &self,
@@ -105,7 +97,7 @@ impl VmService for VMServer {
         let reply = match self.task_source.get_pending_task(tx_hash).await {
             Some(task) => grpc::TaskResponse {
                 result: Some(grpc::task_response::Result::Task(grpc::Task {
-                    id: task.tx.to_string(),
+                    tx_hash: task.tx.to_string(),
                     name: task.name.to_string(),
                     args: task.args,
                     files: task
@@ -122,178 +114,6 @@ impl VmService for VMServer {
             },
         };
         Ok(Response::new(reply))
-    }
-
-    #[tracing::instrument]
-    async fn get_file(
-        &self,
-        request: Request<GetFileRequest>,
-    ) -> Result<Response<Self::GetFileStream>, Status> {
-        tracing::info!("request for file: {:?}", request);
-
-        let (tx_hash, program_id, vm_id) = self
-            .program_registry
-            .lock()
-            .await
-            .find_by_req(request.extensions())
-            .ok_or_else(|| {
-                Status::new(
-                    Code::Unknown,
-                    format!("unknown VM address: {:?}", request.remote_addr()),
-                )
-            })?;
-
-        let task = self
-            .task_source
-            .get_running_task(tx_hash)
-            .await
-            .ok_or_else(|| Status::new(Code::NotFound, "couldn't find running task for request"))?;
-
-        let req = request.into_inner();
-        //get VM file associated to this task file
-        let vm_file = task
-            .files
-            .iter()
-            .find(|file| file.vm_file_path() == req.path)
-            .ok_or_else(|| Status::new(Code::NotFound, "couldn't get task file"))?;
-
-        let mut file_stream = vm_file
-            .open_task_file(&self.file_data_dir)
-            .await
-            .map_err(|err| {
-                Status::new(
-                    Code::NotFound,
-                    format!("couldn't not open task file  :{err}"),
-                )
-            })?;
-
-        let (tx, rx) = mpsc::channel(4);
-        tokio::spawn({
-            async move {
-                let mut buf: [u8; DATA_STREAM_CHUNK_SIZE] = [0; DATA_STREAM_CHUNK_SIZE];
-
-                loop {
-                    match file_stream.read(&mut buf).await {
-                        Ok(0) => return Ok(()),
-                        Ok(n) => {
-                            if let Err(e) = tx
-                                .send(Ok(grpc::FileData {
-                                    result: Some(file_data::Result::Chunk(grpc::FileChunk {
-                                        data: buf[..n].to_vec(),
-                                    })),
-                                }))
-                                .await
-                            {
-                                tracing::error!("send {} bytes from file: {}", n, &e);
-                                break;
-                            }
-                        }
-                        Err(e) => return Err(e),
-                    }
-                }
-
-                Ok(())
-            }
-        });
-
-        Ok(Response::new(ReceiverStream::new(rx)))
-    }
-
-    #[tracing::instrument]
-    async fn submit_file(
-        &self,
-        request: Request<Streaming<FileData>>,
-    ) -> Result<Response<GenericResponse>, Status> {
-        let (tx_hash, program_id, vm_id) = match self
-            .program_registry
-            .lock()
-            .await
-            .find_by_req(request.extensions())
-        {
-            Some(instance) => instance,
-            None => {
-                return Err(Status::new(
-                    Code::Unknown,
-                    format!("unknown VM address: {:?}", request.remote_addr()),
-                ));
-            }
-        };
-
-        let mut stream = request.into_inner();
-        let mut file: Option<tokio::io::BufWriter<tokio::fs::File>> = None;
-
-        while let Ok(Some(grpc::FileData { result: data })) = stream.message().await {
-            match data {
-                Some(grpc::file_data::Result::Metadata(FileMetadata { task_id, path })) => {
-                    let vmfile = TaskVmFile::<VmOutput>::new(path, task_id.into());
-                    let relative_file_path = vmfile.get_relatif_path();
-
-                    let file_path = PathBuf::new()
-                        .join(&self.file_data_dir)
-                        .join(relative_file_path);
-                    tracing::trace!("submit_file saved in:{file_path:#?}");
-
-                    // Ensure any necessary subdirectories exists.
-                    if let Some(parent) = file_path.parent() {
-                        tokio::fs::create_dir_all(parent)
-                            .await
-                            .expect("task file mkdir");
-                    }
-
-                    let fd = tokio::fs::File::create(file_path).await?;
-                    file = Some(tokio::io::BufWriter::new(fd));
-                }
-                Some(grpc::file_data::Result::Chunk(FileChunk { data })) => match file.as_mut() {
-                    Some(fd) => {
-                        if let Err(err) = fd.write_all(data.as_slice()).await {
-                            tracing::error!("error while writing to file: {}", err);
-                            return Err(Status::new(
-                                Code::Internal,
-                                "failed to write file".to_string(),
-                            ));
-                        } else {
-                            tracing::debug!("{} bytes received & written to file", data.len());
-                        }
-                    }
-                    None => {
-                        tracing::error!("received None from client on submit_file stream");
-                        return Err(Status::new(
-                            Code::InvalidArgument,
-                            "file data sent before metadata; aborting".to_string(),
-                        ));
-                    }
-                },
-                Some(grpc::file_data::Result::Error(code)) => {
-                    tracing::error!("error from client: {code}");
-                    return Err(Status::new(
-                        Code::Aborted,
-                        format!("file transfer aborted by client; error code: {code}"),
-                    ));
-                }
-                None => {
-                    tracing::error!("FileData message with None as a body");
-                    return Err(Status::new(
-                        Code::InvalidArgument,
-                        "file data sent without body".to_string(),
-                    ));
-                }
-            }
-        }
-
-        if file.is_some() {
-            if let Err(err) = file.unwrap().flush().await {
-                tracing::error!("failed to flush file: {}", err);
-                return Err(Status::new(
-                    Code::Internal,
-                    "failed to flush file writes".to_string(),
-                ));
-            };
-        }
-
-        Ok(Response::new(GenericResponse {
-            success: true,
-            message: String::from("file received"),
-        }))
     }
 
     #[tracing::instrument]
@@ -321,12 +141,34 @@ impl VmService for VMServer {
             program_id.to_string()
         );
 
-        let result = request.into_inner().result;
+        let request = request.into_inner();
+        let request_tx_hash: Hash = (&*request.tx_hash).into();
 
-        if let Some(result) = result {
-            if let Err(err) = self.task_source.submit_result(program_id, result).await {
-                tracing::error!("Error during submit VM execution result:{err}");
+        if tx_hash == request_tx_hash {
+            if let Some(result) = request.result {
+                if let Err(err) = self
+                    .task_source
+                    .submit_result(request_tx_hash, program_id, result)
+                    .await
+                {
+                    tracing::error!("Error during submit VM execution result:{err}");
+                }
             }
+        } else {
+            tracing::error!(
+                "submit_result different Tx_hash from vm_id:{} and request result:{}",
+                tx_hash.to_string(),
+                request_tx_hash.to_string()
+            );
+        }
+
+        // Clean VM `/workspace` data.
+        let workspace_path = TaskVmFile::get_workspace_path(&self.file_data_dir, request_tx_hash);
+        if let Err(err) = std::fs::remove_dir_all(workspace_path) {
+            tracing::warn!(
+                "Execution workspace for Tx:{} didn't clean correctly because {err}",
+                tx_hash
+            );
         }
 
         let reply = grpc::TaskResultResponse { r#continue: false };
