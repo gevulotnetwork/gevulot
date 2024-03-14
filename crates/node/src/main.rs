@@ -243,6 +243,7 @@ async fn run(config: Arc<Config>) -> Result<()> {
         database.clone(),
         rcv_tx_event_rx,
         new_validated_tx_receiver.clone(),
+        database.clone(),
     )
     .await?;
 

@@ -193,6 +193,15 @@ impl std::fmt::Display for Payload {
 }
 
 impl Payload {
+    // Return the parent tx associated to the payloads, if any.
+    pub fn get_parent_tx(&self) -> Option<&Hash> {
+        match self {
+            Payload::Proof { parent, .. } => Some(parent),
+            Payload::ProofKey { parent, .. } => Some(parent),
+            Payload::Verification { parent, .. } => Some(parent),
+            _ => None,
+        }
+    }
     pub fn serialize_into(&self, buf: &mut Vec<u8>) {
         match self {
             Payload::Empty => {}
