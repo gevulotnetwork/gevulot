@@ -266,12 +266,21 @@ async fn run(config: Arc<Config>) -> Result<()> {
     let p2p_listen_addr = p2p.node().start_listening().await?;
     tracing::info!("listening for p2p at {}", p2p_listen_addr);
 
+    let mut connected_nodes = 0;
     for addr in config.p2p_discovery_addrs.clone() {
         tracing::info!("connecting to p2p peer {}", addr);
         match addr.to_socket_addrs() {
             Ok(mut socket_iter) => {
                 if let Some(peer) = socket_iter.next() {
-                    p2p.node().connect(peer).await?;
+                    match p2p.node().connect(peer).await {
+                        Ok(_) => {
+                            connected_nodes += 1;
+                            continue;
+                        }
+                        Err(err) => {
+                            tracing::warn!("failed to connect to {}: {}", peer, err);
+                        }
+                    }
                     break;
                 }
             }
@@ -279,6 +288,13 @@ async fn run(config: Arc<Config>) -> Result<()> {
                 tracing::error!("failed to resolve {}: {}", addr, err);
             }
         }
+    }
+
+    // If we couldn't connect to any P2P nodes, we'll be left out alone forever.
+    // Useless to run at that point.
+    if connected_nodes == 0 {
+        tracing::error!("Failed to connect to any P2P node. Quitting.");
+        std::process::exit(1);
     }
 
     // Start JSON-RPC server.
