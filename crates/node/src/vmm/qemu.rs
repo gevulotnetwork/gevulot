@@ -1,3 +1,13 @@
+use async_trait::async_trait;
+use eyre::Result;
+use gevulot_node::types::file::TaskVmFile;
+use qapi::{
+    futures::{QapiStream, QmpStreamTokio},
+    qmp,
+    qmp::StatusInfo,
+};
+use rand::{distributions::Alphanumeric, Rng};
+use serde_json::json;
 use std::{
     any::Any,
     collections::HashMap,
@@ -7,16 +17,6 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-
-use async_trait::async_trait;
-use eyre::Result;
-use qapi::{
-    futures::{QapiStream, QmpStreamTokio},
-    qmp,
-    qmp::StatusInfo,
-};
-use rand::{distributions::Alphanumeric, Rng};
-use serde_json::json;
 use tokio::{
     io::{ReadHalf, WriteHalf},
     net::{TcpStream, ToSocketAddrs},
@@ -162,12 +162,12 @@ impl Provider for Qemu {
             .to_lowercase();
 
         // XXX: This isn't async and will call out to `ops` for now.
-        tracing::debug!("creating workspace volume:{workspace_volume_label:?} for the VM");
-        let workspace_file =
-            nanos::volume::create(&self.config.data_directory, &workspace_volume_label, "2g")?
-                .into_os_string();
-        let workspace_file = workspace_file.to_str().expect("workspace volume path");
-        tracing::debug!("workspace volume:{workspace_file:?} created");
+        // tracing::debug!("creating workspace volume:{workspace_volume_label:?} for the VM");
+        // let workspace_file =
+        //     nanos::volume::create(&self.config.data_directory, &workspace_volume_label, "2g")?
+        //         .into_os_string();
+        // let workspace_file = workspace_file.to_str().expect("workspace volume path");
+        // tracing::debug!("workspace volume:{workspace_file:?} created");
 
         let cpus = req.cpus;
         let mem_req = req.mem;
@@ -196,6 +196,15 @@ impl Provider for Qemu {
         // Update the child process field.
         let qemu_vm_handle = &mut self.vm_registry.get_mut(&cid).unwrap();
         let mut cmd = Command::new("/usr/bin/qemu-system-x86_64");
+
+        //define the VirtFs local path and create all necessary folder
+        let workspace_path = TaskVmFile::get_workspace_path(&self.config.data_directory, tx_hash);
+        // Ensure any necessary subdirectories exists.
+        if let Ok(false) = tokio::fs::try_exists(&workspace_path).await {
+            if let Err(err) = tokio::fs::create_dir_all(&workspace_path).await {
+                tracing::error!("create_dir_all fail for {workspace_path:?} err:{err}");
+            }
+        }
 
         cmd.args(["-machine", "q35"])
             .args([
@@ -239,6 +248,14 @@ impl Provider for Qemu {
             ])*/
             .args(["-display", "none"])
             .args(["-serial", "stdio"])
+            //VirtFs
+            .args([
+                "-virtfs",
+                &format!(
+                    "local,path={},mount_tag=1,security_model=none,multidevs=remap,id=hd1",
+                    &workspace_path.to_str().unwrap().to_string()
+                ),
+            ])
             // VSOCK
             .args(["-device", &format!("vhost-vsock-pci,guest-cid={cid}")])
             // QMP
@@ -300,17 +317,6 @@ impl Provider for Qemu {
             }
             client.unwrap()
         };
-
-        // Attach the workspace volume.
-        let err_add = qmp_client.blockdev_add("workspace", workspace_file).await;
-        if err_add.is_err() {
-            tracing::error!("blockdev_add failed: {:?}", err_add);
-        }
-
-        let err_add = qmp_client.device_add("workspace", 1).await;
-        if err_add.is_err() {
-            tracing::error!("device_add failed: {:?}", err_add);
-        }
 
         qmp_client.system_reset().await?;
 

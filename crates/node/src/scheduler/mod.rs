@@ -509,16 +509,12 @@ impl TaskManager for Scheduler {
 
     async fn submit_result(
         &self,
+        tx_hash: Hash,
         program: Hash,
         result: grpc::task_result_request::Result,
     ) -> Result<(), String> {
-        tracing::debug!("submit_result  result:{result:#?} ");
+        tracing::debug!("submit_result tx:{tx_hash}  result:{result:#?}");
 
-        let grpc::task_result_request::Result::Task(result) = result else {
-            todo!("task failed; handle it correctly")
-        };
-
-        let tx_hash: Hash = (&*result.id).into();
         let mut state = self.state.lock().await;
         if let Some(running_task) = state.running_tasks.remove(&tx_hash) {
             tracing::info!(
@@ -534,69 +530,78 @@ impl TaskManager for Scheduler {
                 );
             }
 
-            // Handle tx execution's result files so that they are available as an input for next task if needed.
-            let executed_files: Vec<(TaskVmFile<VmOutput>, TxFile<Output>)> = result
-                .files
-                .into_iter()
-                .map(|file| {
-                    let vm_file = TaskVmFile::<VmOutput>::new(file.path.to_string(), tx_hash);
-                    let dest = TxFile::<Output>::new(
-                        file.path,
-                        self.http_download_host.clone(),
-                        file.checksum[..].into(),
-                    );
-                    (vm_file, dest)
-                })
-                .collect();
+            match result {
+                grpc::task_result_request::Result::Task(result) => {
+                    // Handle tx execution's result files so that they are available as an input for next task if needed.
+                    let executed_files: Vec<(TaskVmFile<VmOutput>, TxFile<Output>)> = result
+                        .files
+                        .into_iter()
+                        .map(|file| {
+                            let vm_file =
+                                TaskVmFile::<VmOutput>::new(file.path.to_string(), tx_hash);
+                            let dest = TxFile::<Output>::new(
+                                file.path,
+                                self.http_download_host.clone(),
+                                file.checksum[..].into(),
+                            );
+                            (vm_file, dest)
+                        })
+                        .collect();
 
-            //TODO -Verify that all expected files has been generated.
+                    //TODO -Verify that all expected files has been generated.
 
-            let new_tx_files: Vec<TxFile<Output>> = executed_files
-                .iter()
-                .map(|(_, file)| file)
-                .cloned()
-                .collect();
-            let nonce = rand::thread_rng().next_u64();
-            let tx = match running_task.task.kind {
-                TaskKind::Proof => Transaction::new(
-                    Payload::Proof {
-                        parent: running_task.task.tx,
-                        prover: program,
-                        proof: result.data,
-                        files: new_tx_files,
-                    },
-                    &self.node_key,
-                ),
-                TaskKind::Verification => Transaction::new(
-                    Payload::Verification {
-                        parent: running_task.task.tx,
-                        verifier: program,
-                        verification: result.data,
-                        files: new_tx_files,
-                    },
-                    &self.node_key,
-                ),
-                TaskKind::PoW => {
-                    todo!("proof of work tasks not implemented yet");
+                    let new_tx_files: Vec<TxFile<Output>> = executed_files
+                        .iter()
+                        .map(|(_, file)| file)
+                        .cloned()
+                        .collect();
+                    let nonce = rand::thread_rng().next_u64();
+                    let tx = match running_task.task.kind {
+                        TaskKind::Proof => Transaction::new(
+                            Payload::Proof {
+                                parent: running_task.task.tx,
+                                prover: program,
+                                proof: result.data,
+                                files: new_tx_files,
+                            },
+                            &self.node_key,
+                        ),
+                        TaskKind::Verification => Transaction::new(
+                            Payload::Verification {
+                                parent: running_task.task.tx,
+                                verifier: program,
+                                verification: result.data,
+                                files: new_tx_files,
+                            },
+                            &self.node_key,
+                        ),
+                        TaskKind::PoW => {
+                            todo!("proof of work tasks not implemented yet");
+                        }
+                        TaskKind::Nop => {
+                            panic!(
+                                "impossible to receive result from a task ({}/{}) with task.kind == Nop",
+                                running_task.task.id, running_task.task.tx
+                            );
+                        }
+                    };
+                    tracing::info!("Submit result Tx created:{}", tx.hash.to_string());
+
+                    // Move tx file from execution Tx path to new Tx path
+                    for (source_file, dest_file) in executed_files {
+                        move_vmfile(&source_file, &dest_file, &self.data_directory, tx.hash)
+                            .await.map_err(|err| format!("failed to move excution file from: {source_file:?} to: {dest_file:?} error: {err}"))?;
+                    }
+
+                    // Send tx to validation process.
+                    self.tx_sender.send_tx(tx).await.map_err(|err| {
+                        format!("failed to send Tx result to validation process: {}", err)
+                    })?;
                 }
-                TaskKind::Nop => {
-                    panic!(
-                        "impossible to receive result from a task ({}/{}) with task.kind == Nop",
-                        running_task.task.id, running_task.task.tx
-                    );
+                grpc::task_result_request::Result::Error(error) => {
+                    tracing::warn!("Error during Tx:{tx_hash} execution:{error:?}");
                 }
-            };
-            tracing::info!("Submit result Tx created:{}", tx.hash.to_string());
-
-            // Move tx file from execution Tx path to new Tx path
-            for (source_file, dest_file) in executed_files {
-                move_vmfile(&source_file, &dest_file, &self.data_directory, tx.hash).await.map_err(|err| format!("failed to move excution file from: {source_file:?} to: {dest_file:?} error: {err}"))?;
             }
-
-            // Send tx to validation process.
-            self.tx_sender.send_tx(tx).await.map_err(|err| {
-                format!("failed to send Tx result to validation process: {}", err)
-            })?;
 
             tracing::debug!("terminating VM running program {}", program);
 
