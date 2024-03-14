@@ -292,7 +292,7 @@ async fn run(config: Arc<Config>) -> Result<()> {
 
     // If we couldn't connect to any P2P nodes, we'll be left out alone forever.
     // Useless to run at that point.
-    if connected_nodes == 0 {
+    if !config.p2p_discovery_addrs.is_empty() && connected_nodes == 0 {
         tracing::error!("Failed to connect to any P2P node. Quitting.");
         std::process::exit(1);
     }
