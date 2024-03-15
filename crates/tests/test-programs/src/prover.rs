@@ -29,9 +29,6 @@ fn run_task(task: Task) -> Result<TaskResult> {
     std::fs::write(format!("{WORKSPACE_PATH}/proof.dat"), b"this is a proof.")?;
     task.result(
         vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9],
-        vec![
-            format!("{WORKSPACE_PATH}/proof.dat"),
-            format!("{WORKSPACE_PATH}/bigfile.bin"),
-        ],
+        vec![format!("{WORKSPACE_PATH}/proof.dat")],
     )
 }
