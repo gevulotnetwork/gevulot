@@ -579,7 +579,7 @@ mod tests {
             .await
             .unwrap();
 
-        //wait for the connection fail timeout.
+        // Wait for the connection fail timeout.
         tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
 
         assert_eq!(peer1.peer_http_port_list.read().await.len(), 2);
@@ -598,7 +598,7 @@ mod tests {
             _ => panic!("Peer2 connected and it shouldn't"),
         }
 
-        //Peer3 -> Peer1 works
+        // Peer3 -> Peer1 works
         let tx = new_tx();
         tx_sender3.send(tx.clone()).unwrap();
         let recv_tx = tx_receiver1.recv().await.expect("peer1 recv");
@@ -648,7 +648,7 @@ mod tests {
         assert_eq!(peer2.peer_http_port_list.read().await.len(), 2);
         assert_eq!(peer3.peer_http_port_list.read().await.len(), 2);
 
-        //Verify connections by sending Tx to all peers.
+        // Verify connections by sending Tx to all peers.
         let tx = new_tx();
         tx_sender2.send(tx.clone()).unwrap();
         let recv_tx = tx_receiver1.recv().await.expect("peer1 recv");
@@ -665,6 +665,8 @@ mod tests {
         assert_eq!(into_receive(tx), recv_tx.0);
     }
 
+    // Test  Peer2 that  disconnect.
+    // It should be removed from Peer1 peers list.
     #[tokio::test]
     async fn test_two_peers_disconnect() {
         //start_logger(LevelFilter::ERROR);
@@ -684,21 +686,17 @@ mod tests {
             assert_eq!(peer1.peer_http_port_list.read().await.len(), 1);
             assert_eq!(peer2.peer_http_port_list.read().await.len(), 1);
 
-            tracing::debug!("Nodes Connected");
-            tracing::debug!("send tx from peer1 to peer2");
             let tx = new_tx();
             tx_sender1.send(tx.clone()).unwrap();
-            tracing::debug!("recv tx on peer2 from peer1");
             let recv_tx = tx_receiver2.recv().await.expect("peer2 recv");
             assert_eq!(into_receive(tx), recv_tx.0);
 
             let tx = new_tx();
-            tracing::debug!("send tx from peer2 to peer1");
             tx_sender2.send(tx.clone()).unwrap();
-            tracing::debug!("recv tx on peer1 from peer2");
             let recv_tx = tx_receiver1.recv().await.expect("peer1 recv");
             assert_eq!(into_receive(tx), recv_tx.0);
 
+            // Force manual disconnect because dropping the node don't disconnect peers.
             let peers = peer2.node().connected_addrs();
             for addr in peers {
                 peer2.node().disconnect(addr).await;
@@ -707,8 +705,6 @@ mod tests {
 
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-        // Simulate the silent node disconnection by dropping the node.
-        tracing::debug!("send tx from peer1 to disconnected peer2");
         let tx = new_tx();
         tx_sender1.send(tx).unwrap();
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
@@ -719,6 +715,7 @@ mod tests {
         assert_eq!(peer1.peer_http_port_list.read().await.len(), 0);
     }
 
+    // Test 2 peers that connect each other.
     #[tokio::test]
     async fn test_two_peers() {
         //start_logger(LevelFilter::ERROR);
@@ -726,28 +723,22 @@ mod tests {
         let (peer1, tx_sender1, mut tx_receiver1) = create_peer("peer1").await;
         let (peer2, tx_sender2, mut tx_receiver2) = create_peer("peer2").await;
 
-        tracing::debug!("start listening");
         peer1.node().start_listening().await.expect("peer1 listen");
         peer2.node().start_listening().await.expect("peer2 listen");
 
-        tracing::debug!("connect peer2 to peer1");
         peer2
             .node()
             .connect(peer1.node().listening_addr().unwrap())
             .await
             .unwrap();
 
-        tracing::debug!("send tx from peer1 to peer2");
         let tx = new_tx();
         tx_sender1.send(tx.clone()).unwrap();
-        tracing::debug!("recv tx on peer2 from peer1");
         let recv_tx = tx_receiver2.recv().await.expect("peer2 recv");
         assert_eq!(into_receive(tx), recv_tx.0);
 
         let tx = new_tx();
-        tracing::debug!("send tx from peer2 to peer1");
         tx_sender2.send(tx.clone()).unwrap();
-        tracing::debug!("recv tx on peer1 from peer2");
         let recv_tx = tx_receiver1.recv().await.expect("peer1 recv");
         assert_eq!(into_receive(tx), recv_tx.0);
     }
