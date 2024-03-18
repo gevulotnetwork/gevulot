@@ -212,7 +212,7 @@ impl AssetFile {
                 checksum,
             } => {
                 //verify the url is valide.
-                reqwest::Url::parse(file_url)?;
+                reqwest::Url::parse(&file_url)?;
                 let mut file_name_path = Path::new(&file_name);
                 if file_name_path.is_absolute() {
                     file_name_path = file_name_path.strip_prefix("/").unwrap(); // Unwrap tested in `is_absolute()`.
@@ -290,11 +290,15 @@ impl TxFile<Output> {
 
     pub fn into_download_file(self, tx_hash: Hash) -> AssetFile {
         let relative_path = self.get_relatif_path(tx_hash);
-        let url = format!("{}/{}", self.url, relative_path.to_str().unwrap());
+        let url = format!(
+            "{}/{}",
+            self.url,
+            relative_path.to_str().unwrap().to_string()
+        );
 
         AssetFile {
             name: self.name,
-            file_path: relative_path,
+            file_path: relative_path.into(),
             url,
             checksum: self.checksum,
             verify_exist: true,
