@@ -82,7 +82,7 @@ impl WorkflowEngine {
 
                 match workflow.steps.iter().position(|s| s.program == *prover) {
                     Some(proof_step_idx) => {
-                        if workflow.steps.len() <= proof_step_idx {
+                        if workflow.steps.len() <= (proof_step_idx + 1) {
                             Err(WorkflowError::WorkflowStepMissing(format!(
                                 "verifier for proof tx {}",
                                 cur_tx.hash.clone(),
