@@ -40,7 +40,7 @@ pub async fn download_asset_file(
     let file_uri = asset_file.get_uri();
     let mut resp = match tokio::time::timeout(
         tokio::time::Duration::from_secs(5),
-        http_client.get(asset_file.file.url).send(),
+        http_client.get(&asset_file.url).send(),
     )
     .await
     {
@@ -72,13 +72,13 @@ pub async fn download_asset_file(
             }
             resp.ok_or(eyre!(
                 "Download no host found to download the file: {}",
-                asset_file.file.name
+                asset_file.name
             ))?
         }
         Err(err) => {
             return Err(eyre!(
                 "Download file: {:?}, request send timeout.",
-                asset_file.file.name
+                asset_file.name
             ));
         }
     };
@@ -113,13 +113,13 @@ pub async fn download_asset_file(
                 Ok(Err(_)) => {
                     return Err(eyre!(
                         "Download file: {:?}, connection timeout",
-                        asset_file.file.name
+                        asset_file.name
                     ));
                 }
                 Err(err) => {
                     return Err(eyre!(
                         "Download file: {:?}, http error:{err}",
-                        asset_file.file.name
+                        asset_file.name
                     ));
                 }
             }
@@ -127,11 +127,11 @@ pub async fn download_asset_file(
 
         fd.flush().await?;
         let checksum: crate::types::Hash = (&hasher.finalize()).into();
-        if checksum != asset_file.file.checksum {
+        if checksum != asset_file.checksum {
             Err(eyre!(
                 "download_file:{:?} bad checksum checksum:{checksum}  set_file.checksum:{}.",
-                asset_file.file.name,
-                asset_file.file.checksum
+                asset_file.name,
+                asset_file.checksum
             ))
         } else {
             //rename to original name
@@ -140,7 +140,7 @@ pub async fn download_asset_file(
     } else {
         Err(eyre!(
             "failed to download file: {:?} response status: {}",
-            asset_file.file.name,
+            asset_file.name,
             resp.status()
         ))
     }
