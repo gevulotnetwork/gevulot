@@ -330,12 +330,17 @@ impl Provider for Qemu {
     fn stop_vm(&mut self, vm: VMHandle) -> Result<()> {
         if let Some(qemu_vm_handle) = self.vm_registry.get_mut(&u32_from_any(vm.vm_id.as_any())) {
             drop(vm);
+
             qemu_vm_handle
                 .child
                 .as_mut()
-                .unwrap()
-                .kill()
-                .expect("failed to kill VM");
+                .ok_or(std::io::Error::other(
+                    "No child process defined for this handle",
+                ))
+                .and_then(|p| {
+                    p.kill()?;
+                    p.wait()
+                })?;
 
             // GC ephemeral workspace volume.
             // XXX: This isn't async and will call out to `ops`.
