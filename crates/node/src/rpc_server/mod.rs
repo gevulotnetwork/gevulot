@@ -1,5 +1,11 @@
-use std::{net::SocketAddr, rc::Rc, sync::Arc};
-
+use crate::txvalidation::RpcSender;
+use crate::txvalidation::TxEventSender;
+use crate::types::rpc::RpcTransaction;
+use crate::{
+    cli::Config,
+    storage::Database,
+    types::{transaction::Created, Transaction},
+};
 use eyre::Result;
 use gevulot_node::types::{
     rpc::{RpcError, RpcResponse},
@@ -9,21 +15,13 @@ use jsonrpsee::{
     server::{RpcModule, Server, ServerHandle},
     types::Params,
 };
-use tokio::sync::RwLock;
-
-use crate::{
-    asset_manager::AssetManager,
-    cli::Config,
-    mempool::{AclWhitelist, Mempool},
-    storage::Database,
-    types::Transaction,
-};
+use std::rc::Rc;
+use std::{net::SocketAddr, sync::Arc};
 
 struct Context {
     database: Arc<Database>,
-    mempool: Arc<RwLock<Mempool>>,
-    asset_manager: Arc<AssetManager>,
-    acl_whitelist: Arc<dyn AclWhitelist>,
+    tx_sender: TxEventSender<RpcSender>,
+    local_http_host: SocketAddr,
 }
 
 impl std::fmt::Debug for Context {
@@ -41,16 +39,18 @@ impl RpcServer {
     pub async fn run(
         cfg: Arc<Config>,
         database: Arc<Database>,
-        mempool: Arc<RwLock<Mempool>>,
-        asset_manager: Arc<AssetManager>,
-        acl_whitelist: Arc<dyn AclWhitelist>,
+        tx_sender: TxEventSender<RpcSender>,
     ) -> Result<Self> {
+        let mut local_http_host = cfg
+            .p2p_advertised_listen_addr
+            .unwrap_or(cfg.p2p_listen_addr);
+        local_http_host.set_port(cfg.http_download_port);
+
         let server = Server::builder().build(cfg.json_rpc_listen_addr).await?;
         let mut module = RpcModule::new(Context {
             database,
-            mempool,
-            asset_manager,
-            acl_whitelist,
+            tx_sender,
+            local_http_host,
         });
 
         module.register_async_method("sendTransaction", send_transaction)?;
@@ -80,7 +80,7 @@ async fn send_transaction(params: Params<'static>, ctx: Arc<Context>) -> RpcResp
     tracing::info!("JSON-RPC: send_transaction()");
 
     // Real logic
-    let tx: Transaction = match params.one() {
+    let tx: Transaction<Created> = match params.one() {
         Ok(tx) => tx,
         Err(e) => {
             tracing::error!("failed to parse transaction: {}", e);
@@ -88,46 +88,7 @@ async fn send_transaction(params: Params<'static>, ctx: Arc<Context>) -> RpcResp
         }
     };
 
-    // Secondly verify that author is whitelisted.
-    let whitelisted = match ctx.acl_whitelist.contains(&tx.author).await {
-        Ok(result) => result,
-        Err(err) => {
-            tracing::error!("error when authorizing transaction: {}", err);
-
-            // Technically following is not 100% correct, but when there is
-            // problem with authorizing a transaction, it cannot be passed
-            // through. The real nature of the problem must also not be exposed
-            // as it can reveal unexpected security issues.
-            return RpcResponse::Err(RpcError::Unauthorized);
-        }
-    };
-
-    if !whitelisted {
-        return RpcResponse::Err(RpcError::Unauthorized);
-    }
-
-    // Persist transaction in DB first.
-    if let Err(err) = ctx.database.add_transaction(&tx).await {
-        return RpcResponse::Err(RpcError::InvalidRequest(
-            "failed to persist transaction".to_string(),
-        ));
-    }
-
-    // Then add it to asset manager in order to download all necessary files
-    // involved.
-    if let Err(err) = ctx.asset_manager.handle_transaction(&tx).await {
-        tracing::error!(
-            "failed to enqueue transaction for asset processing: {}",
-            err
-        );
-        return RpcResponse::Err(RpcError::InvalidRequest(
-            "failed to enqueue transaction for asset processing".to_string(),
-        ));
-    }
-
-    // Finally add it to mempool to propagate it to P2P network and wait
-    // to be scheduled for execution.
-    if let Err(err) = ctx.mempool.write().await.add(tx.clone()).await {
+    if let Err(err) = ctx.tx_sender.send_tx(tx).await {
         tracing::error!("failed to persist transaction: {}", err);
         return RpcResponse::Err(RpcError::InvalidRequest(
             "failed to persist transaction".to_string(),
@@ -138,7 +99,10 @@ async fn send_transaction(params: Params<'static>, ctx: Arc<Context>) -> RpcResp
 }
 
 #[tracing::instrument(level = "info")]
-async fn get_transaction(params: Params<'static>, ctx: Arc<Context>) -> RpcResponse<Transaction> {
+async fn get_transaction(
+    params: Params<'static>,
+    ctx: Arc<Context>,
+) -> RpcResponse<RpcTransaction> {
     let tx_hash: Hash = match params.one() {
         Ok(tx_hash) => tx_hash,
         Err(e) => {
@@ -150,9 +114,9 @@ async fn get_transaction(params: Params<'static>, ctx: Arc<Context>) -> RpcRespo
     tracing::info!("JSON-RPC: get_transaction()");
 
     match ctx.database.find_transaction(&tx_hash).await {
-        Ok(Some(tx)) => RpcResponse::Ok(tx),
+        Ok(Some(tx)) => RpcResponse::Ok(RpcTransaction::from_tx_validated(tx, ctx.local_http_host)),
         Ok(None) => RpcResponse::Err(RpcError::NotFound(tx_hash.to_string())),
-        Err(e) => RpcResponse::Err(RpcError::NotFound(tx_hash.to_string())),
+        Err(e) => RpcResponse::Err(RpcError::InternalError(e.to_string())),
     }
 }
 
@@ -164,7 +128,7 @@ async fn get_tx_tree(
     let tx_hash: Hash = match params.one() {
         Ok(tx_hash) => tx_hash,
         Err(e) => {
-            tracing::error!("failed to parse transaction: {}", e);
+            tracing::error!("failed to parse transaction hash: {}", e);
             return RpcResponse::Err(RpcError::InvalidRequest(e.to_string()));
         }
     };
@@ -233,33 +197,28 @@ fn build_tx_tree(hash: &Hash, txs: Vec<(Hash, Option<Hash>)>) -> Rc<TransactionT
 #[cfg(test)]
 mod tests {
 
-    use std::{env::temp_dir, path::PathBuf};
-
+    use super::*;
+    use crate::txvalidation;
+    use crate::txvalidation::CallbackSender;
+    use crate::txvalidation::EventProcessError;
+    use gevulot_node::types::transaction::Received;
     use jsonrpsee::{
         core::{client::ClientT, params::ArrayParams},
         http_client::HttpClientBuilder,
     };
-    use libsecp256k1::{PublicKey, SecretKey};
+    use libsecp256k1::SecretKey;
     use rand::{rngs::StdRng, SeedableRng};
+    use std::{env::temp_dir, path::PathBuf};
+    use tokio::sync::mpsc;
+    use tokio::sync::mpsc::UnboundedReceiver;
+    use tokio::sync::oneshot;
     use tracing_subscriber::{filter::LevelFilter, fmt::format::FmtSpan, EnvFilter};
-
-    use crate::mempool;
-
-    use super::*;
-
-    struct AlwaysGrantAclWhitelist;
-    #[async_trait::async_trait]
-    impl mempool::AclWhitelist for AlwaysGrantAclWhitelist {
-        async fn contains(&self, key: &PublicKey) -> Result<bool> {
-            Ok(true)
-        }
-    }
 
     #[ignore]
     #[tokio::test]
     async fn test_send_transaction() {
         start_logger(LevelFilter::INFO);
-        let rpc_server = new_rpc_server().await;
+        let (rpc_server, mut tx_receiver) = new_rpc_server().await;
 
         let url = format!("http://{}", rpc_server.addr());
         let rpc_client = HttpClientBuilder::default()
@@ -277,6 +236,21 @@ mod tests {
             .request::<RpcResponse<()>, ArrayParams>("sendTransaction", params)
             .await
             .expect("rpc request");
+
+        let recv_tx = tx_receiver.recv().await.expect("recv tx");
+
+        let tx = Transaction {
+            author: tx.author,
+            hash: tx.hash,
+            payload: tx.payload,
+            nonce: tx.nonce,
+            signature: tx.signature,
+            propagated: tx.executed,
+            executed: tx.executed,
+            state: Received::RPC,
+        };
+
+        assert_eq!(tx, recv_tx.0);
 
         dbg!(resp);
     }
@@ -448,12 +422,20 @@ mod tests {
             .init();
     }
 
-    async fn new_rpc_server() -> RpcServer {
+    async fn new_rpc_server() -> (
+        RpcServer,
+        UnboundedReceiver<(
+            Transaction<Received>,
+            Option<oneshot::Sender<Result<(), EventProcessError>>>,
+        )>,
+    ) {
         let cfg = Arc::new(Config {
+            acl_whitelist_url: None,
             data_directory: temp_dir(),
             db_url: "postgres://gevulot:gevulot@localhost/gevulot".to_string(),
             json_rpc_listen_addr: "127.0.0.1:0".parse().unwrap(),
             log_directory: temp_dir(),
+            no_execution: true,
             node_key_file: PathBuf::new().join("node.key"),
             p2p_discovery_addrs: vec![],
             p2p_listen_addr: "127.0.0.1:9999".parse().unwrap(),
@@ -461,33 +443,23 @@ mod tests {
             p2p_advertised_listen_addr: None,
             provider: "qemu".to_string(),
             vsock_listen_port: 8080,
-            num_cpus: 8,
-            mem_gb: 8,
+            num_cpus: None,
+            mem_gb: None,
             gpu_devices: None,
             http_download_port: 0,
         });
 
-        let acl_whitelist = Arc::new(AlwaysGrantAclWhitelist {});
         let db = Arc::new(Database::new(&cfg.db_url).await.unwrap());
-        let mempool = Arc::new(RwLock::new(
-            Mempool::new(db.clone(), acl_whitelist.clone(), None)
-                .await
-                .unwrap(),
-        ));
-        let asset_manager = Arc::new(AssetManager::new(
-            cfg.clone(),
-            db.clone(),
-            Arc::new(RwLock::new(std::collections::HashMap::new())),
-        ));
 
-        RpcServer::run(
-            cfg.clone(),
-            db.clone(),
-            mempool,
-            asset_manager,
-            acl_whitelist,
+        let (sendtx, txreceiver) =
+            mpsc::unbounded_channel::<(Transaction<Received>, Option<CallbackSender>)>();
+        let txsender = txvalidation::TxEventSender::<txvalidation::RpcSender>::build(sendtx);
+
+        (
+            RpcServer::run(cfg, db, txsender)
+                .await
+                .expect("rpc_server.run"),
+            txreceiver,
         )
-        .await
-        .expect("rpc_server.run")
     }
 }

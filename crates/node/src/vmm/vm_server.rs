@@ -1,23 +1,17 @@
-use std::fmt::Debug;
-use std::sync::Arc;
-
+use self::grpc::{TaskResponse, TaskResultRequest};
+use super::VMId;
+use crate::types::Hash;
+use crate::types::Task;
 use async_trait::async_trait;
 use eyre::Result;
-use tokio::io::AsyncReadExt;
-use tokio::sync::{mpsc, Mutex};
-use tokio_stream::wrappers::ReceiverStream;
-use tonic::{Extensions, Request, Response, Status};
-
+use gevulot_node::types::file::TaskVmFile;
 use grpc::vm_service_server::VmService;
-use grpc::{FileRequest, Task, TaskRequest, TaskResultResponse};
-
-use crate::storage;
-use crate::types::Hash;
-use crate::vmm::vm_server::grpc::file_response;
-
-use self::grpc::{task_result_request, FileResponse, TaskResponse, TaskResultRequest};
-
-use super::VMId;
+use grpc::{TaskRequest, TaskResultResponse};
+use std::fmt::Debug;
+use std::path::PathBuf;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tonic::{Code, Extensions, Request, Response, Status};
 
 pub mod grpc {
     tonic::include_proto!("vm_service");
@@ -31,19 +25,20 @@ const DATA_STREAM_CHUNK_SIZE: usize = 4096;
 /// requesting for work and submitting results of tasks.
 #[async_trait]
 pub trait TaskManager: Send + Sync {
-    async fn get_task(&self, program: Hash, vm_id: Arc<dyn VMId>) -> Option<Task>;
+    async fn get_pending_task(&self, tx_hash: Hash) -> Option<Task>;
+    async fn get_running_task(&self, tx_hash: Hash) -> Option<Task>;
     async fn submit_result(
         &self,
+        tx_hash: Hash,
         program: Hash,
-        vm_id: Arc<dyn VMId>,
         result: grpc::task_result_request::Result,
-    ) -> bool;
+    ) -> Result<(), String>;
 }
 
 /// ProgramRegistry defines interface that `VMServer` uses to identify which
 /// `Program` sent corresponding request.
 pub trait ProgramRegistry: Send {
-    fn find_by_req(&mut self, extensions: &Extensions) -> Option<(Hash, Arc<dyn VMId>)>;
+    fn find_by_req(&mut self, extensions: &Extensions) -> Option<(Hash, Hash, Arc<dyn VMId>)>;
 }
 
 /// VMServer is the integration point between Gevulot node and individual
@@ -52,7 +47,7 @@ pub trait ProgramRegistry: Send {
 pub struct VMServer {
     task_source: Arc<dyn TaskManager>,
     program_registry: Arc<Mutex<dyn ProgramRegistry>>,
-    file_storage: Arc<storage::File>,
+    file_data_dir: PathBuf,
 }
 
 impl Debug for VMServer {
@@ -65,12 +60,12 @@ impl VMServer {
     pub fn new(
         task_source: Arc<dyn TaskManager>,
         program_registry: Arc<Mutex<dyn ProgramRegistry>>,
-        file_storage: Arc<storage::File>,
+        file_data_dir: PathBuf,
     ) -> Self {
         VMServer {
             task_source,
             program_registry,
-            file_storage,
+            file_data_dir,
         }
     }
 
@@ -81,87 +76,44 @@ impl VMServer {
 
 #[tonic::async_trait]
 impl VmService for VMServer {
-    type GetFileStream = ReceiverStream<Result<FileResponse, Status>>;
-
     #[tracing::instrument]
     async fn get_task(
         &self,
         request: Request<TaskRequest>,
     ) -> Result<Response<TaskResponse>, Status> {
         tracing::info!("request for task: {:?}", request);
-        let mut program_registry = self.program_registry.lock().await;
-        let (program, vm_id) = program_registry
+        let (tx_hash, program_id, vm_id) = self
+            .program_registry
+            .lock()
+            .await
             .find_by_req(request.extensions())
-            .unwrap_or_else(|| panic!("unknown VM: {:?}", request.remote_addr()));
+            .ok_or_else(|| {
+                Status::new(
+                    Code::Unknown,
+                    format!("unknown VM address: {:?}", request.remote_addr()),
+                )
+            })?;
 
-        let reply = match self.task_source.get_task(program, vm_id).await {
-            Some(task) => {
-                tracing::info!("task has {} files", task.files.len());
-                grpc::TaskResponse {
-                    result: Some(grpc::task_response::Result::Task(grpc::Task {
-                        id: task.id.to_string(),
-                        name: task.name.to_string(),
-                        args: task.args,
-                        files: task.files,
-                    })),
-                }
-            }
+        let reply = match self.task_source.get_pending_task(tx_hash).await {
+            Some(task) => grpc::TaskResponse {
+                result: Some(grpc::task_response::Result::Task(grpc::Task {
+                    tx_hash: task.tx.to_string(),
+                    name: task.name.to_string(),
+                    args: task.args,
+                    files: task
+                        .files
+                        .into_iter()
+                        .map(|x| x.vm_file_path().to_string())
+                        .collect(),
+                })),
+            },
             None => grpc::TaskResponse {
                 result: Some(grpc::task_response::Result::Error(
                     grpc::TaskError::Unavailable.into(),
                 )),
             },
         };
-
         Ok(Response::new(reply))
-    }
-
-    #[tracing::instrument]
-    async fn get_file(
-        &self,
-        request: Request<FileRequest>,
-    ) -> Result<Response<Self::GetFileStream>, Status> {
-        tracing::info!("request for file: {:?}", request);
-
-        let req = request.into_inner();
-
-        // TODO(tuommaki): Handle following error in better way!
-        let mut file = self
-            .file_storage
-            .get_task_file(&req.task_id, &req.path)
-            .await
-            .expect("failed to read file");
-
-        let (tx, rx) = mpsc::channel(4);
-        tokio::spawn({
-            async move {
-                let mut buf: [u8; DATA_STREAM_CHUNK_SIZE] = [0; DATA_STREAM_CHUNK_SIZE];
-
-                loop {
-                    match file.read(&mut buf).await {
-                        Ok(0) => return Ok(()),
-                        Ok(n) => {
-                            if let Err(e) = tx
-                                .send(Ok(grpc::FileResponse {
-                                    result: Some(file_response::Result::Chunk(grpc::FileChunk {
-                                        data: buf[..n].to_vec(),
-                                    })),
-                                }))
-                                .await
-                            {
-                                tracing::error!("send {} bytes from file {}: {}", n, &req.path, &e);
-                                break;
-                            }
-                        }
-                        Err(e) => return Err(e),
-                    }
-                }
-
-                Ok(())
-            }
-        });
-
-        Ok(Response::new(ReceiverStream::new(rx)))
     }
 
     #[tracing::instrument]
@@ -169,34 +121,54 @@ impl VmService for VMServer {
         &self,
         request: Request<TaskResultRequest>,
     ) -> Result<Response<TaskResultResponse>, Status> {
-        let (program, vm_id) = self
+        let (tx_hash, program_id, vm_id) = match self
             .program_registry
             .lock()
             .await
             .find_by_req(request.extensions())
-            .unwrap_or_else(|| panic!("unknown VM: {:?}", request.remote_addr()));
+        {
+            Some(instance) => instance,
+            None => {
+                return Err(Status::new(
+                    Code::Unknown,
+                    format!("unknown VM address: {:?}", request.remote_addr()),
+                ));
+            }
+        };
 
-        let result = request.into_inner().result;
+        tracing::trace!(
+            "VMServer submit_result program:{}, vm_id:{vm_id}",
+            program_id.to_string()
+        );
 
-        if let Some(result) = result {
-            if let task_result_request::Result::Task(ref result) = result {
-                // Save resulting files.
-                for file in result.files.clone() {
-                    if let Err(err) = self
-                        .file_storage
-                        .save_task_file(&result.id, &file.path, file.data)
-                        .await
-                    {
-                        tracing::error!(
-                            "failed to save task {} result file {}",
-                            result.id,
-                            file.path
-                        );
-                    }
+        let request = request.into_inner();
+        let request_tx_hash: Hash = (&*request.tx_hash).into();
+
+        if tx_hash == request_tx_hash {
+            if let Some(result) = request.result {
+                if let Err(err) = self
+                    .task_source
+                    .submit_result(request_tx_hash, program_id, result)
+                    .await
+                {
+                    tracing::error!("Error during submit VM execution result:{err}");
                 }
             }
+        } else {
+            tracing::error!(
+                "submit_result different Tx_hash from vm_id:{} and request result:{}",
+                tx_hash.to_string(),
+                request_tx_hash.to_string()
+            );
+        }
 
-            self.task_source.submit_result(program, vm_id, result).await;
+        // Clean VM `/workspace` data.
+        let workspace_path = TaskVmFile::get_workspace_path(&self.file_data_dir, request_tx_hash);
+        if let Err(err) = std::fs::remove_dir_all(workspace_path) {
+            tracing::warn!(
+                "Execution workspace for Tx:{} didn't clean correctly because {err}",
+                tx_hash
+            );
         }
 
         let reply = grpc::TaskResultResponse { r#continue: false };

@@ -1,3 +1,13 @@
+use async_trait::async_trait;
+use eyre::Result;
+use gevulot_node::types::file::TaskVmFile;
+use qapi::{
+    futures::{QapiStream, QmpStreamTokio},
+    qmp,
+    qmp::StatusInfo,
+};
+use rand::{distributions::Alphanumeric, Rng};
+use serde_json::json;
 use std::{
     any::Any,
     collections::HashMap,
@@ -7,16 +17,6 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-
-use async_trait::async_trait;
-use eyre::Result;
-use qapi::{
-    futures::{QapiStream, QmpStreamTokio},
-    qmp,
-    qmp::StatusInfo,
-};
-use rand::{self, distributions::Alphanumeric, Rng};
-use serde_json::json;
 use tokio::{
     io::{ReadHalf, WriteHalf},
     net::{TcpStream, ToSocketAddrs},
@@ -53,10 +53,11 @@ fn u32_from_any(x: &dyn Any) -> u32 {
         None => panic!("incompatible VMId type"),
     }
 }
-
+#[derive(Debug)]
 pub struct QEMUVMHandle {
     child: Option<Child>,
     cid: u32,
+    tx_hash: Hash,
     program_id: Hash,
     workspace_volume_label: String,
     //qmp: Arc<Mutex<Qmp>>,
@@ -120,14 +121,14 @@ impl Qemu {
 }
 
 impl ProgramRegistry for Qemu {
-    fn find_by_req(&mut self, extensions: &Extensions) -> Option<(Hash, Arc<dyn VMId>)> {
+    fn find_by_req(&mut self, extensions: &Extensions) -> Option<(Hash, Hash, Arc<dyn VMId>)> {
         let conn_info = extensions.get::<VsockConnectInfo>().unwrap();
         match conn_info.peer_addr() {
             Some(addr) => {
                 self.vm_registry
                     .get(&addr.cid())
-                    .map(|handle| -> (Hash, Arc<dyn VMId>) {
-                        (handle.program_id, Arc::new(addr.cid()))
+                    .map(|handle| -> (Hash, Hash, Arc<dyn VMId>) {
+                        (handle.tx_hash, handle.program_id, Arc::new(addr.cid()))
                     })
             }
             None => None,
@@ -137,10 +138,16 @@ impl ProgramRegistry for Qemu {
 
 #[async_trait]
 impl Provider for Qemu {
-    async fn start_vm(&mut self, program: Program, req: ResourceRequest) -> Result<VMHandle> {
+    async fn start_vm(
+        &mut self,
+        tx_hash: Hash,
+        program: Program,
+        req: ResourceRequest,
+    ) -> Result<VMHandle> {
         // TODO:
         //  - Builder to construct QEMU flags
         //  - Handle GPUs
+        //  - Verify that the file exists before booting the VM. Otherwise the node panics because the QEMU won't start.
 
         let img_file = Path::new(&self.config.data_directory)
             .join(IMAGES_DIR)
@@ -155,12 +162,12 @@ impl Provider for Qemu {
             .to_lowercase();
 
         // XXX: This isn't async and will call out to `ops` for now.
-        tracing::debug!("creating workspace volume:{workspace_volume_label:?} for the VM");
-        let workspace_file =
-            nanos::volume::create(&self.config.data_directory, &workspace_volume_label, "2g")?
-                .into_os_string();
-        let workspace_file = workspace_file.to_str().expect("workspace volume path");
-        tracing::debug!("workspace volume:{workspace_file:?} created");
+        // tracing::debug!("creating workspace volume:{workspace_volume_label:?} for the VM");
+        // let workspace_file =
+        //     nanos::volume::create(&self.config.data_directory, &workspace_volume_label, "2g")?
+        //         .into_os_string();
+        // let workspace_file = workspace_file.to_str().expect("workspace volume path");
+        // tracing::debug!("workspace volume:{workspace_file:?} created");
 
         let cpus = req.cpus;
         let mem_req = req.mem;
@@ -175,6 +182,7 @@ impl Provider for Qemu {
         let qemu_vm_handle = QEMUVMHandle {
             child: None,
             cid,
+            tx_hash,
             program_id,
             workspace_volume_label,
             //qmp: Arc::new(Mutex::new(qmp)),
@@ -188,6 +196,15 @@ impl Provider for Qemu {
         // Update the child process field.
         let qemu_vm_handle = &mut self.vm_registry.get_mut(&cid).unwrap();
         let mut cmd = Command::new("/usr/bin/qemu-system-x86_64");
+
+        //define the VirtFs local path and create all necessary folder
+        let workspace_path = TaskVmFile::get_workspace_path(&self.config.data_directory, tx_hash);
+        // Ensure any necessary subdirectories exists.
+        if let Ok(false) = tokio::fs::try_exists(&workspace_path).await {
+            if let Err(err) = tokio::fs::create_dir_all(&workspace_path).await {
+                tracing::error!("create_dir_all fail for {workspace_path:?} err:{err}");
+            }
+        }
 
         cmd.args(["-machine", "q35"])
             .args([
@@ -229,21 +246,23 @@ impl Provider for Qemu {
                 "-drive",
                 &format!("file={},format=raw,if=none,id=hd1", &workspace_file),
             ])*/
-            // NETWORKING
-            .args([
-                "-device",
-                "virtio-net,bus=pci.3,addr=0x0,netdev=n0,mac=8e:97:45:7c:fb:3d",
-            ])
-            .args(["-netdev", "user,id=n0"])
             .args(["-display", "none"])
             .args(["-serial", "stdio"])
+            //VirtFs
+            .args([
+                "-virtfs",
+                &format!(
+                    "local,path={},mount_tag=1,security_model=none,multidevs=remap,id=hd1",
+                    &workspace_path.to_str().unwrap().to_string()
+                ),
+            ])
             // VSOCK
             .args(["-device", &format!("vhost-vsock-pci,guest-cid={cid}")])
             // QMP
             .args(["-qmp", &format!("tcp:localhost:{qmp_port},server")]);
 
         // TODO: When GPU argument handling is refactored, this should be fixed as well.
-        if self.config.gpu_devices.is_some() {
+        if self.config.gpu_devices.is_some() && req.gpus > 0 {
             cmd.args(parse_gpu_devices_into_qemu_params(
                 self.config.gpu_devices.as_ref().unwrap(),
             ));
@@ -251,7 +270,8 @@ impl Provider for Qemu {
 
         // Setup stdout & stderr log to VM execution.
         {
-            let log_dir_path = Path::new(&self.config.log_directory).join(program.hash.to_string());
+            // Change to have an unique log per Tx so that log are not mix between program execution.
+            let log_dir_path = Path::new(&self.config.log_directory).join(tx_hash.to_string());
             std::fs::create_dir_all(&log_dir_path)?;
             let stdout = File::options()
                 .create(true)
@@ -265,7 +285,11 @@ impl Provider for Qemu {
             cmd.stderr(Stdio::from(stderr));
         }
 
-        tracing::info!("starting QEMU. args:\n{:#?}\n", cmd.get_args());
+        tracing::info!(
+            "Tx:{tx_hash} Program:{} starting QEMU. args:\n{:#?}\n",
+            program.hash.to_string(),
+            cmd.get_args(),
+        );
 
         qemu_vm_handle.child = Some(cmd.spawn().expect("failed to start VM"));
 
@@ -285,7 +309,7 @@ impl Provider for Qemu {
 
                 match Qmp::new(format!("localhost:{qmp_port}")).await {
                     Ok(c) => client = Some(c),
-                    Err(_) => {
+                    Err(err) => {
                         retry_count += 1;
                         sleep(Duration::from_millis(10)).await;
                     }
@@ -293,17 +317,6 @@ impl Provider for Qemu {
             }
             client.unwrap()
         };
-
-        // Attach the workspace volume.
-        let err_add = qmp_client.blockdev_add("workspace", workspace_file).await;
-        if err_add.is_err() {
-            tracing::error!("blockdev_add failed: {:?}", err_add);
-        }
-
-        let err_add = qmp_client.device_add("workspace", 1).await;
-        if err_add.is_err() {
-            tracing::error!("device_add failed: {:?}", err_add);
-        }
 
         qmp_client.system_reset().await?;
 

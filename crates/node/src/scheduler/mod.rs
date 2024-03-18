@@ -1,48 +1,80 @@
 mod program_manager;
 mod resource_manager;
 
+use crate::cli::Config;
 use crate::storage::Database;
+use crate::txvalidation;
+use crate::txvalidation::CallbackSender;
+use crate::txvalidation::TxEventSender;
+use crate::txvalidation::TxResultSender;
+use crate::types::file::{move_vmfile, Output, TaskVmFile, TxFile, VmOutput};
 use crate::types::TaskState;
+use crate::vmm::qemu::Qemu;
 use crate::vmm::vm_server::grpc;
-use crate::vmm::{vm_server::TaskManager, VMId};
+use crate::vmm::vm_server::TaskManager;
+use crate::vmm::vm_server::VMServer;
 use crate::workflow::{WorkflowEngine, WorkflowError};
+use crate::{
+    mempool::Mempool,
+    types::{Hash, Task},
+};
 use async_trait::async_trait;
+use eyre::Result;
 use gevulot_node::types::transaction::Payload;
+use gevulot_node::types::transaction::Received;
 use gevulot_node::types::{TaskKind, Transaction};
 use libsecp256k1::SecretKey;
 pub use program_manager::ProgramManager;
 use rand::RngCore;
 pub use resource_manager::ResourceManager;
-
+use std::path::PathBuf;
 use std::time::Instant;
 use std::{
     collections::{HashMap, VecDeque},
     sync::Arc,
     time::Duration,
 };
-
-use eyre::Result;
+use systemstat::ByteSize;
+use systemstat::Platform;
+use systemstat::System;
+use tokio::sync::mpsc::UnboundedSender;
 use tokio::{
     sync::{Mutex, RwLock},
     time::sleep,
 };
-
-use crate::{
-    mempool::Mempool,
-    types::{Hash, Task},
-};
+use tonic::transport::Server;
 
 use self::program_manager::{ProgramError, ProgramHandle};
 use self::resource_manager::ResourceError;
 
 // If VM doesn't have running task within `MAX_VM_IDLE_RUN_TIME`, it will be terminated.
 const MAX_VM_IDLE_RUN_TIME: Duration = Duration::from_secs(10);
+// MAX_VM_RUN_TIME is the maximum time a VM can run no matter what.
+// The proof must be generated within this time limit.
+const MAX_VM_RUN_TIME: Duration = Duration::from_secs(1800);
 
 struct RunningTask {
     task: Task,
-    vm_id: Arc<dyn VMId>,
     task_scheduled: Instant,
     task_started: Instant,
+}
+
+struct SchedulerState {
+    pending_programs: VecDeque<(Hash, Hash)>,
+    running_tasks: HashMap<Hash, RunningTask>,
+    running_vms: HashMap<Hash, ProgramHandle>,
+    task_queue: HashMap<Hash, VecDeque<(Task, Instant)>>,
+}
+
+impl SchedulerState {
+    fn new() -> Self {
+        Self {
+            pending_programs: VecDeque::new(),
+            running_tasks: HashMap::new(),
+            running_vms: HashMap::new(),
+            task_queue: HashMap::new(),
+        }
+    }
 }
 
 // TODO: I believe `Scheduler` should be rather named `Node` at some point. It
@@ -58,20 +90,97 @@ pub struct Scheduler {
     workflow_engine: Arc<WorkflowEngine>,
     node_key: SecretKey,
 
-    pending_programs: Arc<Mutex<VecDeque<Hash>>>,
-    running_tasks: Arc<Mutex<Vec<RunningTask>>>,
-    running_vms: Arc<Mutex<Vec<ProgramHandle>>>,
-    #[allow(clippy::type_complexity)]
-    task_queue: Arc<Mutex<HashMap<Hash, VecDeque<(Task, Instant)>>>>,
+    state: Arc<Mutex<SchedulerState>>,
+    data_directory: PathBuf,
+    http_download_host: String,
+    tx_sender: TxEventSender<TxResultSender>,
+}
+
+pub async fn start_scheduler(
+    config: Arc<Config>,
+    storage: Arc<Database>,
+    mempool: Arc<RwLock<Mempool>>,
+    node_key: SecretKey,
+    tx_sender: UnboundedSender<(Transaction<Received>, Option<CallbackSender>)>,
+) -> Arc<Scheduler> {
+    let sys = System::new();
+    let num_gpus = if config.gpu_devices.is_some() { 1 } else { 0 };
+    let num_cpus = match config.num_cpus {
+        Some(cpus) => cpus,
+        None => num_cpus::get() as u64,
+    };
+    let available_mem = match config.mem_gb {
+        Some(mem_gb) => mem_gb * 1024 * 1024 * 1024,
+        None => {
+            let mem = sys
+                .memory()
+                .expect("failed to lookup available system memory");
+            mem.total.as_u64()
+        }
+    };
+
+    tracing::info!(
+        "node configured with {} CPUs, {} MEM and {} GPUs",
+        num_cpus,
+        ByteSize(available_mem).to_string_as(true),
+        num_gpus
+    );
+
+    let resource_manager = Arc::new(std::sync::Mutex::new(ResourceManager::new(
+        available_mem,
+        num_cpus,
+        num_gpus,
+    )));
+
+    // TODO(tuommaki): Handle provider from config.
+    let qemu_provider = Qemu::new(config.clone());
+    let vsock_stream = qemu_provider.vm_server_listener().expect("vsock bind");
+
+    let provider = Arc::new(Mutex::new(qemu_provider));
+    let program_manager =
+        ProgramManager::new(storage.clone(), provider.clone(), resource_manager.clone());
+
+    let workflow_engine = Arc::new(WorkflowEngine::new(storage.clone()));
+    let download_url_prefix = format!(
+        "http://{}:{}",
+        config.p2p_listen_addr.ip(),
+        config.http_download_port
+    );
+
+    let scheduler = Arc::new(Scheduler::new(
+        mempool.clone(),
+        storage.clone(),
+        program_manager,
+        workflow_engine,
+        node_key,
+        config.data_directory.clone(),
+        download_url_prefix,
+        txvalidation::TxEventSender::<txvalidation::TxResultSender>::build(tx_sender.clone()),
+    ));
+
+    let vm_server = VMServer::new(scheduler.clone(), provider, config.data_directory.clone());
+
+    // Start gRPC VSOCK server.
+    tokio::spawn(async move {
+        Server::builder()
+            .add_service(vm_server.grpc_server())
+            .serve_with_incoming(vsock_stream)
+            .await
+    });
+    scheduler
 }
 
 impl Scheduler {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         mempool: Arc<RwLock<Mempool>>,
         database: Arc<Database>,
         program_manager: ProgramManager,
         workflow_engine: Arc<WorkflowEngine>,
         node_key: SecretKey,
+        data_directory: PathBuf,
+        http_download_host: String,
+        tx_sender: TxEventSender<TxResultSender>,
     ) -> Self {
         Self {
             mempool,
@@ -80,10 +189,10 @@ impl Scheduler {
             workflow_engine,
             node_key,
 
-            pending_programs: Arc::new(Mutex::new(VecDeque::new())),
-            running_tasks: Arc::new(Mutex::new(vec![])),
-            running_vms: Arc::new(Mutex::new(vec![])),
-            task_queue: Arc::new(Mutex::new(HashMap::new())),
+            state: Arc::new(Mutex::new(SchedulerState::new())),
+            data_directory,
+            http_download_host,
+            tx_sender,
         }
     }
 
@@ -94,23 +203,25 @@ impl Scheduler {
 
             // Before scheduling new workload, try to start pending programs first.
             {
-                let mut pending_programs = self.pending_programs.lock().await;
-                while let Some(program_id) = pending_programs.pop_front() {
+                let mut state = self.state.lock().await;
+                while let Some((tx_hash, program_id)) = state.pending_programs.pop_front() {
                     match self
                         .program_manager
                         .lock()
                         .await
-                        .start_program(program_id, None)
+                        .start_program(tx_hash, program_id, None)
                         .await
                     {
-                        Ok(p) => self.running_vms.lock().await.push(p),
+                        Ok(p) => {
+                            state.running_vms.insert(tx_hash, p);
+                        }
                         Err(e) if e.is::<ResourceError>() => {
                             let err = e.downcast_ref::<ResourceError>().unwrap();
                             tracing::info!("resources unavailable: {}", err);
                             sleep(Duration::from_millis(500)).await;
 
                             // Return the popped program_id back to pending queue.
-                            pending_programs.push_front(program_id);
+                            state.pending_programs.push_front((tx_hash, program_id));
                             continue 'SCHEDULING_LOOP;
                         }
                         Err(e) => panic!("failed to start program: {e}"),
@@ -131,13 +242,13 @@ impl Scheduler {
 
             // Push the task into program's work queue.
             {
-                let mut task_queue_map = self.task_queue.lock().await;
-                if let Some(task_queue) = task_queue_map.get_mut(&task.program_id) {
-                    task_queue.push_back((task.clone(), Instant::now()));
+                let mut state = self.state.lock().await;
+                if let Some(program_task_queue) = state.task_queue.get_mut(&task.tx) {
+                    program_task_queue.push_back((task.clone(), Instant::now()));
                 } else {
                     let mut queue = VecDeque::new();
                     queue.push_back((task.clone(), Instant::now()));
-                    task_queue_map.insert(task.program_id, queue);
+                    state.task_queue.insert(task.tx, queue);
                 }
             }
 
@@ -146,10 +257,12 @@ impl Scheduler {
                 .program_manager
                 .lock()
                 .await
-                .start_program(task.program_id, None)
+                .start_program(task.tx, task.program_id, None)
                 .await
             {
-                Ok(p) => self.running_vms.lock().await.push(p),
+                Ok(p) => {
+                    self.state.lock().await.running_vms.insert(task.tx, p);
+                }
                 Err(ref err) => {
                     if let Some(err) = err.downcast_ref::<ResourceError>() {
                         let ResourceError::NotEnoughResources(msg) = err;
@@ -168,7 +281,7 @@ impl Scheduler {
                         // Drop the program's task queue. The program's not
                         // there so no need to have queue for it either.
                         let program_id = &task.program_id.clone();
-                        self.task_queue.lock().await.remove(program_id);
+                        self.state.lock().await.task_queue.remove(&task.tx);
                     }
                 }
             }
@@ -180,119 +293,101 @@ impl Scheduler {
         let mut mempool = self.mempool.write().await;
 
         // Check if next tx is ready for processing?
-        let tx = match mempool.peek() {
-            Some(tx) => {
-                if let Payload::Run { .. } = tx.payload {
-                    if self.database.has_assets_loaded(&tx.hash).await.unwrap() {
-                        mempool.next().unwrap()
-                    } else {
-                        // Assets are still downloading.
-                        // TODO: This can stall the whole processing pipeline!!
-                        // XXX: ....^.........^........^......^.......^........
-                        tracing::info!("assets for tx {} still loading", tx.hash);
-                        return None;
-                    }
-                } else {
-                    tracing::debug!("scheduling new task from tx {}", tx.hash);
-                    mempool.next().unwrap()
-                }
-            }
-            None => return None,
-        };
 
-        match self.workflow_engine.next_task(&tx).await {
-            Ok(res) => res,
-            Err(e) if e.is::<WorkflowError>() => {
-                let err = e.downcast_ref::<WorkflowError>();
-                match err {
-                    Some(WorkflowError::IncompatibleTransaction(_)) => {
-                        tracing::debug!("{}", e);
-                        None
-                    }
-                    _ => {
-                        tracing::error!(
-                            "workflow error, failed to compute next task for tx:{}: {}",
-                            tx.hash,
-                            e
-                        );
-                        None
+        match mempool.next() {
+            Some(tx) => match self.workflow_engine.next_task(&tx).await {
+                Ok(res) => res,
+                Err(e) if e.is::<WorkflowError>() => {
+                    let err = e.downcast_ref::<WorkflowError>();
+                    match err {
+                        Some(WorkflowError::IncompatibleTransaction(_)) => {
+                            tracing::debug!("{}", e);
+                            None
+                        }
+                        _ => {
+                            tracing::error!(
+                                "workflow error, failed to compute next task for tx:{}: {}",
+                                tx.hash,
+                                e
+                            );
+                            None
+                        }
                     }
                 }
-            }
-            Err(e) => {
-                tracing::error!("failed to compute next task for tx:{}: {}", tx.hash, e);
-                None
-            }
+                Err(e) => {
+                    tracing::error!("failed to compute next task for tx:{}: {}", tx.hash, e);
+                    None
+                }
+            },
+            None => None,
         }
     }
 
     async fn reschedule(&self, task: &Task) -> Result<()> {
         // The task is already pending in program's work queue. Push program ID
         // to pending programs queue to wait available resources.
-        self.pending_programs
+        self.state
             .lock()
             .await
-            .push_back(task.program_id);
+            .pending_programs
+            .push_back((task.tx, task.program_id));
         Ok(())
     }
 
     async fn reap_zombies(&self) {
-        let mut running_tasks = self.running_tasks.lock().await;
-        let mut running_vms = self.running_vms.lock().await;
+        let mut state = self.state.lock().await;
 
         let mut zombies = vec![];
-        for task in running_tasks.iter() {
-            // TODO: Add maximum running time limit for a task here.
-
-            if let Some(vm_handle) = running_vms
-                .iter()
-                .find(|x| x.vm_id().eq(task.vm_id.clone()))
-            {
+        for task in state.running_tasks.values() {
+            if let Some(vm_handle) = state.running_vms.get(&task.task.tx) {
                 tracing::trace!(
                     "inspecting if VM for task id {} is still alive",
                     task.task.id
                 );
                 match vm_handle.is_alive().await {
                     Ok(true) => {
-                        tracing::trace!("VM is still alive.");
-                        continue; // All good
+                        if task.task_started.elapsed() > MAX_VM_RUN_TIME {
+                            tracing::trace!("VM is still alive but has exceeded MAX_VM_RUN_TIME ({:#?} > {:#?}) - terminating it.", task.task_started.elapsed(), MAX_VM_RUN_TIME);
+                            zombies.push(task.task.tx);
+                        } else {
+                            tracing::trace!(
+                                "VM is still alive (run time: {:#?}).",
+                                task.task_started.elapsed()
+                            );
+                            continue; // All good
+                        }
                     }
                     Ok(false) => {
                         // VM is not running anymore.
                         tracing::warn!(
                             "VM {} running for task (id: {}, tx hash: {}) has stopped",
-                            task.vm_id,
+                            vm_handle.vm_id(),
                             task.task.id,
                             task.task.tx
                         );
-                        zombies.push((task.task.id, task.vm_id.clone()));
+                        zombies.push(task.task.tx);
                     }
                     Err(err) => {
-                        tracing::error!("failed to query VM state for {} running task (id: {}, tx hash: {}): {}", task.vm_id, task.task.id, task.task.tx, err);
-                        zombies.push((task.task.id, task.vm_id.clone()));
+                        tracing::error!("failed to query VM state for {} running task (id: {}, tx hash: {}): {}", vm_handle.vm_id(), task.task.id, task.task.tx, err);
+                        zombies.push(task.task.tx);
                     }
                 }
             } else {
                 // VM doesn't exist. Shouldn't happen...
-                tracing::error!("found task (id: {}, tx hash: {}) running on VM {} but not the corresponding running VM", task.task.id, task.task.tx, task.vm_id);
-                zombies.push((task.task.id, task.vm_id.clone()));
+                tracing::error!("found task (id: {}, tx hash: {}) running on VM but not the corresponding running VM", task.task.id, task.task.tx);
+                zombies.push(task.task.tx);
             }
         }
 
-        while let Some((task_id, vm_id)) = zombies.pop() {
-            tracing::debug!(
-                "reaping stopped task (id: {}) running on VM {}",
-                task_id,
-                vm_id
-            );
+        while let Some(task_tx) = zombies.pop() {
+            tracing::debug!("reaping stopped task (tx: {}) running on VM", task_tx,);
 
             // For each zombie task:
             // - Stop the VM.
             // - Remove the VM from the `running_vms`.
             // - Remove the task from the `running_tasks`.
             //
-            if let Some(idx) = running_vms.iter().position(|x| x.vm_id().eq(vm_id.clone())) {
-                let vm_handle = running_vms.swap_remove(idx);
+            if let Some(vm_handle) = state.running_vms.remove(&task_tx) {
                 if let Err(err) = self
                     .program_manager
                     .lock()
@@ -300,19 +395,18 @@ impl Scheduler {
                     .stop_program(vm_handle)
                     .await
                 {
-                    tracing::error!("failed to stop VM {}: {}", vm_id, err);
+                    tracing::error!("failed to stop VMvm_handle {}", err);
                 }
             }
 
-            if let Some(idx) = running_tasks.iter().position(|x| x.task.id == task_id) {
-                let _ = running_tasks.swap_remove(idx);
-            }
+            //TODO cancel associated Tx
+            state.running_tasks.remove(&task_tx);
         }
 
         // Now, reap VMs that don't have running task.
         let mut zombies = vec![];
-        for vm_handle in running_vms.iter() {
-            if !running_tasks.iter().any(|x| x.vm_id.eq(vm_handle.vm_id())) {
+        for (tx_hash, vm_handle) in state.running_vms.iter() {
+            if !state.running_tasks.contains_key(tx_hash) {
                 // XXX: Following is not 100% correct. It checks the runtime
                 // from the very beginning of the whole VM's start-up, which
                 // is not the same as idle runtime. However, right now each VM
@@ -325,24 +419,25 @@ impl Scheduler {
                         vm_handle.vm_id(),
                         vm_handle.run_time()
                     );
-                    zombies.push(vm_handle.vm_id());
+                    zombies.push(*tx_hash);
                 }
             }
         }
 
-        while let Some(vm_id) = zombies.pop() {
-            tracing::debug!("reaping idle VM {}", vm_id);
+        while let Some(tx_hash) = zombies.pop() {
+            tracing::debug!("reaping idle VM for tx {}", tx_hash);
 
-            if let Some(idx) = running_vms.iter().position(|x| x.vm_id().eq(vm_id.clone())) {
-                let vm_handle = running_vms.swap_remove(idx);
-                if let Err(err) = self
-                    .program_manager
-                    .lock()
-                    .await
-                    .stop_program(vm_handle)
-                    .await
-                {
-                    tracing::error!("failed to stop VM {}: {}", vm_id, err);
+            if let Some(idx) = state.running_vms.get(&tx_hash) {
+                if let Some(vm_handle) = state.running_vms.remove(&tx_hash) {
+                    if let Err(err) = self
+                        .program_manager
+                        .lock()
+                        .await
+                        .stop_program(vm_handle)
+                        .await
+                    {
+                        tracing::error!("failed to stop VM  for Tx {}: {}", tx_hash, err);
+                    }
                 }
             }
         }
@@ -351,40 +446,61 @@ impl Scheduler {
 
 #[async_trait]
 impl TaskManager for Scheduler {
-    async fn get_task(&self, program: Hash, vm_id: Arc<dyn VMId>) -> Option<grpc::Task> {
-        tracing::debug!(
-            "program {} running in vm_id {} requests for new task",
-            program,
-            vm_id
-        );
+    async fn get_running_task(&self, tx_hash: Hash) -> Option<Task> {
+        let state = self.state.lock().await;
+        state.running_tasks.get(&tx_hash).map(|t| t.task.clone())
+    }
 
-        if let Some(task_queue) = self.task_queue.lock().await.get(&program) {
-            if let Some((task, scheduled)) = task_queue.front() {
-                tracing::debug!(
-                    "task {} found for program {} running in vm_id {}",
-                    task.id,
-                    program,
-                    vm_id
-                );
+    async fn get_pending_task(&self, tx_hash: Hash) -> Option<Task> {
+        tracing::debug!("tx {} running requests for new task", tx_hash,);
+
+        // Ensure that the VM requesting for a task is not already executing one!
+        let mut state = self.state.lock().await;
+        if let Some(running_task) = state.running_tasks.get(&tx_hash) {
+            // A VM that is already running a task, requests for a new one.
+            // Mark the existing task as executed and stop the VM.
+            tracing::info!(
+                "task {} has been running {}sec but found to be orphaned. marking it as executed.",
+                running_task.task.id,
+                running_task.task_started.elapsed().as_secs()
+            );
+
+            tracing::debug!("terminating VM running tx {}", tx_hash);
+
+            if let Some(program_handle) = state.running_vms.remove(&tx_hash) {
+                if let Err(err) = self
+                    .program_manager
+                    .lock()
+                    .await
+                    .stop_program(program_handle)
+                    .await
+                {
+                    tracing::error!("failed to stop program {}: {}", tx_hash, err);
+                }
+            }
+
+            return None;
+        }
+
+        if let Some(task_queue) = state.task_queue.get_mut(&tx_hash) {
+            if let Some((task, scheduled)) = task_queue.pop_front() {
+                tracing::debug!("task {} found for tx {} running", task.id, tx_hash,);
                 tracing::info!(
                     "task {} started in {}ms",
                     task.id,
                     scheduled.elapsed().as_millis()
                 );
 
-                self.running_tasks.lock().await.push(RunningTask {
-                    task: task.clone(),
-                    vm_id: vm_id.clone(),
-                    task_scheduled: *scheduled,
-                    task_started: Instant::now(),
-                });
+                state.running_tasks.insert(
+                    task.tx,
+                    RunningTask {
+                        task: task.clone(),
+                        task_scheduled: scheduled,
+                        task_started: Instant::now(),
+                    },
+                );
 
-                return Some(grpc::Task {
-                    id: task.tx.to_string(),
-                    name: task.name.clone(),
-                    args: task.args.clone(),
-                    files: task.files.iter().map(|x| x.name.clone()).collect(),
-                });
+                return Some(task.clone());
             }
         }
 
@@ -393,91 +509,116 @@ impl TaskManager for Scheduler {
 
     async fn submit_result(
         &self,
+        tx_hash: Hash,
         program: Hash,
-        vm_id: Arc<dyn VMId>,
         result: grpc::task_result_request::Result,
-    ) -> bool {
-        dbg!(&result);
+    ) -> Result<(), String> {
+        tracing::debug!("submit_result tx:{tx_hash}  result:{result:#?}");
 
-        let grpc::task_result_request::Result::Task(result) = result else {
-            todo!("task failed; handle it correctly")
-        };
-
-        let task_id = &result.id;
-        let mut running_tasks = self.running_tasks.lock().await;
-        if let Some(idx) = running_tasks
-            .iter()
-            .position(|e| &e.task.tx.to_string() == task_id)
-        {
-            let running_task = running_tasks.swap_remove(idx);
+        let mut state = self.state.lock().await;
+        if let Some(running_task) = state.running_tasks.remove(&tx_hash) {
             tracing::info!(
-                "task {} finished in {}sec",
-                task_id,
+                "task of Tx {} finished in {}sec",
+                running_task.task.tx,
                 running_task.task_started.elapsed().as_secs()
             );
 
             if let Err(err) = self.database.mark_tx_executed(&running_task.task.tx).await {
                 tracing::error!(
-                    "failed to update transaction.executed => true - tx.hash: {} error:{err}",
+                    "failed to update transaction.executed => true - tx.hash: {}",
                     &running_task.task.tx
                 );
             }
 
-            let nonce = rand::thread_rng().next_u64();
-            let tx = match running_task.task.kind {
-                TaskKind::Proof => Transaction::new(
-                    Payload::Proof {
-                        parent: running_task.task.tx,
-                        prover: program,
-                        proof: result.data,
-                    },
-                    &self.node_key,
-                ),
-                TaskKind::Verification => Transaction::new(
-                    Payload::Verification {
-                        parent: running_task.task.tx,
-                        verifier: program,
-                        verification: result.data,
-                    },
-                    &self.node_key,
-                ),
-                TaskKind::PoW => {
-                    todo!("proof of work tasks not implemented yet");
-                }
-                TaskKind::Nop => {
-                    panic!(
-                        "impossible to receive result from a task ({}/{}) with task.kind == Nop",
-                        running_task.task.id, running_task.task.tx
-                    );
-                }
-            };
+            match result {
+                grpc::task_result_request::Result::Task(result) => {
+                    // Handle tx execution's result files so that they are available as an input for next task if needed.
+                    let executed_files: Vec<(TaskVmFile<VmOutput>, TxFile<Output>)> = result
+                        .files
+                        .into_iter()
+                        .map(|file| {
+                            let vm_file =
+                                TaskVmFile::<VmOutput>::new(file.path.to_string(), tx_hash);
+                            let dest = TxFile::<Output>::new(
+                                file.path,
+                                self.http_download_host.clone(),
+                                file.checksum[..].into(),
+                            );
+                            (vm_file, dest)
+                        })
+                        .collect();
 
-            let mut mempool = self.mempool.write().await;
-            if let Err(err) = mempool.add(tx.clone()).await {
-                tracing::error!("failed to add transaction to mempool: {}", err);
-            } else {
-                dbg!(tx);
-                tracing::info!("successfully added new tx to mempool from task result");
+                    //TODO -Verify that all expected files has been generated.
+
+                    let new_tx_files: Vec<TxFile<Output>> = executed_files
+                        .iter()
+                        .map(|(_, file)| file)
+                        .cloned()
+                        .collect();
+                    let nonce = rand::thread_rng().next_u64();
+                    let tx = match running_task.task.kind {
+                        TaskKind::Proof => Transaction::new(
+                            Payload::Proof {
+                                parent: running_task.task.tx,
+                                prover: program,
+                                proof: result.data,
+                                files: new_tx_files,
+                            },
+                            &self.node_key,
+                        ),
+                        TaskKind::Verification => Transaction::new(
+                            Payload::Verification {
+                                parent: running_task.task.tx,
+                                verifier: program,
+                                verification: result.data,
+                                files: new_tx_files,
+                            },
+                            &self.node_key,
+                        ),
+                        TaskKind::PoW => {
+                            todo!("proof of work tasks not implemented yet");
+                        }
+                        TaskKind::Nop => {
+                            panic!(
+                                "impossible to receive result from a task ({}/{}) with task.kind == Nop",
+                                running_task.task.id, running_task.task.tx
+                            );
+                        }
+                    };
+                    tracing::info!("Submit result Tx created:{}", tx.hash.to_string());
+
+                    // Move tx file from execution Tx path to new Tx path
+                    for (source_file, dest_file) in executed_files {
+                        move_vmfile(&source_file, &dest_file, &self.data_directory, tx.hash)
+                            .await.map_err(|err| format!("failed to move excution file from: {source_file:?} to: {dest_file:?} error: {err}"))?;
+                    }
+
+                    // Send tx to validation process.
+                    self.tx_sender.send_tx(tx).await.map_err(|err| {
+                        format!("failed to send Tx result to validation process: {}", err)
+                    })?;
+                }
+                grpc::task_result_request::Result::Error(error) => {
+                    tracing::warn!("Error during Tx:{tx_hash} execution:{error:?}");
+                }
             }
 
-            tracing::debug!("terminating VM {} running program {}", vm_id, program);
+            tracing::debug!("terminating VM running program {}", program);
 
-            let mut running_vms = self.running_vms.lock().await;
-            let idx = running_vms.iter().position(|e| e.vm_id().eq(vm_id.clone()));
-            if idx.is_some() {
-                let program_handle = running_vms.remove(idx.unwrap());
-                if let Err(err) = self
-                    .program_manager
-                    .lock()
-                    .await
-                    .stop_program(program_handle)
-                    .await
-                {
-                    tracing::error!("failed to stop program {}: {}", program, err);
+            match state.running_vms.remove(&tx_hash) {
+                Some(program_handle) => {
+                    self.program_manager
+                        .lock()
+                        .await
+                        .stop_program(program_handle)
+                        .await
+                        .map_err(|err| format!("failed to stop program {}: {}", program, err))?;
                 }
+                None => tracing::warn!("Running VM not found for a Tx result: {tx_hash}"),
             }
+            Ok(())
+        } else {
+            Err(format!("submit_result task:{tx_hash} not found."))
         }
-
-        return false;
     }
 }

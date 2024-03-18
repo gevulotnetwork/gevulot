@@ -3,11 +3,14 @@ FROM rust:1-bookworm
 COPY ./Cargo.* ./
 COPY ./crates ./crates
 
+# Add .git to crates/node in order to build version metadata into binary.
+COPY ./.git ./crates/node/.git
+
 RUN apt-get update && apt-get upgrade -y && apt-get install -y \
   libssl-dev \
   protobuf-compiler
 
-RUN cargo build --release
+RUN cargo build --features="node-binary" --release
 
 FROM debian:bookworm
 

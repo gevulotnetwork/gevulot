@@ -5,10 +5,13 @@ use super::{
     transaction,
 };
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize, sqlx::FromRow)]
 pub struct ResourceRequest {
+    #[sqlx(rename = "memory", try_from = "i64")]
     pub mem: u64,
+    #[sqlx(try_from = "i64")]
     pub cpus: u64,
+    #[sqlx(try_from = "i64")]
     pub gpus: u64,
 }
 
@@ -31,7 +34,7 @@ pub struct Program {
     pub image_file_url: String,
     pub image_file_checksum: String,
     #[sqlx(skip)]
-    pub limits: ResourceRequest,
+    pub limits: Option<ResourceRequest>,
 }
 
 impl From<transaction::ProgramMetadata> for Program {
@@ -42,7 +45,7 @@ impl From<transaction::ProgramMetadata> for Program {
             image_file_name: value.image_file_name,
             image_file_url: value.image_file_url,
             image_file_checksum: value.image_file_checksum,
-            limits: Default::default(),
+            limits: value.resource_requirements,
         }
     }
 }
@@ -55,6 +58,7 @@ impl From<Program> for transaction::ProgramMetadata {
             image_file_name: value.image_file_name,
             image_file_url: value.image_file_url,
             image_file_checksum: value.image_file_checksum,
+            resource_requirements: value.limits,
         }
     }
 }

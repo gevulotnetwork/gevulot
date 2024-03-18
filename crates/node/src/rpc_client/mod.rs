@@ -1,11 +1,14 @@
-use std::error::Error;
-
+use crate::types::rpc::RpcTransaction;
+use crate::types::{
+    rpc::RpcResponse,
+    transaction::{Created, TransactionTree},
+    Hash, Transaction,
+};
 use jsonrpsee::{
     core::{client::ClientT, params::ArrayParams},
     http_client::{HttpClient, HttpClientBuilder},
 };
-
-use crate::types::{rpc::RpcResponse, transaction::TransactionTree, Hash, Transaction};
+use std::error::Error;
 
 pub struct RpcClient {
     client: HttpClient,
@@ -19,26 +22,7 @@ impl RpcClient {
         RpcClient { client }
     }
 
-    pub async fn get_transaction(
-        &self,
-        tx_hash: &Hash,
-    ) -> Result<Option<Transaction>, Box<dyn Error>> {
-        let mut params = ArrayParams::new();
-        params.insert(tx_hash).expect("rpc params");
-
-        let resp = self
-            .client
-            .request::<RpcResponse<Transaction>, ArrayParams>("getTransaction", params)
-            .await
-            .expect("rpc request");
-
-        match resp {
-            RpcResponse::Ok(tx) => Ok(Some(tx)),
-            _ => Ok(None),
-        }
-    }
-
-    pub async fn send_transaction(&self, tx: &Transaction) -> Result<(), Box<dyn Error>> {
+    pub async fn send_transaction(&self, tx: &Transaction<Created>) -> Result<(), Box<dyn Error>> {
         let mut params = ArrayParams::new();
         params.insert(tx).expect("rpc params");
 
@@ -65,6 +49,19 @@ impl RpcClient {
             .await
             .expect("rpc request");
 
-        Ok(resp.unwrap())
+        resp.into()
+    }
+
+    pub async fn get_transaction(&self, tx_hash: &Hash) -> Result<RpcTransaction, Box<dyn Error>> {
+        let mut params = ArrayParams::new();
+        params.insert(tx_hash).expect("rpc params");
+
+        let resp = self
+            .client
+            .request::<RpcResponse<RpcTransaction>, ArrayParams>("getTransaction", params)
+            .await
+            .expect("rpc request");
+
+        resp.into()
     }
 }

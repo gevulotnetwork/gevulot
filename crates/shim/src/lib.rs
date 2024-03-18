@@ -1,13 +1,11 @@
+use grpc::vm_service_client::VmServiceClient;
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::time::Instant;
 use std::{path::Path, thread::sleep, time::Duration};
-
-use grpc::vm_service_client::VmServiceClient;
 use tokio::runtime::Runtime;
-use tokio::{io::AsyncWriteExt, sync::Mutex};
-use tokio_stream::StreamExt;
+use tokio::sync::Mutex;
 use tokio_vsock::VsockStream;
 use tonic::transport::{Channel, Endpoint, Uri};
 use tower::service_fn;
@@ -20,6 +18,9 @@ mod grpc {
 /// MOUNT_TIMEOUT is maximum amount of time to wait for workspace mount to be
 /// present in /proc/mounts.
 const MOUNT_TIMEOUT: Duration = Duration::from_secs(30);
+
+pub const WORKSPACE_PATH: &str = "/workspace";
+pub const WORKSPACE_NAME: &str = "workspace";
 
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub type TaskId = String;
@@ -59,9 +60,8 @@ impl Task {
 }
 
 struct GRPCClient {
-    /// `workspace` is the file directory used for task specific file downloads.
-    workspace: String,
-
+    // `workspace` is the file directory used for task specific file downloads.
+    // workspace: String,
     client: Mutex<VmServiceClient<Channel>>,
     rt: Runtime,
 }
@@ -90,7 +90,6 @@ impl GRPCClient {
         }
 
         Ok(GRPCClient {
-            workspace: workspace.to_string(),
             client: Mutex::new(client),
             rt,
         })
@@ -119,46 +118,65 @@ impl GRPCClient {
             })?
             .into_inner();
 
-        let mut task = match task_response.result {
+        let task = match task_response.result {
             Some(grpc::task_response::Result::Task(task)) => Task {
-                id: task.id,
+                id: task.tx_hash,
                 args: task.args,
                 files: task.files,
             },
-            Some(grpc::task_response::Result::Error(_err)) => {
-                todo!("construct proper error types from TaskError")
+            Some(grpc::task_response::Result::Error(code)) => {
+                return Err(Box::new(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    format!("get_task() resulted with error code {}", code),
+                )));
             }
             None => return Ok(None),
         };
 
-        let mut files = vec![];
-        for file in task.files {
-            let path = self
-                .rt
-                .block_on(self.download_file(task.id.clone(), file))?;
-            files.push(path);
-        }
-        task.files = files;
-
         Ok(Some(task))
     }
 
-    fn submit_result(&mut self, result: &TaskResult) -> Result<bool> {
-        // TODO(tuommaki): Implement result file transformation!
-        let task_result_req = grpc::TaskResultRequest {
-            result: Some(grpc::task_result_request::Result::Task(grpc::TaskResult {
-                id: result.id.clone(),
-                data: result.data.clone(),
-                files: result
+    fn submit_file(&mut self, file_path: &str) -> Result<[u8; 32]> {
+        let mut hasher = blake3::Hasher::new();
+        let fd =
+            // Add the file to the error because str file error doesn't indicate the file in error.
+            std::fs::File::open(file_path).map_err(|err| format!("{err} for file:{file_path}"))?;
+        hasher.update_reader(fd)?;
+        let checksum = hasher.finalize();
+        Ok(checksum.into())
+    }
+
+    fn submit_result(&mut self, task_id: String, result: Result<TaskResult>) -> Result<bool> {
+        let task_result_req = result
+            .and_then(|result| {
+                // Manage result files if any.
+                let files = result
                     .files
-                    .iter()
-                    .map(|f| grpc::File {
-                        path: f.to_string(),
-                        data: std::fs::read(f).expect("result file read"),
+                    .into_iter()
+                    .map(|file| {
+                        self.submit_file(&file).map(|checksum| crate::grpc::File {
+                            path: file,
+                            checksum: checksum.to_vec(),
+                        })
                     })
-                    .collect(),
-            })),
-        };
+                    .collect::<Result<Vec<_>>>()?;
+                Ok(grpc::TaskResultRequest {
+                    tx_hash: result.id,
+                    result: Some(grpc::task_result_request::Result::Task(grpc::TaskResult {
+                        data: result.data,
+                        files,
+                    })),
+                })
+            })
+            .unwrap_or_else(|err| {
+                println!("An error occurs during client execution:{:?}", err);
+                grpc::TaskResultRequest {
+                    tx_hash: task_id,
+                    result: Some(grpc::task_result_request::Result::Error(
+                        grpc::TaskError::Failed.into(),
+                    )),
+                }
+            });
 
         let response = self
             .rt
@@ -172,67 +190,6 @@ impl GRPCClient {
             .into_inner();
 
         Ok(response.r#continue)
-    }
-
-    /// download_file asks gRPC server for file with a `name` and writes it to
-    /// `workspace`.
-    async fn download_file(&self, task_id: TaskId, name: String) -> Result<String> {
-        let file_req = grpc::FileRequest {
-            task_id: task_id.clone(),
-            path: name.clone(),
-        };
-
-        let file_path = Path::new(&self.workspace).join(task_id).join(name.clone());
-        if let Some(parent) = file_path.parent() {
-            if let Ok(false) = tokio::fs::try_exists(parent).await {
-                tokio::fs::create_dir_all(parent).await?;
-            }
-        }
-        let path = match file_path.into_os_string().into_string() {
-            Ok(path) => path,
-            Err(e) => panic!("failed to construct path for a file to write: {:?}", e),
-        };
-
-        // Ensure any necessary subdirectories exists.
-        if let Some(parent) = Path::new(&path).parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .expect("task file mkdir");
-        }
-
-        let mut stream = self
-            .client
-            .lock()
-            .await
-            .get_file(file_req)
-            .await?
-            .into_inner();
-
-        let out_file = tokio::fs::File::create(path.clone()).await?;
-        let mut writer = tokio::io::BufWriter::new(out_file);
-
-        let mut total_bytes = 0;
-
-        while let Some(Ok(grpc::FileResponse { result: resp })) = stream.next().await {
-            match resp {
-                Some(grpc::file_response::Result::Chunk(file_chunk)) => {
-                    total_bytes += file_chunk.data.len();
-                    writer.write_all(file_chunk.data.as_ref()).await?;
-                }
-                Some(grpc::file_response::Result::Error(err)) => {
-                    panic!("error while fetching file {}: {}", name, err)
-                }
-                None => {
-                    println!("stream broken");
-                    break;
-                }
-            }
-        }
-        writer.flush().await?;
-
-        println!("downloaded {} bytes for {}", &total_bytes, &name);
-
-        Ok(path)
     }
 }
 
@@ -252,8 +209,8 @@ fn mount_present(mount_point: &str) -> Result<bool> {
 
 /// run function takes `callback` that is invoked with executable `Task` and
 /// which is expected to return `TaskResult`.
-pub fn run(callback: impl Fn(&Task) -> Result<TaskResult>) -> Result<()> {
-    let mut client = GRPCClient::new(8080, "/workspace")?;
+pub fn run(callback: impl Fn(Task) -> Result<TaskResult>) -> Result<()> {
+    let mut client = GRPCClient::new(8080, WORKSPACE_PATH)?;
 
     loop {
         let task = match client.get_task() {
@@ -264,14 +221,20 @@ pub fn run(callback: impl Fn(&Task) -> Result<TaskResult>) -> Result<()> {
             }
             Err(err) => {
                 println!("get_task(): {}", err);
-                sleep(Duration::from_secs(5));
-                continue;
+                return Err(err);
             }
         };
 
-        let result = callback(&task)?;
+        let task_id = task.id.clone();
+        let result = callback(task);
 
-        let should_continue = client.submit_result(&result)?;
+        let should_continue = match client.submit_result(task_id, result) {
+            Ok(res) => res,
+            Err(err) => {
+                println!("An error occurs during submit_result {err}");
+                return Err(err);
+            }
+        };
         if !should_continue {
             break;
         }

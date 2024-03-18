@@ -1,10 +1,3 @@
-use std::{
-    net::SocketAddr,
-    path::{Path, PathBuf},
-    sync::Arc,
-    time::Duration,
-};
-
 use clap::Parser;
 use gevulot_node::{
     rpc_client::RpcClient,
@@ -15,6 +8,12 @@ use gevulot_node::{
 };
 use libsecp256k1::SecretKey;
 use server::FileServer;
+use std::{
+    net::SocketAddr,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::Duration,
+};
 use tokio::time::sleep;
 
 mod server;
@@ -98,8 +97,7 @@ async fn deploy_programs(
         .await
         .expect("get_transaction");
 
-    assert!(read_tx.is_some());
-    assert_eq!(tx, read_tx.unwrap());
+    assert_eq!(tx.hash, read_tx.hash.into());
 
     Ok((tx.hash, prover.hash, verifier.hash))
 }
@@ -162,6 +160,7 @@ fn from_img_file_to_metadata(img_file: &Path, img_file_url: &str) -> ProgramMeta
         image_file_name: file_name,
         image_file_url: img_file_url.to_string(),
         image_file_checksum: checksum.to_string(),
+        resource_requirements: None,
     };
 
     program.update_hash();

@@ -27,10 +27,11 @@ pub struct Transaction {
     pub signature: Signature,
     pub propagated: bool,
     pub executed: bool,
+    pub created_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-impl From<&types::Transaction> for Transaction {
-    fn from(value: &types::Transaction) -> Self {
+impl From<&types::Transaction<transaction::Validated>> for Transaction {
+    fn from(value: &types::Transaction<transaction::Validated>) -> Self {
         let kind = match value.payload {
             transaction::Payload::Empty => Kind::Empty,
             transaction::Payload::Transfer { .. } => Kind::Transfer,
@@ -52,12 +53,13 @@ impl From<&types::Transaction> for Transaction {
             signature: value.signature,
             propagated: value.propagated,
             executed: value.executed,
+            created_at: None,
         }
     }
 }
 
-impl From<Transaction> for types::Transaction {
-    fn from(value: Transaction) -> types::Transaction {
+impl From<Transaction> for types::Transaction<transaction::Validated> {
+    fn from(value: Transaction) -> types::Transaction<transaction::Validated> {
         types::Transaction {
             author: value.author.into(),
             hash: value.hash,
@@ -68,6 +70,7 @@ impl From<Transaction> for types::Transaction {
             signature: value.signature,
             propagated: value.propagated,
             executed: value.executed,
+            state: transaction::Validated,
         }
     }
 }

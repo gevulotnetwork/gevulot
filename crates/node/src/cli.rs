@@ -6,6 +6,13 @@ use clap::{Args, Parser, Subcommand};
 pub struct Config {
     #[arg(
         long,
+        long_help = "Peer whitelist URL",
+        env = "GEVULOT_ACL_WHITELIST_URL"
+    )]
+    pub acl_whitelist_url: Option<String>,
+
+    #[arg(
+        long,
         long_help = "Directory where the node should store its data",
         env = "GEVULOT_DATA_DIRECTORY", 
         default_value_os_t = PathBuf::from("/var/lib/gevulot"),
@@ -35,6 +42,14 @@ pub struct Config {
         default_value_os_t = PathBuf::from("/var/lib/gevulot/log"),
     )]
     pub log_directory: PathBuf,
+
+    #[arg(
+        long,
+        long_help = "No execution flag. When set as true, the node does not execute transactions.",
+        env = "GEVULOT_NODE_NO_EXECUTION",
+        default_value_t = false
+    )]
+    pub no_execution: bool,
 
     #[arg(
         long,
@@ -94,34 +109,28 @@ pub struct Config {
     )]
     pub vsock_listen_port: u32,
 
-    #[arg(
-        long,
-        long_help = "Number of CPUs available",
-        env = "GEVULOT_CPUS",
-        default_value_t = 8
-    )]
-    pub num_cpus: u64,
+    #[arg(long, long_help = "Number of CPUs available", env = "GEVULOT_CPUS")]
+    pub num_cpus: Option<u64>,
 
     #[arg(
         long,
         long_help = "Amount of memory available (in GBs)",
-        env = "GEVULOT_MEM_GB",
-        default_value_t = 8
+        env = "GEVULOT_MEM_GB"
     )]
-    pub mem_gb: u64,
+    pub mem_gb: Option<u64>,
 
     #[arg(long, long_help = "GPU PCI devices", env = "GEVULOT_GPU_DEVICES")]
     pub gpu_devices: Option<String>,
 }
 
 #[derive(Debug, Args)]
-pub struct NodeKeyOptions {
+pub struct KeyOptions {
     #[arg(
         long,
-        long_help = "Node key filename",
+        long_help = "Key filename",
         default_value_os_t = PathBuf::from("/var/lib/gevulot/node.key"),
     )]
-    pub node_key_file: PathBuf,
+    pub key_file: PathBuf,
 }
 
 #[derive(Debug, Subcommand)]
@@ -150,6 +159,13 @@ pub enum PeerCommand {
 pub struct P2PBeaconConfig {
     #[arg(
         long,
+        long_help = "Directory where the node should store its data",
+        env = "GEVULOT_DATA_DIRECTORY", 
+        default_value_os_t = PathBuf::from("/var/lib/gevulot"),
+    )]
+    pub data_directory: PathBuf,
+    #[arg(
+        long,
         long_help = "P2P listen address",
         env = "GEVULOT_P2P_LISTEN_ADDR",
         default_value = "127.0.0.1:9999"
@@ -170,13 +186,26 @@ pub struct P2PBeaconConfig {
         default_value = "Pack my box with five dozen liquor jugs."
     )]
     pub p2p_psk_passphrase: String,
+
+    #[arg(
+        long,
+        long_help = "HTTP port for downloading transaction data between nodes. Uses same interface as P2P listen address.",
+        env = "GEVULOT_HTTP_PORT",
+        default_value = "9995"
+    )]
+    pub http_download_port: u16,
 }
 
 #[derive(Debug, Subcommand)]
 pub enum GenerateCommand {
+    Key {
+        #[command(flatten)]
+        options: KeyOptions,
+    },
+    // NOTE: Depracated. Will be eventually removed. Use `Key` instead.
     NodeKey {
         #[command(flatten)]
-        options: NodeKeyOptions,
+        options: KeyOptions,
     },
 }
 
