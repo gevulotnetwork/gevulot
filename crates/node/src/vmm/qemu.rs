@@ -1,3 +1,4 @@
+use crate::types::file::IMAGES_DIR;
 use async_trait::async_trait;
 use eyre::Result;
 use gevulot_node::types::file::TaskVmFile;
@@ -34,8 +35,6 @@ use crate::{
     types::{Hash, Program},
     vmm::ResourceRequest,
 };
-
-const IMAGES_DIR: &str = "images";
 
 impl VMId for u32 {
     fn as_any(&self) -> &dyn Any {

@@ -1,10 +1,16 @@
 use crate::types::transaction;
+use crate::types::transaction::ProgramData;
 use crate::types::Hash;
 use eyre::Result;
 use serde::Deserialize;
 use serde::Serialize;
 use std::path::Path;
 use std::path::PathBuf;
+
+// List of folder where the different file type are stored.
+pub const IMAGES_DIR: &str = "images";
+pub const TX_FILES_DIR: &str = "txfiles";
+pub const VM_FILES_DIR: &str = "vmfiles";
 
 // Describe a file use by an executed task.
 #[derive(Clone, Debug)]
@@ -22,6 +28,7 @@ impl TaskVmFile<()> {
     pub fn get_workspace_path(data_directory: &Path, tx_hash: Hash) -> PathBuf {
         PathBuf::new()
             .join(data_directory)
+            .join(TX_FILES_DIR)
             .join(tx_hash.to_string())
             .join(gevulot_shim::WORKSPACE_NAME)
     }
@@ -124,7 +131,8 @@ impl TaskVmFile<VmOutput> {
             file_path = file_path.strip_prefix("/").unwrap(); // Unwrap tested in `is_absolute()`.
         }
 
-        let mut path = PathBuf::from(&self.extension.0.to_string());
+        let mut path = PathBuf::from(TX_FILES_DIR);
+        path.push(self.extension.0.to_string());
         path.push(file_path);
         path
     }
@@ -187,42 +195,73 @@ pub struct DbFile {
 // AssetFile: Use to download the file asset associated to a Tx.
 #[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
 pub struct AssetFile {
-    tx_hash: String,
+    pub name: String,
+    pub file_path: PathBuf,
+    pub url: String,
+    pub checksum: Hash,
     // Verify_exist: define if the exist() verification do a real file system verification.
     // Some file must be download even if there's already present.
-    verify_exist: bool,
-    pub file: DbFile,
+    pub verify_exist: bool,
 }
+
 impl AssetFile {
-    pub fn new(
-        name: String,
-        url: String,
-        checksum: Hash,
-        tx_hash: String,
-        verify_exist: bool,
-    ) -> Self {
-        AssetFile {
-            tx_hash,
-            verify_exist,
-            file: DbFile {
-                name,
-                url,
+    pub fn new_from_program_data(data: &ProgramData, tx_hash: Hash) -> Result<Option<Self>> {
+        match data {
+            ProgramData::Input {
+                file_name,
+                file_url,
                 checksum,
-            },
+            } => {
+                //verify the url is valide.
+                reqwest::Url::parse(&file_url)?;
+                let mut file_name_path = Path::new(&file_name);
+                if file_name_path.is_absolute() {
+                    file_name_path = file_name_path.strip_prefix("/").unwrap(); // Unwrap tested in `is_absolute()`.
+                }
+
+                // Build file path
+                let mut file_path = PathBuf::from(TX_FILES_DIR);
+                file_path.push(tx_hash.to_string());
+                file_path.push(file_name_path);
+                Ok(Some(AssetFile {
+                    name: file_name.to_string(),
+                    file_path,
+                    url: file_url.to_string(),
+                    checksum: checksum.to_string().into(),
+                    verify_exist: false,
+                }))
+            }
+            ProgramData::Output { .. } => {
+                /* ProgramData::Output as input means it comes from another
+                program execution -> skip this branch. */
+                Ok(None)
+            }
         }
     }
 
-    // Get relative File path for downloaded files to be saved on the node.
-    // The path is is <Tx Hash>/<self.name>
-    pub fn get_save_path(&self) -> PathBuf {
-        let mut file_path = Path::new(&self.file.name);
-        if file_path.is_absolute() {
-            file_path = file_path.strip_prefix("/").unwrap(); // Unwrap tested in `is_absolute()`.
-        }
+    // pub fn new(
+    //     name: String,
+    //     url: String,
+    //     checksum: Hash,
+    //     tx_hash: String,
+    //     path_prefix: String,
+    //     verify_exist: bool,
+    // ) -> Self {
+    //     AssetFile {
+    //         tx_hash,
+    //         verify_exist,
+    //         path_prefix,
+    //         file: DbFile {
+    //             name,
+    //             url,
+    //             checksum,
+    //         },
+    //     }
+    // }
 
-        let mut path = PathBuf::from(&self.tx_hash);
-        path.push(file_path);
-        path
+    // Get relative File path for downloaded files to be saved on the node.
+    pub fn get_save_path(&self) -> &Path {
+        &self.file_path
     }
 
     // Get relative File path for downloaded files to be saved on the node.
@@ -271,26 +310,28 @@ impl TxFile<Output> {
     }
 
     pub fn into_download_file(self, tx_hash: Hash) -> AssetFile {
-        let relative_path = self.get_relatif_path(tx_hash).to_str().unwrap().to_string();
-        let url = format!("{}/{}", self.url, relative_path);
+        let relative_path = self.get_relatif_path(tx_hash);
+        let url = format!(
+            "{}/{}",
+            self.url,
+            relative_path.to_str().unwrap().to_string()
+        );
 
-        let file_name = Path::new(&self.name).file_name().unwrap_or_default();
-        let mut path = PathBuf::from(self.checksum.to_string());
-        path.push(file_name);
-        AssetFile::new(
-            path.to_str().unwrap().to_string(),
+        AssetFile {
+            name: self.name,
+            file_path: relative_path.into(),
             url,
-            self.checksum,
-            tx_hash.to_string(),
-            true,
-        )
+            checksum: self.checksum,
+            verify_exist: true,
+        }
     }
 
     // Relative File path for Proof or Verify Tx file.
     // The path is <Tx Hash>/<self.checksum>/<filename>
     pub fn get_relatif_path(&self, tx_hash: Hash) -> PathBuf {
         let file_name = Path::new(&self.name).file_name().unwrap_or_default();
-        let mut path = PathBuf::from(tx_hash.to_string());
+        let mut path = PathBuf::from(TX_FILES_DIR);
+        path.push(tx_hash.to_string());
         path.push(self.checksum.to_string());
         path.push(file_name);
         path
@@ -327,15 +368,16 @@ impl TxFile<Image> {
 
 impl From<TxFile<Image>> for AssetFile {
     fn from(file: TxFile<Image>) -> Self {
-        //image file has the image directory happened at the beginning.
-        let mut extention = PathBuf::from("images");
-        extention.push(file.extention.0.to_string());
-        AssetFile::new(
-            file.name,
-            file.url,
-            file.checksum,
-            extention.to_str().unwrap().to_string(),
-            false,
-        )
+        let mut file_path = PathBuf::from(IMAGES_DIR);
+        file_path.push(file.extention.0.to_string()); //Tx hash
+        file_path.push(&file.name);
+
+        AssetFile {
+            name: file.name,
+            file_path,
+            url: file.url,
+            checksum: file.checksum,
+            verify_exist: false,
+        }
     }
 }
