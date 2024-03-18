@@ -2,6 +2,7 @@ use clap::Parser;
 use gevulot_node::{
     rpc_client::RpcClient,
     types::{
+        program::ResourceRequest,
         transaction::{Payload, ProgramData, ProgramMetadata, Workflow, WorkflowStep},
         Hash, Transaction,
     },
@@ -160,7 +161,11 @@ fn from_img_file_to_metadata(img_file: &Path, img_file_url: &str) -> ProgramMeta
         image_file_name: file_name,
         image_file_url: img_file_url.to_string(),
         image_file_checksum: checksum.to_string(),
-        resource_requirements: None,
+        resource_requirements: Some(ResourceRequest {
+            cpus: 1,
+            mem: 128,
+            gpus: 0,
+        }),
     };
 
     program.update_hash();
