@@ -434,7 +434,6 @@ impl Transaction<Received> {
     }
 
     pub fn get_asset_list(&self) -> Result<Vec<AssetFile>> {
-        tracing::trace!("get_asset_list Transaction<Received:{self:?}");
         match &self.payload {
             transaction::Payload::Deploy {
                 prover, verifier, ..
@@ -449,7 +448,7 @@ impl Transaction<Received> {
                 .filter_map(|input| AssetFile::new_from_program_data(input, self.hash).transpose())
                 .collect(),
             Payload::Proof { files, .. } | Payload::Verification { files, .. } => {
-                //generated file during execution has already been moved. No Download.
+                // Generated file during execution has already been moved. No Download.
                 if self.state.is_from_tx_exec_result() {
                     Ok(vec![])
                 } else {

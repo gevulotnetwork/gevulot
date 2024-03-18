@@ -29,7 +29,7 @@ mod download_manager;
 mod event;
 
 // `ValidatedTxReceiver` provides a simple trait to decouple event based
-// transaction handling from the execution part.
+// Transaction handling from the execution part.
 #[async_trait::async_trait]
 pub trait ValidatedTxReceiver: Send + Sync {
     async fn send_new_tx(&mut self, tx: Transaction<Validated>) -> eyre::Result<()>;
@@ -61,8 +61,8 @@ pub enum EventProcessError {
 
 pub type CallbackSender = oneshot::Sender<Result<(), EventProcessError>>;
 
-//Sending Tx interface.
-//Some marker type to define the sender source.
+// Sending Tx interface.
+// Some marker type to define the sender source.
 pub struct RpcSender;
 #[derive(Clone)]
 pub struct P2pSender;
