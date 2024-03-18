@@ -218,6 +218,11 @@ impl Handshake for P2P {
 
         let peer_handshake_msg: protocol::Handshake = match node_conn_side {
             ConnectionSide::Initiator => {
+                // Send protocol version. Set to 0 .
+                stream.write_u64(0).await?;
+                // Get Responder protocol version.
+                let _protocol_version = stream.read_u64().await?;
+
                 // Serialize & send our handshake message.
                 let handshake_msg_bytes = bincode::serialize(&self.build_handshake_msg().await)
                     .map_err(|err| {
@@ -244,6 +249,11 @@ impl Handshake for P2P {
                 })?
             }
             ConnectionSide::Responder => {
+                // Get Initiator protocol version.
+                let _protocol_version = stream.read_u64().await?;
+                // Send protocol version. Set to 0 .
+                stream.write_u64(0).await?;
+
                 // Receive the handshake message from the connecting peer.
                 let buffer_len = stream.read_u32().await? as usize;
                 let mut buffer = vec![0; buffer_len];
