@@ -37,14 +37,33 @@ pub struct VmOutput(Hash);
 
 // Input file of a Task. VmInput store the node file path.
 impl TaskVmFile<VmInput> {
-    pub async fn open_task_file(
+    pub async fn copy_file_for_vm_exe(
         &self,
         data_dir: &PathBuf,
-    ) -> Result<tokio::io::BufReader<tokio::fs::File>> {
-        let path = PathBuf::new().join(data_dir).join(&self.extension.0);
-        tracing::trace!("TaskVmFile::open_task_file path:{path:?}",);
-        let fd = tokio::fs::File::open(path).await?;
-        Ok(tokio::io::BufReader::new(fd))
+        tx_hash: Hash,
+    ) -> Result<(), String> {
+        let tx_file = TaskVmFile::<VmOutput>::new(self.vm_file_path.clone(), tx_hash);
+        let to = PathBuf::new()
+            .join(data_dir)
+            .join(tx_file.get_relatif_path());
+        tracing::trace!("TaskVmFile copy_file_for_vm_exe  to:{to:?}",);
+        if !tokio::fs::try_exists(&to).await.unwrap_or(false) {
+            let from = PathBuf::new().join(data_dir).join(&self.extension.0);
+            if let Some(parent) = to.parent() {
+                tokio::fs::create_dir_all(parent)
+                    .await
+                    .map_err(|err| format!("mkdir {parent:?} fail:{err}"))?;
+            }
+            tracing::trace!("TaskVmFile copy_file_for_vm_exe from:{from:?} to:{to:?}",);
+            tokio::fs::copy(&from, &to)
+                .await
+                .map_err(|err| format!("copy file from:{from:?} to:{to:?} error:{err}"))?;
+
+            if !tokio::fs::try_exists(&to).await.unwrap_or(false) {
+                tracing::error!("copy vm file doesn't copy {to:?}",);
+            }
+        }
+        Ok(())
     }
 
     pub fn try_from_prg_data(

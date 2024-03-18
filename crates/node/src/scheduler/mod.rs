@@ -240,6 +240,27 @@ impl Scheduler {
                 }
             };
 
+            // Copy Task file to VM workspace
+            // Validate that everything is ok before starting the task.
+            for file in task.files.iter() {
+                if let Err(err) = file
+                    .copy_file_for_vm_exe(&self.data_directory, task.tx)
+                    .await
+                {
+                    tracing::error!(
+                        "An error occurs during Tx:{} task file copy for VM execution {err}",
+                        task.tx
+                    );
+                    if let Err(err) = self.database.mark_tx_executed(&task.tx).await {
+                        tracing::error!(
+                            "failed to update transaction.executed => true - tx.hash: {}",
+                            task.tx
+                        );
+                    }
+                    continue;
+                }
+            }
+
             // Push the task into program's work queue.
             {
                 let mut state = self.state.lock().await;
