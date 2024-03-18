@@ -163,6 +163,8 @@ pub async fn run_deploy_command(
     name: String,
     prover: String,
     verifier: String,
+    prover_name: Option<String>,
+    verifier_name: Option<String>,
     prover_img_url: Option<String>,
     verifier_img_url: Option<String>,
     prover_reqs: Option<ResourceRequest>,
@@ -186,10 +188,16 @@ pub async fn run_deploy_command(
     let verifier_data: FileData = file_data.swap_remove(0);
 
     let mut prover_prg_data: ProgramMetadata = prover_data.into();
+    if prover_name.is_some() {
+        prover_prg_data.name = prover_name.unwrap()
+    };
     prover_prg_data.resource_requirements = prover_reqs;
     prover_prg_data.update_hash();
     let prover_prg_hash = prover_prg_data.hash;
     let mut verifier_prg_data: ProgramMetadata = verifier_data.into();
+    if verifier_name.is_some() {
+        verifier_prg_data.name = verifier_name.unwrap();
+    }
     verifier_prg_data.resource_requirements = verifier_reqs;
     verifier_prg_data.update_hash();
     let verifier_prg_hash = verifier_prg_data.hash;

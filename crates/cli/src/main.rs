@@ -32,6 +32,7 @@ pub struct ArgConfiguration {
 }
 
 #[derive(Subcommand, Debug)]
+#[allow(clippy::large_enum_variant)]
 enum ConfCommands {
     /// Generate a private key file using --keyfile option.
     GenerateKey,
@@ -48,6 +49,12 @@ enum ConfCommands {
         /// file path containing the program image of the verifier to deploy or the hash  of the verifier image file (--verifier-img-url is mandatory in this case). If the file doesn't exist, the parameter is used as a hash.
         #[clap(short, long, value_name = "VERIFIER FILE or HASH")]
         verifier: String,
+        /// name of the prover.
+        #[clap(long, value_name = "PROVER NAME")]
+        prover_name: Option<String>,
+        /// name of the verifier.
+        #[clap(long, value_name = "VERIFIER NAME")]
+        verifier_name: Option<String>,
         /// url to get the prover image. If provided the prover will use this URL to get the prover image file. If not the cli tool starts a local HTTP server to serve the file to the node.
         #[clap(long = "proverimgurl", value_name = "PROVER URL")]
         prover_img_url: Option<String>,
@@ -189,6 +196,8 @@ async fn main() {
             name,
             prover,
             verifier,
+            prover_name,
+            verifier_name,
             prover_img_url,
             verifier_img_url,
             prover_cpus,
@@ -209,6 +218,8 @@ async fn main() {
                 name,
                 prover,
                 verifier,
+                prover_name,
+                verifier_name,
                 prover_img_url,
                 verifier_img_url,
                 prover_reqs,
