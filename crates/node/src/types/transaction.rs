@@ -442,38 +442,12 @@ impl Transaction<Received> {
                 TxFile::<Image>::try_from_prg_meta_data(prover).into(),
                 TxFile::<Image>::try_from_prg_meta_data(verifier).into(),
             ]),
-            Payload::Run { workflow } => {
-                workflow
-                    .steps
-                    .iter()
-                    .flat_map(|step| &step.inputs)
-                    .filter_map(|input| {
-                        match input {
-                            ProgramData::Input {
-                                file_name,
-                                file_url,
-                                checksum,
-                            } => Some((file_name, file_url, checksum)),
-                            ProgramData::Output { .. } => {
-                                /* ProgramData::Output as input means it comes from another
-                                program execution -> skip this branch. */
-                                None
-                            }
-                        }
-                    })
-                    .map(|(file_name, file_url, checksum)| {
-                        //verify the url is valide.
-                        reqwest::Url::parse(file_url)?;
-                        Ok(AssetFile::new(
-                            file_name.to_string(),
-                            file_url.clone(),
-                            checksum.to_string().into(),
-                            self.hash.to_string(),
-                            false,
-                        ))
-                    })
-                    .collect()
-            }
+            Payload::Run { workflow } => workflow
+                .steps
+                .iter()
+                .flat_map(|step| &step.inputs)
+                .filter_map(|input| AssetFile::new_from_program_data(input, self.hash).transpose())
+                .collect(),
             Payload::Proof { files, .. } | Payload::Verification { files, .. } => {
                 //generated file during execution has already been moved. No Download.
                 if self.state.is_from_tx_exec_result() {
