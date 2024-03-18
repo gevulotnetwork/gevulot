@@ -249,7 +249,7 @@ impl Handshake for P2P {
                 })?
             }
             ConnectionSide::Responder => {
-                // get Initiator protocol version.
+                // Get Initiator protocol version.
                 let _protocol_version = stream.read_u64().await?;
                 // Send protocol version. Set to 0 .
                 stream.write_u64(0).await?;
