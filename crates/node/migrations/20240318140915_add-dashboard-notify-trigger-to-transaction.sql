@@ -50,4 +50,5 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE TRIGGER notify_dashboard AFTER INSERT ON transaction FOR EACH ROW EXECUTE PROCEDURE public.dashboard_data_row();
+DROP TRIGGER IF EXISTS notify_dashboard ON transaction;
+CREATE CONSTRAINT TRIGGER notify_dashboard AFTER INSERT ON transaction DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE PROCEDURE public.dashboard_data_row();
