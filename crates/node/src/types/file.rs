@@ -53,7 +53,6 @@ impl TaskVmFile<VmInput> {
         let to = PathBuf::new()
             .join(data_dir)
             .join(tx_file.get_relatif_path());
-        tracing::trace!("TaskVmFile copy_file_for_vm_exe  to:{to:?}",);
         if !tokio::fs::try_exists(&to).await.unwrap_or(false) {
             let from = PathBuf::new().join(data_dir).join(&self.extension.0);
             if let Some(parent) = to.parent() {
@@ -61,7 +60,7 @@ impl TaskVmFile<VmInput> {
                     .await
                     .map_err(|err| format!("mkdir {parent:?} fail:{err}"))?;
             }
-            tracing::trace!("TaskVmFile copy_file_for_vm_exe from:{from:?} to:{to:?}",);
+            tracing::debug!("TaskVmFile copy_file_for_vm_exe from:{from:?} to:{to:?}",);
             tokio::fs::copy(&from, &to)
                 .await
                 .map_err(|err| format!("copy file from:{from:?} to:{to:?} error:{err}"))?;
@@ -213,7 +212,7 @@ impl AssetFile {
                 checksum,
             } => {
                 //verify the url is valide.
-                reqwest::Url::parse(&file_url)?;
+                reqwest::Url::parse(file_url)?;
                 let mut file_name_path = Path::new(&file_name);
                 if file_name_path.is_absolute() {
                     file_name_path = file_name_path.strip_prefix("/").unwrap(); // Unwrap tested in `is_absolute()`.
@@ -238,26 +237,6 @@ impl AssetFile {
             }
         }
     }
-
-    // pub fn new(
-    //     name: String,
-    //     url: String,
-    //     checksum: Hash,
-    //     tx_hash: String,
-    //     path_prefix: String,
-    //     verify_exist: bool,
-    // ) -> Self {
-    //     AssetFile {
-    //         tx_hash,
-    //         verify_exist,
-    //         path_prefix,
-    //         file: DbFile {
-    //             name,
-    //             url,
-    //             checksum,
-    //         },
-    //     }
-    // }
 
     // Get relative File path for downloaded files to be saved on the node.
     pub fn get_save_path(&self) -> &Path {
@@ -311,15 +290,11 @@ impl TxFile<Output> {
 
     pub fn into_download_file(self, tx_hash: Hash) -> AssetFile {
         let relative_path = self.get_relatif_path(tx_hash);
-        let url = format!(
-            "{}/{}",
-            self.url,
-            relative_path.to_str().unwrap().to_string()
-        );
+        let url = format!("{}/{}", self.url, relative_path.to_str().unwrap());
 
         AssetFile {
             name: self.name,
-            file_path: relative_path.into(),
+            file_path: relative_path,
             url,
             checksum: self.checksum,
             verify_exist: true,
