@@ -50,10 +50,10 @@ enum ConfCommands {
         #[clap(short, long, value_name = "VERIFIER FILE or HASH")]
         verifier: String,
         /// name of the prover.
-        #[clap(long, value_name = "PROVER NAME")]
+        #[clap(long = "provername", value_name = "PROVER NAME")]
         prover_name: Option<String>,
         /// name of the verifier.
-        #[clap(long, value_name = "VERIFIER NAME")]
+        #[clap(long = "verifiername", value_name = "VERIFIER NAME")]
         verifier_name: Option<String>,
         /// url to get the prover image. If provided the prover will use this URL to get the prover image file. If not the cli tool starts a local HTTP server to serve the file to the node.
         #[clap(long = "proverimgurl", value_name = "PROVER URL")]
