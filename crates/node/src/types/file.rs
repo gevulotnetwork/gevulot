@@ -28,7 +28,7 @@ impl TaskVmFile<()> {
     pub fn get_workspace_path(data_directory: &Path, tx_hash: Hash) -> PathBuf {
         PathBuf::new()
             .join(data_directory)
-            .join(TX_FILES_DIR)
+            .join(VM_FILES_DIR)
             .join(tx_hash.to_string())
             .join(gevulot_shim::WORKSPACE_NAME)
     }
@@ -44,6 +44,20 @@ pub struct VmOutput(Hash);
 
 // Input file of a Task. VmInput store the node file path.
 impl TaskVmFile<VmInput> {
+    pub fn new(vm_file_path: String, task_tx: Hash) -> Self {
+        let mut file_path = Path::new(&vm_file_path);
+        if file_path.is_absolute() {
+            file_path = file_path.strip_prefix("/").unwrap(); // Unwrap tested in `is_absolute()`.
+        }
+        let mut path = PathBuf::from(TX_FILES_DIR);
+        path.push(task_tx.to_string());
+        path.push(file_path);
+        TaskVmFile::<VmInput> {
+            vm_file_path,
+            extension: VmInput(path.to_str().unwrap().to_string()),
+        }
+    }
+
     pub async fn copy_file_for_vm_exe(
         &self,
         data_dir: &PathBuf,
@@ -53,21 +67,19 @@ impl TaskVmFile<VmInput> {
         let to = PathBuf::new()
             .join(data_dir)
             .join(tx_file.get_relatif_path());
-        if !tokio::fs::try_exists(&to).await.unwrap_or(false) {
-            let from = PathBuf::new().join(data_dir).join(&self.extension.0);
-            if let Some(parent) = to.parent() {
-                tokio::fs::create_dir_all(parent)
-                    .await
-                    .map_err(|err| format!("mkdir {parent:?} fail:{err}"))?;
-            }
-            tracing::debug!("TaskVmFile copy_file_for_vm_exe from:{from:?} to:{to:?}",);
-            tokio::fs::copy(&from, &to)
+        if let Some(parent) = to.parent() {
+            tokio::fs::create_dir_all(parent)
                 .await
-                .map_err(|err| format!("copy file from:{from:?} to:{to:?} error:{err}"))?;
+                .map_err(|err| format!("mkdir {parent:?} fail:{err}"))?;
+        }
+        let from = PathBuf::new().join(data_dir).join(&self.extension.0);
+        tracing::debug!("TaskVmFile copy_file_for_vm_exe from:{from:?} to:{to:?}",);
+        tokio::fs::copy(&from, &to)
+            .await
+            .map_err(|err| format!("copy file from:{from:?} to:{to:?} error:{err}"))?;
 
-            if !tokio::fs::try_exists(&to).await.unwrap_or(false) {
-                tracing::error!("copy vm file doesn't copy {to:?}",);
-            }
+        if !tokio::fs::try_exists(&to).await.unwrap_or(false) {
+            tracing::error!("copy vm file doesn't copy {to:?}",);
         }
         Ok(())
     }
@@ -79,12 +91,7 @@ impl TaskVmFile<VmInput> {
     ) -> Result<TaskVmFile<VmInput>, String> {
         match value {
             transaction::ProgramData::Input { file_name, .. } => {
-                let file = TaskVmFile::<VmOutput>::new(file_name.to_string(), tx_hash);
-                let node_file_path = file.get_relatif_path().to_str().unwrap().to_string();
-                Ok(TaskVmFile::<VmInput> {
-                    vm_file_path: file_name.to_string(),
-                    extension: VmInput(node_file_path),
-                })
+                Ok(TaskVmFile::<VmInput>::new(file_name.to_string(), tx_hash))
             }
             transaction::ProgramData::Output {
                 source_program: _,
@@ -130,7 +137,7 @@ impl TaskVmFile<VmOutput> {
             file_path = file_path.strip_prefix("/").unwrap(); // Unwrap tested in `is_absolute()`.
         }
 
-        let mut path = PathBuf::from(TX_FILES_DIR);
+        let mut path = PathBuf::from(VM_FILES_DIR);
         path.push(self.extension.0.to_string());
         path.push(file_path);
         path
@@ -211,7 +218,7 @@ impl AssetFile {
                 file_url,
                 checksum,
             } => {
-                //verify the url is valide.
+                // Verify the url is valide.
                 reqwest::Url::parse(file_url)?;
                 let mut file_name_path = Path::new(&file_name);
                 if file_name_path.is_absolute() {
