@@ -632,10 +632,14 @@ mod tests {
         let (peer1, tx_sender1, mut tx_receiver1) = create_peer("peer1").await;
         let (peer2, tx_sender2, mut tx_receiver2) = create_peer("peer2").await;
         let (peer3, tx_sender3, mut tx_receiver3) = create_peer("peer3").await;
+        let (peer4, tx_sender4, mut tx_receiver4) = create_peer("peer3").await;
+        let (peer5, tx_sender5, mut tx_receiver5) = create_peer("peer3").await;
 
         let bind_add = peer1.node().start_listening().await.expect("peer1 listen");
         let bind_add = peer2.node().start_listening().await.expect("peer2 listen");
         let bind_add = peer3.node().start_listening().await.expect("peer3 listen");
+        let bind_add = peer4.node().start_listening().await.expect("peer3 listen");
+        let bind_add = peer5.node().start_listening().await.expect("peer3 listen");
 
         peer2
             .node()
@@ -652,26 +656,54 @@ mod tests {
             .await
             .unwrap();
 
+        peer4
+            .node()
+            .connect(peer3.node().listening_addr().unwrap())
+            .await
+            .unwrap();
+
+        peer5
+            .node()
+            .connect(peer4.node().listening_addr().unwrap())
+            .await
+            .unwrap();
+
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-        assert_eq!(peer1.peer_http_port_list.read().await.len(), 2);
-        assert_eq!(peer2.peer_http_port_list.read().await.len(), 2);
-        assert_eq!(peer3.peer_http_port_list.read().await.len(), 2);
+        assert_eq!(peer1.peer_http_port_list.read().await.len(), 4);
+        assert_eq!(peer2.peer_http_port_list.read().await.len(), 4);
+        assert_eq!(peer3.peer_http_port_list.read().await.len(), 4);
+        assert_eq!(peer4.peer_http_port_list.read().await.len(), 4);
+        assert_eq!(peer5.peer_http_port_list.read().await.len(), 4);
 
         // Verify connections by sending Tx to all peers.
         let tx = new_tx();
         tx_sender2.send(tx.clone()).unwrap();
         let recv_tx = tx_receiver1.recv().await.expect("peer1 recv");
-
         assert_eq!(into_receive(tx.clone()), recv_tx.0);
+
         let recv_tx = tx_receiver3.recv().await.expect("peer3 recv");
-        assert_eq!(into_receive(tx), recv_tx.0);
+        assert_eq!(into_receive(tx.clone()), recv_tx.0);
+
+        let recv_tx = tx_receiver4.recv().await.expect("peer3 recv");
+        assert_eq!(into_receive(tx.clone()), recv_tx.0);
+
+        let recv_tx = tx_receiver5.recv().await.expect("peer3 recv");
+        assert_eq!(into_receive(tx.clone()), recv_tx.0);
 
         let tx = new_tx();
-        tx_sender3.send(tx.clone()).unwrap();
+        tx_sender5.send(tx.clone()).unwrap();
+
         let recv_tx = tx_receiver1.recv().await.expect("peer1 recv");
         assert_eq!(into_receive(tx.clone()), recv_tx.0);
+
         let recv_tx = tx_receiver2.recv().await.expect("peer2 recv");
+        assert_eq!(into_receive(tx.clone()), recv_tx.0);
+
+        let recv_tx = tx_receiver3.recv().await.expect("peer3 recv");
+        assert_eq!(into_receive(tx.clone()), recv_tx.0);
+
+        let recv_tx = tx_receiver4.recv().await.expect("peer3 recv");
         assert_eq!(into_receive(tx), recv_tx.0);
     }
 
