@@ -1,5 +1,6 @@
 use self::grpc::{TaskResponse, TaskResultRequest};
 use super::VMId;
+use crate::types::file::TaskVmFile;
 use crate::types::Hash;
 use crate::types::Task;
 use async_trait::async_trait;
@@ -158,6 +159,17 @@ impl VmService for VMServer {
                 "submit_result different Tx_hash from vm_id:{} and request result:{}",
                 tx_hash.to_string(),
                 request_tx_hash.to_string()
+            );
+        }
+
+        // Clean VM `<tx_hash>/workspace` data.
+        let workspace_path = TaskVmFile::get_workspace_path(&self.file_data_dir, request_tx_hash);
+        let to_remove_path = workspace_path.parent().unwrap(); //unwrap always a parent.
+        if let Err(err) = std::fs::remove_dir_all(to_remove_path) {
+            tracing::warn!(
+                "Execution workspace:{:?} for Tx:{} didn't clean correctly because {err}",
+                to_remove_path,
+                tx_hash
             );
         }
 
