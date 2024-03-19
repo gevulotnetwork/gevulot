@@ -268,8 +268,14 @@ impl TxEvent<NewTx> {
             tx.payload
         );
         newtx_receiver
-            .send_new_tx(tx)
-            .map_err(|err| EventProcessError::SaveTxError(format!("{err}")))
+            .send_new_tx(tx.clone())
+            .map_err(|err| {
+                let parent = tx.payload.get_parent_tx();
+                EventProcessError::SaveTxError(format!(
+                    "Save Tx:{} parent:{:?} fail because:{err}",
+                    tx.hash, parent
+                ))
+            })
             .await
     }
 }
