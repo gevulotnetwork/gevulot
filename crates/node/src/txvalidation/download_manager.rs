@@ -30,7 +30,7 @@ pub async fn download_asset_file(
     tracing::info!("download_file:{asset_file:?} local_directory_path:{local_directory_path:?} local_relative_file_path:{local_relative_file_path:?} http_peer_list:{http_peer_list:?}");
 
     // Detect if the file already exist. If yes don't download.
-    if asset_file.exist(&local_relative_file_path).await {
+    if asset_file.exist(local_relative_file_path).await {
         tracing::trace!(
             "download_asset_file: File already exist, skip download: {:#?}",
             asset_file.get_save_path()
@@ -40,7 +40,7 @@ pub async fn download_asset_file(
     let file_uri = asset_file.get_uri();
     let mut resp = match tokio::time::timeout(
         tokio::time::Duration::from_secs(5),
-        http_client.get(asset_file.file.url).send(),
+        http_client.get(&asset_file.url).send(),
     )
     .await
     {
@@ -50,7 +50,7 @@ pub async fn download_asset_file(
                 .iter()
                 .filter_map(|(peer, port)| {
                     port.map(|port| {
-                        //use parse to create an URL, no new method.
+                        // Use parse to create an URL, no new method.
                         let mut url =
                             reqwest::Url::parse(&format!("{HTTP_SERVER_SCHEME}localhost")).unwrap(); //unwrap always succeed
                         url.set_ip_host(peer.ip()).unwrap(); //unwrap always succeed
@@ -72,19 +72,19 @@ pub async fn download_asset_file(
             }
             resp.ok_or(eyre!(
                 "Download no host found to download the file: {}",
-                asset_file.file.name
+                asset_file.name
             ))?
         }
         Err(err) => {
             return Err(eyre!(
                 "Download file: {:?}, request send timeout.",
-                asset_file.file.name
+                asset_file.name
             ));
         }
     };
 
     if resp.status() == reqwest::StatusCode::OK {
-        let file_path = local_directory_path.join(&local_relative_file_path);
+        let file_path = local_directory_path.join(local_relative_file_path);
         // Ensure any necessary subdirectories exists.
         if let Some(parent) = file_path.parent() {
             if let Ok(false) = tokio::fs::try_exists(parent).await {
@@ -92,15 +92,15 @@ pub async fn download_asset_file(
             }
         }
 
-        //create a tmp file during download.
-        //this way the file won't be available for download from the other nodes
-        //until it is completely written.
+        // Create a tmp file during download.
+        // This way the file won't be available for download from the other nodes
+        // until it is completely written.
         let mut tmp_file_path = file_path.clone();
         tmp_file_path.set_extension("tmp");
         let fd = tokio::fs::File::create(&tmp_file_path).await?;
         let mut fd = tokio::io::BufWriter::new(fd);
 
-        //create the Hasher to verify the Hash
+        // Create the Hasher to verify the Hash
         let mut hasher = blake3::Hasher::new();
 
         loop {
@@ -113,13 +113,13 @@ pub async fn download_asset_file(
                 Ok(Err(_)) => {
                     return Err(eyre!(
                         "Download file: {:?}, connection timeout",
-                        asset_file.file.name
+                        asset_file.name
                     ));
                 }
                 Err(err) => {
                     return Err(eyre!(
                         "Download file: {:?}, http error:{err}",
-                        asset_file.file.name
+                        asset_file.name
                     ));
                 }
             }
@@ -127,11 +127,11 @@ pub async fn download_asset_file(
 
         fd.flush().await?;
         let checksum: crate::types::Hash = (&hasher.finalize()).into();
-        if checksum != asset_file.file.checksum {
+        if checksum != asset_file.checksum {
             Err(eyre!(
                 "download_file:{:?} bad checksum checksum:{checksum}  set_file.checksum:{}.",
-                asset_file.file.name,
-                asset_file.file.checksum
+                asset_file.name,
+                asset_file.checksum
             ))
         } else {
             //rename to original name
@@ -140,14 +140,14 @@ pub async fn download_asset_file(
     } else {
         Err(eyre!(
             "failed to download file: {:?} response status: {}",
-            asset_file.file.name,
+            asset_file.name,
             resp.status()
         ))
     }
 }
 
-//start the local server and serve the specified file path.
-//Return the server task join handle.
+// Start the local server and serve the specified file path.
+// Return the server task join handle.
 pub async fn serve_files(
     mut bind_addr: SocketAddr,
     http_download_port: u16,
@@ -207,7 +207,7 @@ async fn server_process_file(
     let file = match tokio::fs::File::open(&file_path).await {
         Ok(file) => file,
         Err(_) => {
-            //try to see if the file is currently being updated.
+            // Try to see if the file is currently being updated.
             file_path.set_extension("tmp");
             let (status_code, message) = if file_path.as_path().exists() {
                 (
