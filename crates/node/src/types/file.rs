@@ -72,9 +72,7 @@ impl TaskVmFile<VmInput> {
                 .await
                 .map_err(|err| format!("mkdir {parent:?} fail:{err}"))?;
         }
-        let from = PathBuf::new()
-            .join(data_dir)
-            .join(&self.extension.0.to_string());
+        let from = PathBuf::new().join(data_dir).join(&self.extension.0);
         tracing::debug!("TaskVmFile copy_file_for_vm_exe from:{from:?} to:{to:?}",);
         tokio::fs::copy(&from, &to)
             .await
