@@ -317,7 +317,7 @@ pub struct Image(Hash);
 impl TxFile<Image> {
     pub fn try_from_prg_meta_data(value: &transaction::ProgramMetadata) -> Self {
         TxFile::build(
-            value.name.clone(),
+            value.image_file_name.clone(),
             value.image_file_url.clone(),
             value.image_file_checksum.clone().into(),
             Image(value.hash),
