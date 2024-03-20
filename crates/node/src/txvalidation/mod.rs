@@ -231,12 +231,16 @@ pub async fn spawn_event_loop(
                         }
                      }
                      Some(Ok((res, callback))) = validation_okresult_futures.next() =>  {
+                        if let Err(ref err) = res {
+                            tracing::error!("Error during validate save tx process_event :{err}");
+                        }
                         if let Some(callback) = callback {
                             // Forget the result because if the RPC connection is closed the send can fail.
                             let _ = callback.send(res);
                         }
                      }
                      Some((res, callback)) = validation_errresult_futures.next() =>  {
+                        tracing::error!("Error during validate tx process_event :{res}");
                         if let Some(callback) = callback {
                             // Forget the result because if the RPC connection is closed the send can fail.
                             let _ = callback.send(Err(res));
