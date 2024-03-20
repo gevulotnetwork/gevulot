@@ -207,8 +207,10 @@ impl Handshake for P2P {
         let (noise_state, _) =
             noise::handshake_xx(self, &mut conn, noise_builder, Bytes::new()).await?;
 
-        // Save the noise state to be reused by Reading and Writing.
-        self.noise_states.write().insert(conn.addr(), noise_state);
+        {
+            // Save the noise state to be reused by Reading and Writing.
+            self.noise_states.write().insert(conn.addr(), noise_state);
+        }
 
         tracing::debug!("noise handshake finished. exchanging node information");
 
