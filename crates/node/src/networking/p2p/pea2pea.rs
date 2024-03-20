@@ -194,7 +194,7 @@ impl P2P {
         Ok(())
     }
 
-    // Work if only one connect is done at a time.
+    // Connect to peer at `addr`. Subsequent connections to newly discovered nodes are done in sequence, one at a time.
     // Peer can be fail because they was 2 simultaneous connection. One is fail and the orher is ok.
     pub async fn connect(&self, addr: SocketAddr) -> (BTreeSet<SocketAddr>, BTreeSet<SocketAddr>) {
         let mut connected_peers = BTreeSet::new();
@@ -583,7 +583,7 @@ mod tests {
     // but Peer1 and Peer2 are connected
     #[tokio::test]
     async fn test_one_peer_fail() {
-        // Start_logger(LevelFilter::ERROR);
+        //start_logger(LevelFilter::ERROR);
 
         let (peer1, tx_sender1, mut tx_receiver1) = create_peer("peer1").await;
         let (peer2, tx_sender2, mut tx_receiver2) = create_faulty_peer("peer2").await;
@@ -651,14 +651,14 @@ mod tests {
         let (peer1, tx_sender1, mut tx_receiver1) = create_peer("peer1").await;
         let (peer2, tx_sender2, mut tx_receiver2) = create_peer("peer2").await;
         let (peer3, tx_sender3, mut tx_receiver3) = create_peer("peer3").await;
-        let (peer4, tx_sender4, mut tx_receiver4) = create_peer("peer3").await;
-        let (peer5, tx_sender5, mut tx_receiver5) = create_peer("peer3").await;
+        let (peer4, tx_sender4, mut tx_receiver4) = create_peer("peer4").await;
+        let (peer5, tx_sender5, mut tx_receiver5) = create_peer("peer5").await;
 
         let bind_add = peer1.node().start_listening().await.expect("peer1 listen");
         let bind_add = peer2.node().start_listening().await.expect("peer2 listen");
         let bind_add = peer3.node().start_listening().await.expect("peer3 listen");
-        let bind_add = peer4.node().start_listening().await.expect("peer3 listen");
-        let bind_add = peer5.node().start_listening().await.expect("peer3 listen");
+        let bind_add = peer4.node().start_listening().await.expect("peer4 listen");
+        let bind_add = peer5.node().start_listening().await.expect("peer5 listen");
 
         let (new_peers, fail_peers) = peer2.connect(peer1.node().listening_addr().unwrap()).await;
         assert_eq!(new_peers.len(), 1);
@@ -692,10 +692,10 @@ mod tests {
         let recv_tx = tx_receiver3.recv().await.expect("peer3 recv");
         assert_eq!(into_receive(tx.clone()), recv_tx.0);
 
-        let recv_tx = tx_receiver4.recv().await.expect("peer3 recv");
+        let recv_tx = tx_receiver4.recv().await.expect("peer4 recv");
         assert_eq!(into_receive(tx.clone()), recv_tx.0);
 
-        let recv_tx = tx_receiver5.recv().await.expect("peer3 recv");
+        let recv_tx = tx_receiver5.recv().await.expect("peer5 recv");
         assert_eq!(into_receive(tx.clone()), recv_tx.0);
 
         let tx = new_tx();
@@ -710,7 +710,7 @@ mod tests {
         let recv_tx = tx_receiver3.recv().await.expect("peer3 recv");
         assert_eq!(into_receive(tx.clone()), recv_tx.0);
 
-        let recv_tx = tx_receiver4.recv().await.expect("peer3 recv");
+        let recv_tx = tx_receiver4.recv().await.expect("peer4 recv");
         assert_eq!(into_receive(tx), recv_tx.0);
     }
 
