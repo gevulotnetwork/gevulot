@@ -1,50 +1,38 @@
+use super::protocol;
 use crate::txvalidation::P2pSender;
 use crate::txvalidation::TxEventSender;
-use futures_util::Stream;
-use libsecp256k1::PublicKey;
-use std::{
-    collections::{BTreeSet, HashMap},
-    io,
-    net::{IpAddr, Ipv4Addr, SocketAddr},
-    str,
-    sync::Arc,
-};
-use tokio::io::AsyncReadExt;
-use tokio::io::AsyncWriteExt;
-use tokio::pin;
-use tokio_stream::StreamExt;
-
-use super::{noise, protocol};
 use bytes::{Bytes, BytesMut};
+use futures_util::Stream;
 use gevulot_node::types::{
     transaction::{Created, Validated},
     Transaction,
 };
-use parking_lot::RwLock;
+use libsecp256k1::PublicKey;
 use pea2pea::{
-    protocols::{Handshake, OnDisconnect, Reading, Writing},
-    Config, Connection, ConnectionSide, Node, Pea2Pea,
+    protocols::{Reading, Writing},
+    Config, ConnectionSide, Node, Pea2Pea,
 };
 use sha3::{Digest, Sha3_256};
+use std::{
+    collections::{BTreeSet, HashMap},
+    io,
+    net::SocketAddr,
+    str,
+    sync::Arc,
+};
+use tokio_util::codec::Decoder;
+use tokio_util::codec::Encoder;
 
 // NOTE: This P2P implementation is originally from `pea2pea` Noise handshake example.
 #[derive(Clone)]
 pub struct P2P {
     node: Node,
-    noise_states: Arc<RwLock<HashMap<SocketAddr, noise::State>>>,
-
-    // Peer connection map: <(P2P TCP connection's peer address) , (peer's advertised address in peer_list)>.
-    // This mapping is needed for proper cleanup on OnDisconnect.
-    peer_addr_mapping: Arc<tokio::sync::RwLock<HashMap<SocketAddr, SocketAddr>>>,
-    peer_list: Arc<tokio::sync::RwLock<BTreeSet<SocketAddr>>>,
+    pub peer_list: Arc<BTreeSet<SocketAddr>>,
     // Contains corrected peers that are used for asset file download.
-    pub peer_http_port_list: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>>,
-
     http_port: Option<u16>,
     nat_listen_addr: Option<SocketAddr>,
     psk: Vec<u8>,
     public_node_key: PublicKey,
-
     // Send Tx to the process loop.
     tx_sender: TxEventSender<P2pSender>,
 }
@@ -84,48 +72,19 @@ impl P2P {
 
         let instance = Self {
             node,
-            noise_states: Default::default(),
             psk: psk.to_vec(),
             public_node_key,
             peer_list: Default::default(),
-            peer_addr_mapping: Default::default(),
-            peer_http_port_list,
             http_port,
             nat_listen_addr,
             tx_sender,
         };
 
         // Enable node functionalities.
-        instance.enable_handshake().await;
+        //instance.enable_handshake().await;
         instance.enable_reading().await;
         instance.enable_writing().await;
-        instance.enable_disconnect().await;
-
-        // Start a new Tx stream loop.
-        tokio::spawn({
-            let p2p = instance.clone();
-            async move {
-                pin!(propagate_tx_stream);
-                while let Some(tx) = propagate_tx_stream.next().await {
-                    let tx_hash = tx.hash;
-                    let msg = protocol::Message::V0(protocol::MessageV0::Transaction(tx));
-                    let bs = match bincode::serialize(&msg) {
-                        Ok(bs) => bs,
-                        Err(err) => {
-                            tracing::error!(
-                                "Tx:{tx_hash} not send because serialization fail:{err}",
-                            );
-                            continue;
-                        }
-                    };
-                    let bs = Bytes::from(bs);
-                    tracing::debug!("broadcasting transaction {}", tx_hash);
-                    if let Err(err) = p2p.broadcast(bs) {
-                        tracing::error!("Tx:{tx_hash} not send because :{err}");
-                    }
-                }
-            }
-        });
+        //instance.enable_disconnect().await;
 
         instance
     }
@@ -136,266 +95,41 @@ impl P2P {
             tracing::error!("P2P error during received Tx sending:{err}");
         }
     }
+}
 
-    async fn build_handshake_msg(&self) -> protocol::Handshake {
-        let my_local_bind_addr = self.node.listening_addr().expect("p2p node listening_addr");
+pub struct TestCodec(tokio_util::codec::BytesCodec);
 
-        // If NAT listen address hasn't been set, default 0.0.0.0:<port> is
-        // used as a placeholder and replaced with the effective remote address
-        // observed by peer.
-        let my_p2p_listen_addr = self.nat_listen_addr.unwrap_or(SocketAddr::new(
-            IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)),
-            my_local_bind_addr.port(),
-        ));
-
-        let peers: BTreeSet<SocketAddr> = {
-            let mut peer_list = self.peer_list.write().await;
-            // Ensure that our local address is present.
-            (*peer_list).insert(my_p2p_listen_addr);
-            peer_list.clone()
-        };
-
-        protocol::Handshake::V1(protocol::HandshakeV1 {
-            my_p2p_listen_addr,
-            peers,
-            http_port: self.http_port,
-        })
-    }
-
-    async fn process_diagnostics_request(
-        &self,
-        source: SocketAddr,
-        req: protocol::DiagnosticsRequestKind,
-    ) -> io::Result<()> {
-        let resp = protocol::Message::V0(protocol::MessageV0::DiagnosticsResponse(
-            self.public_node_key,
-            protocol::DiagnosticsResponseV0::Version {
-                major: env!("CARGO_PKG_VERSION_MAJOR").parse::<u16>().unwrap(),
-                minor: env!("CARGO_PKG_VERSION_MINOR").parse::<u16>().unwrap(),
-                patch: env!("CARGO_PKG_VERSION_PATCH").parse::<u16>().unwrap(),
-                build: format!(
-                    "{}: {}",
-                    env!("VERGEN_BUILD_TIMESTAMP"),
-                    env!("VERGEN_GIT_DESCRIBE")
-                ),
-            },
-        ));
-
-        let bs =
-            Bytes::from(bincode::serialize(&resp).expect("diagnostics response serialization"));
-
-        // Reply to requester.
-        self.unicast(source, bs)?;
-
-        Ok(())
+impl Default for TestCodec {
+    fn default() -> Self {
+        let inner = tokio_util::codec::BytesCodec::new();
+        Self(inner)
     }
 }
 
-#[async_trait::async_trait]
-impl Handshake for P2P {
-    async fn perform_handshake(&self, mut conn: Connection) -> io::Result<Connection> {
-        tracing::debug!("starting handshake");
+impl Decoder for TestCodec {
+    type Item = BytesMut;
+    type Error = io::Error;
 
-        // Create the noise objects.
-        let noise_builder =
-            snow::Builder::new("Noise_XXpsk3_25519_ChaChaPoly_BLAKE2s".parse().unwrap());
-        let noise_keypair = noise_builder.generate_keypair().unwrap();
-        let noise_builder = noise_builder.local_private_key(&noise_keypair.private);
-        let noise_builder = noise_builder.psk(3, self.psk.as_slice());
+    fn decode(&mut self, src: &mut BytesMut) -> Result<Option<Self::Item>, Self::Error> {
+        self.0.decode(src)
+    }
+}
 
-        // Perform the noise handshake.
-        let (noise_state, _) =
-            noise::handshake_xx(self, &mut conn, noise_builder, Bytes::new()).await?;
+impl Encoder<Bytes> for TestCodec {
+    type Error = io::Error;
 
-        {
-            // Save the noise state to be reused by Reading and Writing.
-            self.noise_states.write().insert(conn.addr(), noise_state);
-        }
-
-        tracing::debug!("noise handshake finished. exchanging node information");
-
-        // Exchange application level handshake message.
-        let node_conn_side = !conn.side();
-        let stream = self.borrow_stream(&mut conn);
-
-        let peer_handshake_msg: protocol::Handshake = match node_conn_side {
-            ConnectionSide::Initiator => {
-                // Send protocol version. Set to 0 .
-                stream.write_u64(0).await?;
-                // Get Responder protocol version.
-                let _protocol_version = stream.read_u64().await?;
-
-                // Serialize & send our handshake message.
-                let handshake_msg_bytes = bincode::serialize(&self.build_handshake_msg().await)
-                    .map_err(|err| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            format!("serialize error:{err}"),
-                        )
-                    })?;
-                stream.write_u32(handshake_msg_bytes.len() as u32).await?;
-                stream.write_all(&handshake_msg_bytes).await?;
-
-                // Receive handshake message from peer.
-                let buffer_len = stream.read_u32().await? as usize;
-
-                // TODO: Validate buffer length.
-                let mut buffer = vec![0; buffer_len];
-                stream.read_exact(&mut buffer).await?;
-
-                bincode::deserialize(&buffer).map_err(|err| {
-                    std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        format!("deserialize error:{err}"),
-                    )
-                })?
-            }
-            ConnectionSide::Responder => {
-                // Get Initiator protocol version.
-                let _protocol_version = stream.read_u64().await?;
-                // Send protocol version. Set to 0 .
-                stream.write_u64(0).await?;
-
-                // Receive the handshake message from the connecting peer.
-                let buffer_len = stream.read_u32().await? as usize;
-                let mut buffer = vec![0; buffer_len];
-                stream.read_exact(&mut buffer).await?;
-
-                let peer_handshake_msg: protocol::Handshake = bincode::deserialize(&buffer)
-                    .map_err(|err| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            format!("deserialize error:{err}"),
-                        )
-                    })?;
-
-                // Serialize & send our handshake message.
-                let handshake_msg_bytes = bincode::serialize(&self.build_handshake_msg().await)
-                    .map_err(|err| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            format!("serialize error:{err}"),
-                        )
-                    })?;
-                stream.write_u32(handshake_msg_bytes.len() as u32).await?;
-                stream.write_all(&handshake_msg_bytes).await?;
-
-                peer_handshake_msg
-            }
-        };
-
-        #[allow(clippy::infallible_destructuring_match)]
-        let mut handshake_msg = match peer_handshake_msg {
-            protocol::Handshake::V1(msg) => msg,
-        };
-
-        // Current TCP connection peer address.
-        let remote_peer = stream.peer_addr().unwrap();
-
-        // Check if the remote P2P listen address needs to be updated from
-        // the one observed in connection.
-        let default_ip = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
-        if handshake_msg.my_p2p_listen_addr.ip() == default_ip {
-            handshake_msg
-                .peers
-                .remove(&handshake_msg.my_p2p_listen_addr);
-            handshake_msg.my_p2p_listen_addr =
-                SocketAddr::new(remote_peer.ip(), handshake_msg.my_p2p_listen_addr.port());
-            handshake_msg.peers.insert(handshake_msg.my_p2p_listen_addr);
-        }
-
-        tracing::debug!("tcp connection peer address: {}", remote_peer);
-        tracing::debug!(
-            "peer advertised address: {}",
-            handshake_msg.my_p2p_listen_addr
-        );
-
-        if tracing::enabled!(tracing::Level::DEBUG) {
-            let print_peers: Vec<String> =
-                handshake_msg.peers.iter().map(|x| x.to_string()).collect();
-            tracing::debug!("peer contact list addresses: {:#?}", print_peers);
-        }
-
-        // Advertised remote peer listen address.
-        let remote_peer_p2p_addr = &handshake_msg.my_p2p_listen_addr;
-
-        tracing::debug!(
-            "new connection: local:{} peer:{}",
-            self.node.listening_addr().unwrap(), // Cannot fail.
-            remote_peer
-        );
-
-        // Insert mapping between current TCP connection peer address and
-        // the advertised remote listen address (the one present in peer list).
-        self.peer_addr_mapping
-            .write()
-            .await
-            .insert(remote_peer, *remote_peer_p2p_addr);
-
-        // Capture the broadcasted public P2P listening addresses. These can be
-        // different than the actual bind addresses (e.g. w/ port forwarding).
-        let local_p2p_addr = self
-            .nat_listen_addr
-            .unwrap_or(self.node.listening_addr().unwrap());
-
-        // Merge remote peer list with the local one to get full view on the network.
-        let mut local_diff = {
-            let mut local_peer_list = self.peer_list.write().await;
-            let local_diff: BTreeSet<SocketAddr> = handshake_msg
-                .peers
-                .difference(&*local_peer_list)
-                .cloned()
-                .collect();
-
-            // Add current connection peer.
-            (*local_peer_list).insert(*remote_peer_p2p_addr);
-
-            local_diff
-        };
-
-        local_diff.remove(&local_p2p_addr);
-        local_diff.remove(remote_peer_p2p_addr);
-
-        let node = self.node();
-        // Connect to other not connected peers.
-        for addr in local_diff {
-            tokio::spawn({
-                let node = node.clone();
-                let peer_list = self.peer_list.clone();
-                async move {
-                    tracing::debug!("connect to {}", &addr);
-
-                    // XXX: If `node.connect(addr)` returns an error, it's omitted because:
-                    // 1.) It's already logged.
-                    // 2.) It often happens because there is already a connection between the 2 peers.
-                    match node.connect(addr).await {
-                        Ok(_) => {
-                            peer_list.write().await.insert(addr);
-                            tracing::debug!("connected to {}", &addr);
-                        }
-                        Err(err) => tracing::error!("failed to connect to {}: {}", &addr, err),
-                    };
-                }
-            });
-        }
-
-        self.peer_http_port_list
-            .write()
-            .await
-            .insert(handshake_msg.my_p2p_listen_addr, handshake_msg.http_port);
-
-        Ok(conn)
+    fn encode(&mut self, item: Bytes, dst: &mut BytesMut) -> Result<(), Self::Error> {
+        self.0.encode(item, dst)
     }
 }
 
 #[async_trait::async_trait]
 impl Reading for P2P {
     type Message = BytesMut;
-    type Codec = noise::Codec;
+    type Codec = TestCodec;
 
     fn codec(&self, addr: SocketAddr, _side: ConnectionSide) -> Self::Codec {
-        let state = self.noise_states.read().get(&addr).cloned().unwrap();
-        noise::Codec::new(2, u16::MAX as usize, state, self.node().span().clone())
+        Default::default()
     }
 
     async fn process_message(&self, source: SocketAddr, message: Self::Message) -> io::Result<()> {
@@ -422,10 +156,7 @@ impl Reading for P2P {
                     };
                     self.forward_tx(tx).await;
                 }
-                protocol::MessageV0::DiagnosticsRequest(kind) => {
-                    tracing::debug!("received diagnostics request");
-                    self.process_diagnostics_request(source, kind).await?;
-                }
+                protocol::MessageV0::DiagnosticsRequest(kind) => (),
                 // Nodes are expected to ignore the diagnostics response.
                 protocol::MessageV0::DiagnosticsResponse(_, _) => (),
             },
@@ -438,24 +169,10 @@ impl Reading for P2P {
 
 impl Writing for P2P {
     type Message = Bytes;
-    type Codec = noise::Codec;
+    type Codec = TestCodec;
 
     fn codec(&self, addr: SocketAddr, _side: ConnectionSide) -> Self::Codec {
-        let state = self.noise_states.write().remove(&addr).unwrap();
-        noise::Codec::new(2, u16::MAX as usize, state, self.node().span().clone())
-    }
-}
-
-#[async_trait::async_trait]
-impl OnDisconnect for P2P {
-    async fn on_disconnect(&self, addr: SocketAddr) {
-        if let Some(peer_conn_addr) = self.peer_addr_mapping.write().await.remove(&addr) {
-            let _ = self.peer_list.write().await.remove(&peer_conn_addr);
-            self.peer_http_port_list
-                .write()
-                .await
-                .remove(&peer_conn_addr);
-        }
+        Default::default()
     }
 }
 
@@ -511,39 +228,6 @@ mod tests {
         (peer, tx_sender, txreceiver1)
     }
 
-    async fn create_faulty_peer(
-        name: &str,
-    ) -> (
-        P2P,
-        UnboundedSender<Transaction<Validated>>,
-        UnboundedReceiver<(
-            Transaction<Received>,
-            Option<oneshot::Sender<Result<(), EventProcessError>>>,
-        )>,
-    ) {
-        let http_peer_list1: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>> =
-            Default::default();
-        let (tx_sender, p2p_recv1) = mpsc::unbounded_channel::<Transaction<Validated>>();
-        let p2p_stream1 = UnboundedReceiverStream::new(p2p_recv1);
-        let (sendtx1, txreceiver1) =
-            mpsc::unbounded_channel::<(Transaction<Received>, Option<CallbackSender>)>();
-        let txsender1 = txvalidation::TxEventSender::<txvalidation::P2pSender>::build(sendtx1);
-        let peer = P2P::new(
-            name,
-            "127.0.0.1:0".parse().unwrap(),
-            "secret passphrase",
-            PublicKey::from_secret_key(&SecretKey::default()),
-            None,
-            //set a bad public addr so that other peer can't connect.
-            Some("128.0.0.1:0".parse().unwrap()),
-            http_peer_list1,
-            txsender1,
-            p2p_stream1,
-        )
-        .await;
-        (peer, tx_sender, txreceiver1)
-    }
-
     // TODO: Change to `impl From` form when module declaration between main and lib is solved.
     fn into_receive(tx: Transaction<Validated>) -> Transaction<Received> {
         Transaction {
@@ -558,208 +242,10 @@ mod tests {
         }
     }
 
-    // Faulty Peer2 -> connect to Peer1
-    // Peer3 -> connect to Peer1
-    // Automaique Peer3 -> Peer2 connection fail
-    // but Peer1 and Peer2 are connected
-    #[tokio::test]
-    async fn test_one_peer_fail() {
-        //start_logger(LevelFilter::ERROR);
-
-        let (peer1, tx_sender1, mut tx_receiver1) = create_peer("peer1").await;
-        let (peer2, tx_sender2, mut tx_receiver2) = create_faulty_peer("peer2").await;
-        let (peer3, tx_sender3, mut tx_receiver3) = create_peer("peer3").await;
-
-        tracing::debug!("start listening");
-        peer1.node().start_listening().await.expect("peer1 listen");
-        peer2.node().start_listening().await.expect("peer2 listen");
-        peer3.node().start_listening().await.expect("peer3 listen");
-
-        tracing::debug!("connect peer2 to peer1");
-        peer2
-            .node()
-            .connect(peer1.node().listening_addr().unwrap())
-            .await
-            .unwrap();
-
-        assert_eq!(peer1.peer_http_port_list.read().await.len(), 1);
-        assert_eq!(peer2.peer_http_port_list.read().await.len(), 1);
-
-        tracing::debug!("connect peer3 to peer1");
-        peer3
-            .node()
-            .connect(peer1.node().listening_addr().unwrap())
-            .await
-            .unwrap();
-
-        // Wait for the connection fail timeout.
-        tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
-
-        assert_eq!(peer1.peer_http_port_list.read().await.len(), 2);
-        assert_eq!(peer2.peer_http_port_list.read().await.len(), 1);
-        assert_eq!(peer3.peer_http_port_list.read().await.len(), 1);
-
-        //  Peer2 -> Peer1 works
-        let tx = new_tx();
-        tx_sender2.send(tx.clone()).unwrap();
-        let recv_tx = tx_receiver1.recv().await.expect("peer1 recv");
-        assert_eq!(into_receive(tx.clone()), recv_tx.0);
-
-        // Peer2 not connectred to Peer3
-        match tx_receiver3.try_recv() {
-            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => (),
-            _ => panic!("Peer2 connected and it shouldn't"),
-        }
-
-        // Peer3 -> Peer1 works
-        let tx = new_tx();
-        tx_sender3.send(tx.clone()).unwrap();
-        let recv_tx = tx_receiver1.recv().await.expect("peer1 recv");
-        assert_eq!(into_receive(tx.clone()), recv_tx.0);
-
-        //  Peer2 not connected to Peer3
-        match tx_receiver2.try_recv() {
-            Err(tokio::sync::mpsc::error::TryRecvError::Empty) => (),
-            _ => panic!("Peer2 connected and it shouldn't"),
-        }
-    }
-
-    // 3 peers
-    // Peer2 connect to Peer1.
-    // Peer3 connect to Peer1.
-    // Peer3 automatically connect to Peer2.
-    #[tokio::test]
-    async fn test_peer_list_inter_connection() {
-        //start_logger(LevelFilter::ERROR);
-
-        let (peer1, tx_sender1, mut tx_receiver1) = create_peer("peer1").await;
-        let (peer2, tx_sender2, mut tx_receiver2) = create_peer("peer2").await;
-        let (peer3, tx_sender3, mut tx_receiver3) = create_peer("peer3").await;
-
-        let bind_add = peer1.node().start_listening().await.expect("peer1 listen");
-        let bind_add = peer2.node().start_listening().await.expect("peer2 listen");
-        let bind_add = peer3.node().start_listening().await.expect("peer3 listen");
-
-        peer2
-            .node()
-            .connect(peer1.node().listening_addr().unwrap())
-            .await
-            .unwrap();
-
-        assert_eq!(peer1.peer_http_port_list.read().await.len(), 1);
-        assert_eq!(peer2.peer_http_port_list.read().await.len(), 1);
-
-        peer3
-            .node()
-            .connect(peer1.node().listening_addr().unwrap())
-            .await
-            .unwrap();
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-        assert_eq!(peer1.peer_http_port_list.read().await.len(), 2);
-        assert_eq!(peer2.peer_http_port_list.read().await.len(), 2);
-        assert_eq!(peer3.peer_http_port_list.read().await.len(), 2);
-
-        // Verify connections by sending Tx to all peers.
-        let tx = new_tx();
-        tx_sender2.send(tx.clone()).unwrap();
-        let recv_tx = tx_receiver1.recv().await.expect("peer1 recv");
-
-        assert_eq!(into_receive(tx.clone()), recv_tx.0);
-        let recv_tx = tx_receiver3.recv().await.expect("peer3 recv");
-        assert_eq!(into_receive(tx), recv_tx.0);
-
-        let tx = new_tx();
-        tx_sender3.send(tx.clone()).unwrap();
-        let recv_tx = tx_receiver1.recv().await.expect("peer1 recv");
-        assert_eq!(into_receive(tx.clone()), recv_tx.0);
-        let recv_tx = tx_receiver2.recv().await.expect("peer2 recv");
-        assert_eq!(into_receive(tx), recv_tx.0);
-    }
-
-    // Test  Peer2 that  disconnect.
-    // It should be removed from Peer1 peers list.
-    #[tokio::test]
-    async fn test_two_peers_disconnect() {
-        //start_logger(LevelFilter::ERROR);
-
-        let (peer1, tx_sender1, mut tx_receiver1) = create_peer("peer1").await;
-        peer1.node().start_listening().await.expect("peer1 listen");
-
-        {
-            let (peer2, tx_sender2, mut tx_receiver2) = create_peer("peer2").await;
-            peer2.node().start_listening().await.expect("peer2 listen");
-
-            peer1
-                .node()
-                .connect(peer2.node().listening_addr().unwrap())
-                .await
-                .unwrap();
-            assert_eq!(peer1.peer_http_port_list.read().await.len(), 1);
-            assert_eq!(peer2.peer_http_port_list.read().await.len(), 1);
-
-            let tx = new_tx();
-            tx_sender1.send(tx.clone()).unwrap();
-            let recv_tx = tx_receiver2.recv().await.expect("peer2 recv");
-            assert_eq!(into_receive(tx), recv_tx.0);
-
-            let tx = new_tx();
-            tx_sender2.send(tx.clone()).unwrap();
-            let recv_tx = tx_receiver1.recv().await.expect("peer1 recv");
-            assert_eq!(into_receive(tx), recv_tx.0);
-
-            // Force manual disconnect because dropping the node don't disconnect peers.
-            let peers = peer2.node().connected_addrs();
-            for addr in peers {
-                peer2.node().disconnect(addr).await;
-            }
-        }
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-        let tx = new_tx();
-        tx_sender1.send(tx).unwrap();
-        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-        assert_eq!(peer1.peer_list.read().await.len(), 1);
-        assert!(peer1.peer_addr_mapping.read().await.is_empty());
-        assert_eq!(peer1.peer_http_port_list.read().await.len(), 0);
-        assert_eq!(peer1.peer_http_port_list.read().await.len(), 0);
-    }
-
-    // Test 2 peers that connect each other.
-    #[tokio::test]
-    async fn test_two_peers() {
-        //start_logger(LevelFilter::ERROR);
-
-        let (peer1, tx_sender1, mut tx_receiver1) = create_peer("peer1").await;
-        let (peer2, tx_sender2, mut tx_receiver2) = create_peer("peer2").await;
-
-        peer1.node().start_listening().await.expect("peer1 listen");
-        peer2.node().start_listening().await.expect("peer2 listen");
-
-        peer2
-            .node()
-            .connect(peer1.node().listening_addr().unwrap())
-            .await
-            .unwrap();
-
-        let tx = new_tx();
-        tx_sender1.send(tx.clone()).unwrap();
-        let recv_tx = tx_receiver2.recv().await.expect("peer2 recv");
-        assert_eq!(into_receive(tx), recv_tx.0);
-
-        let tx = new_tx();
-        tx_sender2.send(tx.clone()).unwrap();
-        let recv_tx = tx_receiver1.recv().await.expect("peer1 recv");
-        assert_eq!(into_receive(tx), recv_tx.0);
-    }
-
     // Test 20 peers that connect each other.
     #[tokio::test]
     async fn test_twenty_peers() {
-        start_logger(LevelFilter::DEBUG);
+        start_logger(LevelFilter::TRACE);
 
         struct Peer {
             p2p: P2P,
@@ -787,10 +273,43 @@ mod tests {
                     tx_receiver: tuple.2,
                 }
             }
+
+            fn send_tx(&self, tx: Transaction<Validated>) -> Result<()> {
+                let tx_hash = tx.hash;
+                let msg = protocol::Message::V0(protocol::MessageV0::Transaction(tx));
+                let bs = bincode::serialize(&msg)?;
+                let bs = Bytes::from(bs);
+                tracing::debug!("broadcasting transaction {}", tx_hash);
+                self.p2p.broadcast(bs)?;
+                Ok(())
+            }
         }
 
         tracing::debug!("creating P2P beacon node");
-        let p2p_beacon_node = Peer::new(create_peer(&format!("p2p-beacon")).await);
+        let mut p2p_beacon_node = Peer::new(create_peer(&format!("p2p-beacon")).await);
+
+        let num_nodes = 20;
+        let mut peers = Vec::with_capacity(num_nodes);
+        let mut peer_list: BTreeSet<SocketAddr> = BTreeSet::new();
+
+        //first connect
+        for i in 1..num_nodes {
+            tracing::debug!("creating peer {i}");
+            let peer = Peer::new(create_peer(&format!("peer{i}")).await);
+
+            tracing::debug!("peer{i} starts listening");
+            let addr = peer
+                .p2p
+                .node()
+                .start_listening()
+                .await
+                .expect("peer{i] listen");
+            tracing::debug!("peer{i} is listening");
+            peers.push((peer, addr));
+            peer_list.insert(addr);
+        }
+
+        p2p_beacon_node.p2p.peer_list = Arc::new(peer_list);
 
         tracing::debug!("P2P beacon node starts listening");
         p2p_beacon_node
@@ -801,21 +320,8 @@ mod tests {
             .expect("p2p_beacon_node start_listening()");
         tracing::debug!("P2P beacon node is listening");
 
-        let num_nodes = 20;
-        let mut peers = Vec::with_capacity(num_nodes);
-
-        for i in 1..num_nodes {
-            tracing::debug!("creating peer {i}");
-            let peer = Peer::new(create_peer(&format!("peer{i}")).await);
-
-            tracing::debug!("peer{i} starts listening");
-            peer.p2p
-                .node()
-                .start_listening()
-                .await
-                .expect("peer{i] listen");
-            tracing::debug!("peer{i} is listening");
-
+        let mut connected_nodes: BTreeSet<SocketAddr> = BTreeSet::new();
+        for (i, (peer, addr)) in peers.iter().enumerate() {
             tracing::debug!("peer{i} connects to P2P beacon node");
             peer.p2p
                 .node()
@@ -829,14 +335,35 @@ mod tests {
                 .await
                 .expect(&format!("peer{i} connect p2p_beacon_node"));
             tracing::debug!("peer{i} is connected to P2P beacon node");
+            //connect to other connected peers
+            for addr in &connected_nodes {
+                tokio::spawn({
+                    let node = peer.p2p.node.clone();
+                    let addr = *addr;
+                    //let peer_list = self.peer_list.clone();
+                    async move {
+                        tracing::debug!("connect to {}", &addr);
 
-            peers.push(peer);
+                        // XXX: If `node.connect(addr)` returns an error, it's omitted because:
+                        // 1.) It's already logged.
+                        // 2.) It often happens because there is already a connection between the 2 peers.
+                        match node.connect(addr).await {
+                            Ok(_) => {
+                                //peer_list.write().await.insert(addr);
+                                tracing::debug!("connected to {}", &addr);
+                            }
+                            Err(err) => tracing::error!("failed to connect to {}: {}", &addr, err),
+                        };
+                    }
+                });
+            }
+            connected_nodes.insert(*addr);
         }
+
+        tracing::info!("All {num_nodes} P2P nodes started");
 
         // Let the dust settle down a bit.
         //tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-        tracing::info!("All {num_nodes} P2P nodes started");
 
         // Broadcast 50 transactions into the network.
         for i in 1..50 {
@@ -848,8 +375,8 @@ mod tests {
 
             tracing::debug!("sending transaction {i} from peer {node_idx}");
             peers[node_idx]
-                .tx_sender
-                .send(tx.clone())
+                .0
+                .send_tx(tx.clone())
                 .expect(&format!("peer{node_idx} send()"));
             tracing::debug!("transaction {i} sent from peer {node_idx}");
 
@@ -860,6 +387,7 @@ mod tests {
 
                 tracing::debug!("receiving transaction {i} on peer {i}");
                 let recv_tx = peers[i]
+                    .0
                     .tx_receiver
                     .recv()
                     .await
