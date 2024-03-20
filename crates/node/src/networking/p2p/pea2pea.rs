@@ -469,6 +469,7 @@ mod tests {
     use gevulot_node::types::transaction::Payload;
     use gevulot_node::types::transaction::Received;
     use libsecp256k1::SecretKey;
+    use rand::Rng;
     use rand::{rngs::StdRng, SeedableRng};
     use tokio::sync::mpsc::UnboundedReceiver;
     use tokio::sync::mpsc::UnboundedSender;
@@ -753,6 +754,122 @@ mod tests {
         tx_sender2.send(tx.clone()).unwrap();
         let recv_tx = tx_receiver1.recv().await.expect("peer1 recv");
         assert_eq!(into_receive(tx), recv_tx.0);
+    }
+
+    // Test 20 peers that connect each other.
+    #[tokio::test]
+    async fn test_twenty_peers() {
+        start_logger(LevelFilter::DEBUG);
+
+        struct Peer {
+            p2p: P2P,
+            tx_sender: UnboundedSender<Transaction<Validated>>,
+            tx_receiver: UnboundedReceiver<(
+                Transaction<Received>,
+                Option<oneshot::Sender<Result<(), EventProcessError>>>,
+            )>,
+        }
+
+        impl Peer {
+            fn new(
+                tuple: (
+                    P2P,
+                    UnboundedSender<Transaction<Validated>>,
+                    UnboundedReceiver<(
+                        Transaction<Received>,
+                        Option<oneshot::Sender<Result<(), EventProcessError>>>,
+                    )>,
+                ),
+            ) -> Peer {
+                Peer {
+                    p2p: tuple.0,
+                    tx_sender: tuple.1,
+                    tx_receiver: tuple.2,
+                }
+            }
+        }
+
+        tracing::debug!("creating P2P beacon node");
+        let p2p_beacon_node = Peer::new(create_peer(&format!("p2p-beacon")).await);
+
+        tracing::debug!("P2P beacon node starts listening");
+        p2p_beacon_node
+            .p2p
+            .node()
+            .start_listening()
+            .await
+            .expect("p2p_beacon_node start_listening()");
+        tracing::debug!("P2P beacon node is listening");
+
+        let num_nodes = 20;
+        let mut peers = Vec::with_capacity(num_nodes);
+
+        for i in 1..num_nodes {
+            tracing::debug!("creating peer {i}");
+            let peer = Peer::new(create_peer(&format!("peer{i}")).await);
+
+            tracing::debug!("peer{i} starts listening");
+            peer.p2p
+                .node()
+                .start_listening()
+                .await
+                .expect("peer{i] listen");
+            tracing::debug!("peer{i} is listening");
+
+            tracing::debug!("peer{i} connects to P2P beacon node");
+            peer.p2p
+                .node()
+                .connect(
+                    p2p_beacon_node
+                        .p2p
+                        .node()
+                        .listening_addr()
+                        .expect("p2p_beacon_node listening_addr()"),
+                )
+                .await
+                .expect(&format!("peer{i} connect p2p_beacon_node"));
+            tracing::debug!("peer{i} is connected to P2P beacon node");
+
+            peers.push(peer);
+        }
+
+        // Let the dust settle down a bit.
+        //tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+
+        tracing::info!("All {num_nodes} P2P nodes started");
+
+        // Broadcast 50 transactions into the network.
+        for i in 1..50 {
+            // Create transaction.
+            let tx = new_tx();
+
+            // Pick random node to submit it.
+            let node_idx = rand::thread_rng().gen_range(0..peers.len());
+
+            tracing::debug!("sending transaction {i} from peer {node_idx}");
+            peers[node_idx]
+                .tx_sender
+                .send(tx.clone())
+                .expect(&format!("peer{node_idx} send()"));
+            tracing::debug!("transaction {i} sent from peer {node_idx}");
+
+            for i in 1..peers.len() {
+                if i == node_idx {
+                    continue;
+                }
+
+                tracing::debug!("receiving transaction {i} on peer {i}");
+                let recv_tx = peers[i]
+                    .tx_receiver
+                    .recv()
+                    .await
+                    .expect(&format!("peers[{i}] recv()"));
+                tracing::debug!("received transaction {i} on peer {i}");
+                assert_eq!(into_receive(tx.clone()), recv_tx.0);
+            }
+
+            //tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
     }
 
     fn new_tx() -> Transaction<Validated> {
