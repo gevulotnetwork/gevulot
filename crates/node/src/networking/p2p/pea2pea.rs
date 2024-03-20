@@ -195,7 +195,7 @@ impl P2P {
     }
 
     // Work if only one connect is done at a time.
-    //Peer can be fail because they was 2 simultaneous connection. One is fail and the orher is ok.
+    // Peer can be fail because they was 2 simultaneous connection. One is fail and the orher is ok.
     pub async fn connect(&self, addr: SocketAddr) -> (BTreeSet<SocketAddr>, BTreeSet<SocketAddr>) {
         let mut connected_peers = BTreeSet::new();
         let mut failed_peers = BTreeSet::new();
@@ -583,7 +583,7 @@ mod tests {
     // but Peer1 and Peer2 are connected
     #[tokio::test]
     async fn test_one_peer_fail() {
-        //start_logger(LevelFilter::ERROR);
+        // Start_logger(LevelFilter::ERROR);
 
         let (peer1, tx_sender1, mut tx_receiver1) = create_peer("peer1").await;
         let (peer2, tx_sender2, mut tx_receiver2) = create_faulty_peer("peer2").await;
