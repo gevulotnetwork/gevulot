@@ -39,7 +39,6 @@ pub struct P2P {
     peer_list: Arc<tokio::sync::RwLock<BTreeSet<SocketAddr>>>,
     // Contains corrected peers that are used for asset file download.
     pub peer_http_port_list: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>>,
-    connect_lock: Arc<tokio::sync::Mutex<()>>,
 
     http_port: Option<u16>,
     nat_listen_addr: Option<SocketAddr>,
@@ -91,7 +90,6 @@ impl P2P {
             peer_list: Default::default(),
             peer_addr_mapping: Default::default(),
             peer_http_port_list,
-            connect_lock: Arc::new(tokio::sync::Mutex::new(())),
             http_port,
             nat_listen_addr,
             tx_sender,
@@ -196,9 +194,6 @@ impl P2P {
 #[async_trait::async_trait]
 impl Handshake for P2P {
     async fn perform_handshake(&self, mut conn: Connection) -> io::Result<Connection> {
-        // Sequentialize P2P connections to avoid deadlock.
-        let _lock = self.connect_lock.lock().await;
-
         tracing::debug!("starting handshake");
 
         // Create the noise objects.
