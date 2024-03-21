@@ -49,7 +49,7 @@ pub trait Provider: Send + Sync {
         program: Program,
         req: ResourceRequest,
     ) -> Result<VMHandle>;
-    async fn stop_vm(&mut self, vm: VMHandle) -> Result<()>;
+    fn stop_vm(&mut self, vm: VMHandle) -> Result<()>;
 
     fn prepare_image(&mut self, program: Program, image: &Path) -> Result<()>;
 }
