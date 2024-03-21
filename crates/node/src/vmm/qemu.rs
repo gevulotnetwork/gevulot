@@ -39,7 +39,7 @@ use crate::{
     vmm::ResourceRequest,
 };
 
-const QMP_CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
+const QMP_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 
 impl VMId for u32 {
     fn as_any(&self) -> &dyn Any {
@@ -315,36 +315,29 @@ impl Provider for Qemu {
                             // Connection was refused. QEMU not started yet.
                             retry_count += 1;
                             sleep(Duration::from_millis(10)).await;
+                            continue;
                         }
                     },
                     Err(_) => {
-                        if retry_count < 100 {
-                            tracing::warn!(
-                                "tx: {} - QEMU QMP connect timeout; retrying once",
-                                tx_hash
-                            );
-                            retry_count = 99;
-                        } else {
-                            tracing::error!(
-                                "tx: {} - QEMU QMP connect timeout. Terminating VM.",
-                                tx_hash
-                            );
-                            let cid = qemu_vm_handle.cid;
-                            qemu_vm_handle
-                                .child
-                                .as_mut()
-                                .ok_or(std::io::Error::other(
-                                    "No child process defined for this handle",
-                                ))
-                                .and_then(|p| {
-                                    p.kill()?;
-                                    p.wait()
-                                })?;
+                        tracing::error!(
+                            "tx: {} - QEMU QMP connect timeout. Terminating VM.",
+                            tx_hash
+                        );
+                        let cid = qemu_vm_handle.cid;
+                        qemu_vm_handle
+                            .child
+                            .as_mut()
+                            .ok_or(std::io::Error::other(
+                                "No child process defined for this handle",
+                            ))
+                            .and_then(|p| {
+                                p.kill()?;
+                                p.wait()
+                            })?;
 
-                            self.vm_registry.remove(&cid);
-                            self.cid_allocations.remove(&cid);
-                            return Err(eyre!("Failed to connect to QEMU QMP"));
-                        }
+                        self.vm_registry.remove(&cid);
+                        self.cid_allocations.remove(&cid);
+                        return Err(eyre!("Failed to connect to QEMU QMP"));
                     }
                 };
             }
