@@ -15,7 +15,10 @@ use std::{
     fs::File,
     path::Path,
     process::{Child, Command, Stdio},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU32, Ordering},
+        Arc,
+    },
     time::{Duration, Instant},
 };
 use tokio::{
@@ -64,6 +67,7 @@ pub struct QEMUVMHandle {
 
 pub struct Qemu {
     config: Arc<Config>,
+    next_cid: AtomicU32,
     cid_allocations: BTreeSet<u32>,
     vm_registry: HashMap<u32, QEMUVMHandle>,
 }
@@ -72,6 +76,7 @@ impl Qemu {
     pub fn new(config: Arc<Config>) -> Self {
         Qemu {
             config,
+            next_cid: AtomicU32::new(4),
             cid_allocations: Default::default(),
             vm_registry: HashMap::new(),
         }
@@ -79,7 +84,7 @@ impl Qemu {
 
     fn allocate_cid(&mut self) -> u32 {
         loop {
-            let cid = rand::random::<u32>();
+            let cid = self.next_cid.fetch_add(1, Ordering::Relaxed);
 
             if cid < 3 {
                 // CIDs 0, 1 and 2 are reserved.
