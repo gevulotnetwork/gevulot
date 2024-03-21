@@ -11,7 +11,7 @@ use rand::{distributions::Alphanumeric, Rng};
 use serde_json::json;
 use std::{
     any::Any,
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     fs::File,
     path::Path,
     process::{Child, Command, Stdio},
@@ -64,7 +64,7 @@ pub struct QEMUVMHandle {
 
 pub struct Qemu {
     config: Arc<Config>,
-    cid_allocations: Vec<u32>,
+    cid_allocations: BTreeSet<u32>,
     vm_registry: HashMap<u32, QEMUVMHandle>,
 }
 
@@ -72,7 +72,7 @@ impl Qemu {
     pub fn new(config: Arc<Config>) -> Self {
         Qemu {
             config,
-            cid_allocations: vec![],
+            cid_allocations: Default::default(),
             vm_registry: HashMap::new(),
         }
     }
@@ -86,19 +86,17 @@ impl Qemu {
                 continue;
             }
 
-            if self.cid_allocations.iter().any(|&x| x == cid) {
+            if !self.cid_allocations.insert(cid) {
                 // Generated CID found from existing allocations.
                 continue;
             };
 
-            self.cid_allocations.push(cid);
             return cid;
         }
     }
 
     fn release_cid(&mut self, cid: u32) {
-        if let Some(idx) = self.cid_allocations.iter().position(|&x| x == cid) {
-            self.cid_allocations.remove(idx);
+        if self.cid_allocations.remove(&cid) {
             self.vm_registry.remove(&cid);
         }
     }
