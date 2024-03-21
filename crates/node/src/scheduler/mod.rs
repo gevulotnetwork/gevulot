@@ -205,7 +205,15 @@ impl Scheduler {
             // Before scheduling new workload, try to start pending programs first.
             {
                 let mut state = self.state.lock().await;
-                while let Some((tx_hash, program_id)) = state.pending_programs.pop_front() {
+
+                // Make a local copy of pending programs so that when some
+                // programs fail to start and are rescheduled, they won't
+                // cause an infinite loop here.
+                let mut current_pending_programs = state.pending_programs.clone();
+                while let Some((tx_hash, program_id)) = current_pending_programs.pop_front() {
+                    // Pop from the actual pending program queue as well.
+                    state.pending_programs.pop_front();
+
                     match state
                         .program_manager
                         .start_program(tx_hash, program_id, None)
@@ -220,10 +228,19 @@ impl Scheduler {
                             sleep(Duration::from_millis(500)).await;
 
                             // Return the popped program_id back to pending queue.
-                            state.pending_programs.push_front((tx_hash, program_id));
+                            state.pending_programs.push_back((tx_hash, program_id));
                             continue 'SCHEDULING_LOOP;
                         }
-                        Err(e) => panic!("failed to start program: {e}"),
+                        Err(e) => {
+                            tracing::warn!(
+                                "tx {} - failed to start program {}: {e}",
+                                tx_hash,
+                                program_id
+                            );
+                            // Return the popped program_id back to pending queue.
+                            state.pending_programs.push_back((tx_hash, program_id));
+                            continue 'SCHEDULING_LOOP;
+                        }
                     }
                 }
             }
@@ -280,13 +297,6 @@ impl Scheduler {
                     state.running_vms.insert(task.tx, p);
                 }
                 Err(ref err) => {
-                    if let Some(err) = err.downcast_ref::<ResourceError>() {
-                        let ResourceError::NotEnoughResources(msg) = err;
-                        self.reschedule(&task).await?;
-                        tracing::warn!("task {} rescheduled: {}", task.id.to_string(), msg);
-                        continue;
-                    }
-
                     if let Some(err) = err.downcast_ref::<ProgramError>() {
                         let ProgramError::ProgramNotFound(msg) = err;
                         tracing::error!("failed to schedule task {}: {}", task.id.to_string(), msg);
@@ -299,6 +309,10 @@ impl Scheduler {
                         let program_id = &task.program_id.clone();
                         state.task_queue.remove(&task.tx);
                     }
+
+                    self.reschedule(&task).await?;
+                    tracing::warn!("task {} rescheduled: {}", task.id.to_string(), err);
+                    continue;
                 }
             }
         }
