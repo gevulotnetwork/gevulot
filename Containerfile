@@ -23,9 +23,6 @@ RUN apt-get update && apt-get upgrade -y && apt-get install -y --no-install-reco
   curl \
   qemu-system
 
-# Install Ops.
-RUN /bin/curl -Lo /bin/ops https://storage.googleapis.com/cli/linux/ops && chmod 755 /bin/ops && /bin/ops update
-
 COPY ./crates/node/migrations /migrations
 
 RUN mkdir -p /var/lib/gevulot
