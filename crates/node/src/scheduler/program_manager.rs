@@ -83,6 +83,10 @@ impl ProgramManager {
     }
 
     pub async fn stop_program(&mut self, prg_handle: ProgramHandle) -> Result<()> {
-        self.vm_provider.lock().await.stop_vm(prg_handle.vm_handle)
+        self.vm_provider
+            .lock()
+            .await
+            .stop_vm(prg_handle.vm_handle)
+            .await
     }
 }

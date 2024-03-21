@@ -14,7 +14,7 @@ use std::{
     collections::{BTreeSet, HashMap},
     fs::File,
     path::Path,
-    process::{Child, Command, Stdio},
+    process::Stdio,
     sync::{
         atomic::{AtomicU32, Ordering},
         Arc,
@@ -24,6 +24,7 @@ use std::{
 use tokio::{
     io::{ReadHalf, WriteHalf},
     net::{TcpStream, ToSocketAddrs},
+    process::{Child, Command},
     sync::Mutex,
     time::{sleep, timeout},
 };
@@ -273,9 +274,8 @@ impl Provider for Qemu {
         }
 
         tracing::info!(
-            "Tx:{tx_hash} Program:{} starting QEMU. args:\n{:#?}\n",
+            "Tx:{tx_hash} Program:{} starting QEMU.",
             program.hash.to_string(),
-            cmd.get_args(),
         );
 
         qemu_vm_handle.child = Some(cmd.spawn().expect("failed to start VM"));
@@ -318,13 +318,16 @@ impl Provider for Qemu {
                         qemu_vm_handle
                             .child
                             .as_mut()
-                            .ok_or(std::io::Error::other(
-                                "No child process defined for this handle",
-                            ))
-                            .and_then(|p| {
-                                p.kill()?;
-                                p.wait()
-                            })?;
+                            .expect("No child process defined for this handle")
+                            .kill()
+                            .await?;
+
+                        qemu_vm_handle
+                            .child
+                            .as_mut()
+                            .expect("No child process defined for this handle")
+                            .wait()
+                            .await?;
 
                         self.vm_registry.remove(&cid);
                         self.cid_allocations.remove(&cid);
@@ -342,20 +345,23 @@ impl Provider for Qemu {
         })
     }
 
-    fn stop_vm(&mut self, vm: VMHandle) -> Result<()> {
+    async fn stop_vm(&mut self, vm: VMHandle) -> Result<()> {
         if let Some(qemu_vm_handle) = self.vm_registry.get_mut(&u32_from_any(vm.vm_id.as_any())) {
             drop(vm);
 
             qemu_vm_handle
                 .child
                 .as_mut()
-                .ok_or(std::io::Error::other(
-                    "No child process defined for this handle",
-                ))
-                .and_then(|p| {
-                    p.kill()?;
-                    p.wait()
-                })?;
+                .expect("No child process defined for this handle")
+                .kill()
+                .await?;
+
+            qemu_vm_handle
+                .child
+                .as_mut()
+                .expect("No child process defined for this handle")
+                .wait()
+                .await?;
 
             let cid = qemu_vm_handle.cid;
             self.release_cid(cid);
