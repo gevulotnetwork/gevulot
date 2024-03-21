@@ -288,10 +288,27 @@ impl Provider for Qemu {
             let mut retry_count = 0;
             while client.is_none() {
                 if retry_count > 100 {
-                    // If we can't start QEMU, there's no point running the node
-                    // and the best way to capture operator's attention is to panic.
-                    tracing::error!("failed to start QEMU; aborting.");
-                    std::process::exit(1);
+                    tracing::error!("tx: {} - Failed to get QEMU started. Giving up.", tx_hash);
+
+                    let cid = qemu_vm_handle.cid;
+                    qemu_vm_handle
+                        .child
+                        .as_mut()
+                        .expect("No child process defined for this handle")
+                        .kill()
+                        .await?;
+
+                    qemu_vm_handle
+                        .child
+                        .as_mut()
+                        .expect("No child process defined for this handle")
+                        .wait()
+                        .await?;
+
+                    self.vm_registry.remove(&cid);
+                    self.cid_allocations.remove(&cid);
+
+                    return Err(eyre!("Failed to start QEMU"));
                 }
 
                 match timeout(
@@ -305,7 +322,7 @@ impl Provider for Qemu {
                         Err(err) => {
                             // Connection was refused. QEMU not started yet.
                             retry_count += 1;
-                            sleep(Duration::from_millis(10)).await;
+                            sleep(Duration::from_millis(50)).await;
                             continue;
                         }
                     },
