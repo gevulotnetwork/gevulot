@@ -1,6 +1,6 @@
 use crate::types::file::IMAGES_DIR;
 use async_trait::async_trait;
-use eyre::Result;
+use eyre::{eyre, Result};
 use gevulot_node::types::file::TaskVmFile;
 use qapi::{
     futures::{QapiStream, QmpStreamTokio},
@@ -25,7 +25,7 @@ use tokio::{
     io::{ReadHalf, WriteHalf},
     net::{TcpStream, ToSocketAddrs},
     sync::Mutex,
-    time::sleep,
+    time::{sleep, timeout},
 };
 use tokio_vsock::{Incoming, VsockConnectInfo, VsockListener};
 use tonic::Extensions;
@@ -38,6 +38,8 @@ use crate::{
     types::{Hash, Program},
     vmm::ResourceRequest,
 };
+
+const QMP_CONNECT_TIMEOUT: Duration = Duration::from_secs(1);
 
 impl VMId for u32 {
     fn as_any(&self) -> &dyn Any {
@@ -187,7 +189,6 @@ impl Provider for Qemu {
             tx_hash,
             program_id,
             workspace_volume_label,
-            //qmp: Arc::new(Mutex::new(qmp)),
         };
 
         // Must VM must be registered before start, because when the VM starts,
@@ -224,7 +225,6 @@ impl Provider for Qemu {
             // Register 2 hard drives via SCSI
             .args(["-device", "virtio-scsi-pci,bus=pci.2,addr=0x0,id=scsi0"])
             .args(["-device", "scsi-hd,bus=scsi0.0,drive=hd0"])
-            //.args(["-device", "scsi-hd,bus=scsi0.0,drive=hd1"])
             .args(["-vga", "none"])
             // CPUS
             .args(["-smp", &cpus.to_string()])
@@ -242,15 +242,9 @@ impl Provider for Qemu {
                     &img_file.into_os_string().into_string().unwrap(),
                 ),
             ])
-            // WORKSPACE FILE
-            /*
-            .args([
-                "-drive",
-                &format!("file={},format=raw,if=none,id=hd1", &workspace_file),
-            ])*/
             .args(["-display", "none"])
             .args(["-serial", "stdio"])
-            //VirtFs
+            // WORKSPACE VirtFS
             .args([
                 "-virtfs",
                 &format!(
@@ -309,18 +303,53 @@ impl Provider for Qemu {
                     std::process::exit(1);
                 }
 
-                match Qmp::new(format!("localhost:{qmp_port}")).await {
-                    Ok(c) => client = Some(c),
-                    Err(err) => {
-                        retry_count += 1;
-                        sleep(Duration::from_millis(10)).await;
+                match timeout(
+                    QMP_CONNECT_TIMEOUT,
+                    Qmp::new(format!("localhost:{qmp_port}")),
+                )
+                .await
+                {
+                    Ok(connect) => match connect {
+                        Ok(clnt) => client = Some(clnt),
+                        Err(err) => {
+                            // Connection was refused. QEMU not started yet.
+                            retry_count += 1;
+                            sleep(Duration::from_millis(10)).await;
+                        }
+                    },
+                    Err(_) => {
+                        if retry_count < 100 {
+                            tracing::warn!(
+                                "tx: {} - QEMU QMP connect timeout; retrying once",
+                                tx_hash
+                            );
+                            retry_count = 99;
+                        } else {
+                            tracing::error!(
+                                "tx: {} - QEMU QMP connect timeout. Terminating VM.",
+                                tx_hash
+                            );
+                            let cid = qemu_vm_handle.cid;
+                            qemu_vm_handle
+                                .child
+                                .as_mut()
+                                .ok_or(std::io::Error::other(
+                                    "No child process defined for this handle",
+                                ))
+                                .and_then(|p| {
+                                    p.kill()?;
+                                    p.wait()
+                                })?;
+
+                            self.vm_registry.remove(&cid);
+                            self.cid_allocations.remove(&cid);
+                            return Err(eyre!("Failed to connect to QEMU QMP"));
+                        }
                     }
                 };
             }
             client.unwrap()
         };
-
-        qmp_client.system_reset().await?;
 
         Ok(VMHandle {
             start_time,
@@ -350,6 +379,7 @@ impl Provider for Qemu {
 
             let cid = qemu_vm_handle.cid;
             self.release_cid(cid);
+            self.vm_registry.remove(&cid);
 
             Ok(())
         } else {
