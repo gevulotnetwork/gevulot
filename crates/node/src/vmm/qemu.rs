@@ -287,6 +287,9 @@ impl Provider for Qemu {
             let mut client = None;
             let mut retry_count = 0;
             while client.is_none() {
+                // Give the process a little while to settle down.
+                sleep(Duration::from_millis(50)).await;
+
                 if retry_count > 100 {
                     tracing::error!("tx: {} - Failed to get QEMU started. Giving up.", tx_hash);
 
@@ -294,16 +297,13 @@ impl Provider for Qemu {
                     qemu_vm_handle
                         .child
                         .as_mut()
-                        .expect("No child process defined for this handle")
-                        .kill()
-                        .await?;
-
-                    qemu_vm_handle
-                        .child
-                        .as_mut()
-                        .expect("No child process defined for this handle")
-                        .wait()
-                        .await?;
+                        .ok_or(std::io::Error::other(
+                            "No child process defined for this handle",
+                        ))
+                        .and_then(|p| {
+                            p.kill()?;
+                            p.wait()
+                        })?;
 
                     self.vm_registry.remove(&cid);
                     self.cid_allocations.remove(&cid);
@@ -322,7 +322,6 @@ impl Provider for Qemu {
                         Err(err) => {
                             // Connection was refused. QEMU not started yet.
                             retry_count += 1;
-                            sleep(Duration::from_millis(50)).await;
                             continue;
                         }
                     },
