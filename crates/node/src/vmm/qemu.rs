@@ -31,7 +31,6 @@ use vsock::get_local_cid;
 use super::{vm_server::ProgramRegistry, Provider, VMClient, VMHandle, VMId};
 use crate::{
     cli::Config,
-    nanos,
     types::{Hash, Program},
     vmm::ResourceRequest,
 };
@@ -159,14 +158,6 @@ impl Provider for Qemu {
             .map(char::from)
             .collect::<String>()
             .to_lowercase();
-
-        // XXX: This isn't async and will call out to `ops` for now.
-        // tracing::debug!("creating workspace volume:{workspace_volume_label:?} for the VM");
-        // let workspace_file =
-        //     nanos::volume::create(&self.config.data_directory, &workspace_volume_label, "2g")?
-        //         .into_os_string();
-        // let workspace_file = workspace_file.to_str().expect("workspace volume path");
-        // tracing::debug!("workspace volume:{workspace_file:?} created");
 
         let cpus = req.cpus;
         let mem_req = req.mem;
@@ -340,10 +331,6 @@ impl Provider for Qemu {
                     p.kill()?;
                     p.wait()
                 })?;
-
-            // GC ephemeral workspace volume.
-            // XXX: This isn't async and will call out to `ops`.
-            nanos::volume::delete(&qemu_vm_handle.workspace_volume_label)?;
 
             let cid = qemu_vm_handle.cid;
             self.release_cid(cid);

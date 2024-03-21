@@ -31,7 +31,6 @@ use types::{transaction::Validated, Hash, Transaction};
 
 mod cli;
 mod mempool;
-mod nanos;
 mod networking;
 mod rpc_server;
 mod scheduler;
