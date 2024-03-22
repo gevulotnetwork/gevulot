@@ -19,9 +19,6 @@ mod grpc {
 /// present in /proc/mounts.
 const MOUNT_TIMEOUT: Duration = Duration::from_secs(30);
 
-pub const WORKSPACE_PATH: &str = "/workspace";
-pub const WORKSPACE_NAME: &str = "workspace";
-
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub type TaskId = String;
 
@@ -210,7 +207,7 @@ fn mount_present(mount_point: &str) -> Result<bool> {
 /// run function takes `callback` that is invoked with executable `Task` and
 /// which is expected to return `TaskResult`.
 pub fn run(callback: impl Fn(Task) -> Result<TaskResult>) -> Result<()> {
-    let mut client = GRPCClient::new(8080, WORKSPACE_PATH)?;
+    let mut client = GRPCClient::new(8080, gevulot_common::WORKSPACE_PATH)?;
 
     loop {
         let task = match client.get_task() {

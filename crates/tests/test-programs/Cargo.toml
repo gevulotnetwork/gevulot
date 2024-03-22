@@ -15,3 +15,4 @@ path = "src/verifier.rs"
 
 [dependencies]
 gevulot-shim = { path = "../../shim" }
+gevulot-common = { path = "../../common" }

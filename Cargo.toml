@@ -3,11 +3,12 @@ exclude = [
   "prover"
 ]
 members = [
-  "crates/node",
+  "crates/common",
   "crates/cli",
+  "crates/node",
   "crates/shim",
   "crates/shim-ffi",
   "crates/tests/test-programs",
-  "crates/tests/e2e-tests",
+  "crates/tests/e2e-tests", "crates/common",
 ]
 resolver = "2"
