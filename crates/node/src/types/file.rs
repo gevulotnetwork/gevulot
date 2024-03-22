@@ -30,7 +30,7 @@ impl TaskVmFile<()> {
             .join(data_directory)
             .join(VM_FILES_DIR)
             .join(tx_hash.to_string())
-            .join(gevulot_shim::WORKSPACE_NAME)
+            .join(gevulot_common::WORKSPACE_NAME)
     }
 }
 
