@@ -229,7 +229,7 @@ impl Scheduler {
 
                             // Return the popped program_id back to pending queue.
                             state.pending_programs.push_back((tx_hash, program_id));
-                            continue 'SCHEDULING_LOOP;
+                            break;
                         }
                         Err(e) => {
                             tracing::warn!(
