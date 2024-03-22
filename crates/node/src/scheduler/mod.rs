@@ -310,7 +310,9 @@ impl Scheduler {
                         state.task_queue.remove(&task.tx);
                     }
 
-                    self.reschedule(&task).await?;
+                    // The task is already pending in program's work queue. Push program ID
+                    // to pending programs queue to wait available resources.
+                    state.pending_programs.push_back((task.tx, task.program_id));
                     tracing::warn!("task {} rescheduled: {}", task.id.to_string(), err);
                     continue;
                 }
@@ -353,17 +355,6 @@ impl Scheduler {
             },
             None => None,
         }
-    }
-
-    async fn reschedule(&self, task: &Task) -> Result<()> {
-        // The task is already pending in program's work queue. Push program ID
-        // to pending programs queue to wait available resources.
-        self.state
-            .lock()
-            .await
-            .pending_programs
-            .push_back((task.tx, task.program_id));
-        Ok(())
     }
 
     async fn reap_zombies(&self) {
