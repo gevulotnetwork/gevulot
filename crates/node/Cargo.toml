@@ -11,6 +11,7 @@ blake3 = "1.5"
 chrono = { version = "0.4", features = [ "serde" ] }
 ecies = { version = "0.2", default-features = false, features = ["pure"] }
 eyre = "0.6.8"
+gevulot-common = { path = "../common" }
 hex = "0.4"
 jsonrpsee = { version = "0.20", features = [ "client", "server" ] }
 libsecp256k1 = "0.7"
@@ -32,7 +33,7 @@ clap = { version = "4", features = ["derive", "env", "string"], optional = true 
 console-subscriber = { version = "0.2", optional = true }
 futures = { version = "0.3.30", optional = true }
 futures-util = { version = "0.3", features = [ "io" ], optional = true }
-gevulot-shim = { path = "../shim", default-features = false }
+gevulot-shim = { path = "../shim", default-features = false, optional = true }
 home = { version = "0.5", optional = true}
 http-body-util = { version = "0.1", optional = true }
 hyper = { version = "1", features = ["full"], optional = true }
@@ -64,6 +65,7 @@ node-binary = [
   "futures",
   "futures-util",
   "home",
+  "gevulot-shim",
   "http-body-util",
   "hyper",
   "hyper-util",

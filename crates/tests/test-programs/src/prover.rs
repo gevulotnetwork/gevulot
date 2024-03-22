@@ -1,4 +1,4 @@
-use gevulot_shim::WORKSPACE_PATH;
+use gevulot_common::WORKSPACE_PATH;
 use gevulot_shim::{Task, TaskResult};
 use std::fs;
 

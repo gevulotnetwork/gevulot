@@ -1184,9 +1184,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "gevulot-common"
+version = "0.1.0"
+
+[[package]]
 name = "gevulot-e2e-test-programs"
 version = "0.1.0"
 dependencies = [
+ "gevulot-common",
  "gevulot-shim",
 ]
 
@@ -1226,6 +1231,7 @@ dependencies = [
  "eyre",
  "futures",
  "futures-util",
+ "gevulot-common",
  "gevulot-shim",
  "hex",
  "home",
@@ -1272,6 +1278,7 @@ dependencies = [
  "anyhow",
  "async-stream",
  "blake3",
+ "gevulot-common",
  "prost 0.11.9",
  "tokio",
  "tokio-stream",
