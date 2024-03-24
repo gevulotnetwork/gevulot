@@ -1,23 +1,14 @@
+use crate::scheduler::ExecuteTaskError;
 use crate::types::program::ResourceRequest;
 use eyre::Result;
-use std::sync::{Arc, Mutex};
 use thiserror::Error;
 
+#[derive(Debug, Clone)]
 pub struct ResourceAllocation {
-    pub(self) resource_manager: Arc<Mutex<ResourceManager>>,
-    pub(self) mem: u64,
-    pub(self) cpus: u64,
-    pub(self) gpus: u64,
-}
-
-impl Drop for ResourceAllocation {
-    fn drop(&mut self) {
-        self.resource_manager
-            .clone()
-            .lock()
-            .expect("acquire resource manager instance lock")
-            .free(self);
-    }
+    //pub(self) resource_manager: Arc<Mutex<ResourceManager>>,
+    pub mem: u64,
+    pub cpus: u64,
+    pub gpus: u64,
 }
 
 #[allow(clippy::enum_variant_names)]
@@ -44,37 +35,37 @@ impl ResourceManager {
     }
 
     pub fn try_allocate(
-        resource_manager: Arc<Mutex<Self>>,
+        &mut self,
         request: &ResourceRequest,
-    ) -> Result<ResourceAllocation> {
-        let rm = resource_manager.clone();
-        let mut rm = rm.lock().expect("acquire resource manager instance lock");
+    ) -> Result<ResourceAllocation, ExecuteTaskError> {
+        //        let rm = resource_manager.clone();
+        //        let mut rm = rm.lock().expect("acquire resource manager instance lock");
 
-        if rm.available_mem < request.mem {
-            return Err(ResourceError::NotEnoughResources("memory".to_string()).into());
+        if self.available_mem < request.mem {
+            return Err(ExecuteTaskError::NotEnoughResources("memory".to_string()));
         }
 
-        if rm.available_cpus < request.cpus {
-            return Err(ResourceError::NotEnoughResources("cpus".to_string()).into());
+        if self.available_cpus < request.cpus {
+            return Err(ExecuteTaskError::NotEnoughResources("cpus".to_string()));
         }
 
-        if rm.available_gpus < request.gpus {
-            return Err(ResourceError::NotEnoughResources("gpus".to_string()).into());
+        if self.available_gpus < request.gpus {
+            return Err(ExecuteTaskError::NotEnoughResources("gpus".to_string()));
         }
 
-        rm.available_mem -= request.mem;
-        rm.available_cpus -= request.cpus;
-        rm.available_gpus -= request.gpus;
+        self.available_mem -= request.mem;
+        self.available_cpus -= request.cpus;
+        self.available_gpus -= request.gpus;
 
         Ok(ResourceAllocation {
-            resource_manager: resource_manager.clone(),
+            //resource_manager: resource_manager.clone(),
             mem: request.mem,
             cpus: request.cpus,
             gpus: request.gpus,
         })
     }
 
-    pub(self) fn free(&mut self, allocation: &ResourceAllocation) {
+    pub fn free(&mut self, allocation: &ResourceAllocation) {
         self.available_mem += allocation.mem;
         self.available_cpus += allocation.cpus;
         self.available_gpus += allocation.gpus;

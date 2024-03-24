@@ -1,16 +1,17 @@
 use self::grpc::{TaskResponse, TaskResultRequest};
 use super::VMId;
-use crate::types::file::TaskVmFile;
 use crate::types::Hash;
 use crate::types::Task;
 use async_trait::async_trait;
 use eyre::Result;
 use grpc::vm_service_server::VmService;
 use grpc::{TaskRequest, TaskResultResponse};
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use tokio_vsock::VsockConnectInfo;
 use tonic::{Code, Extensions, Request, Response, Status};
 
 pub mod grpc {
@@ -41,13 +42,70 @@ pub trait ProgramRegistry: Send {
     fn find_by_req(&mut self, extensions: &Extensions) -> Option<(Hash, Hash, Arc<dyn VMId>)>;
 }
 
+#[derive(Clone, Debug)]
+pub struct ShareVMRunningTaskMap {
+    //Map of running task: cid -> (Tx_Hash, Program Hash)
+    task_list: Arc<Mutex<HashMap<u32, Task>>>,
+}
+
+impl ShareVMRunningTaskMap {
+    pub fn new() -> Self {
+        ShareVMRunningTaskMap {
+            //Map of running task: cid -> (Tx_Hash, Program Hash)
+            task_list: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    pub async fn insert_task(&self, cid: u32, task: Task) {
+        self.task_list.lock().await.insert(cid, task.clone());
+    }
+
+    // pub async fn remove_task(&self, cid: u32) -> Option<Task> {
+    //     self.task_list.lock().await.remove(&cid)
+    // }
+
+    pub async fn remove_task_with_extension(&self, extensions: &Extensions) -> Option<(u32, Task)> {
+        let conn_info = extensions.get::<VsockConnectInfo>().unwrap();
+        match conn_info.peer_addr() {
+            Some(addr) => self
+                .task_list
+                .lock()
+                .await
+                .remove(&addr.cid())
+                .map(|task| (*&addr.cid(), task)),
+            None => {
+                tracing::error!("remove task fail no task found for extention",);
+                None
+            }
+        }
+    }
+
+    pub async fn len(&self) -> usize {
+        self.task_list.lock().await.len()
+    }
+
+    async fn get_running_task(&self, extensions: &Extensions) -> Option<(u32, Task)> {
+        let conn_info = extensions.get::<VsockConnectInfo>().unwrap();
+        match conn_info.peer_addr() {
+            Some(addr) => self
+                .task_list
+                .lock()
+                .await
+                .get(&addr.cid())
+                .map(|task| (*&addr.cid(), task.clone())),
+            None => None,
+        }
+    }
+}
+
 /// VMServer is the integration point between Gevulot node and individual
 /// Nanos VMs. It implements the gRPC interface that program running in VM
 /// connects to and communicates with.
+#[derive(Clone)]
 pub struct VMServer {
-    task_source: Arc<dyn TaskManager>,
-    program_registry: Arc<Mutex<dyn ProgramRegistry>>,
+    running_task: ShareVMRunningTaskMap,
     file_data_dir: PathBuf,
+    result_sender: tokio::sync::mpsc::Sender<(Task, u32, grpc::task_result_request::Result)>,
 }
 
 impl Debug for VMServer {
@@ -58,14 +116,14 @@ impl Debug for VMServer {
 
 impl VMServer {
     pub fn new(
-        task_source: Arc<dyn TaskManager>,
-        program_registry: Arc<Mutex<dyn ProgramRegistry>>,
+        running_task: ShareVMRunningTaskMap,
         file_data_dir: PathBuf,
+        result_sender: tokio::sync::mpsc::Sender<(Task, u32, grpc::task_result_request::Result)>,
     ) -> Self {
         VMServer {
-            task_source,
-            program_registry,
+            running_task,
             file_data_dir,
+            result_sender,
         }
     }
 
@@ -82,20 +140,13 @@ impl VmService for VMServer {
         request: Request<TaskRequest>,
     ) -> Result<Response<TaskResponse>, Status> {
         tracing::info!("request for task: {:?}", request);
-        let (tx_hash, program_id, vm_id) = self
-            .program_registry
-            .lock()
-            .await
-            .find_by_req(request.extensions())
-            .ok_or_else(|| {
-                Status::new(
-                    Code::Unknown,
-                    format!("unknown VM address: {:?}", request.remote_addr()),
-                )
-            })?;
 
-        let reply = match self.task_source.get_pending_task(tx_hash).await {
-            Some(task) => grpc::TaskResponse {
+        let reply = match self
+            .running_task
+            .get_running_task(request.extensions())
+            .await
+        {
+            Some((cid, task)) => grpc::TaskResponse {
                 result: Some(grpc::task_response::Result::Task(grpc::Task {
                     tx_hash: task.tx.to_string(),
                     name: task.name.to_string(),
@@ -121,13 +172,12 @@ impl VmService for VMServer {
         &self,
         request: Request<TaskResultRequest>,
     ) -> Result<Response<TaskResultResponse>, Status> {
-        let (tx_hash, program_id, vm_id) = match self
-            .program_registry
-            .lock()
+        let (vm_id, task) = match self
+            .running_task
+            .remove_task_with_extension(request.extensions())
             .await
-            .find_by_req(request.extensions())
         {
-            Some(instance) => instance,
+            Some(res) => res,
             None => {
                 return Err(Status::new(
                     Code::Unknown,
@@ -136,40 +186,23 @@ impl VmService for VMServer {
             }
         };
 
-        tracing::trace!(
-            "VMServer submit_result program:{}, vm_id:{vm_id}",
-            program_id.to_string()
-        );
+        tracing::trace!("VMServer submit_result task:{}, vm_id:{vm_id}", task.tx);
 
         let request = request.into_inner();
         let request_tx_hash: Hash = (&*request.tx_hash).into();
 
-        if tx_hash == request_tx_hash {
+        let task_tx = task.tx;
+        if task_tx == request_tx_hash {
             if let Some(result) = request.result {
-                if let Err(err) = self
-                    .task_source
-                    .submit_result(request_tx_hash, program_id, result)
-                    .await
-                {
+                if let Err(err) = self.result_sender.send((task, vm_id, result)).await {
                     tracing::error!("Error during submit VM execution result:{err}");
                 }
             }
         } else {
             tracing::error!(
                 "submit_result different Tx_hash from vm_id:{} and request result:{}",
-                tx_hash.to_string(),
+                task.tx.to_string(),
                 request_tx_hash.to_string()
-            );
-        }
-
-        // Clean VM `<tx_hash>/workspace` data.
-        let workspace_path = TaskVmFile::get_workspace_path(&self.file_data_dir, request_tx_hash);
-        let to_remove_path = workspace_path.parent().unwrap(); //unwrap always a parent.
-        if let Err(err) = std::fs::remove_dir_all(to_remove_path) {
-            tracing::warn!(
-                "Execution workspace:{:?} for Tx:{} didn't clean correctly because {err}",
-                to_remove_path,
-                tx_hash
             );
         }
 

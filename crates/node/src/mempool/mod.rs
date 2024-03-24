@@ -23,35 +23,44 @@ pub enum MempoolError {
 #[derive(Clone)]
 pub struct Mempool {
     storage: Arc<dyn Storage>,
-    deque: VecDeque<Transaction<Validated>>,
+    //deque: VecDeque<Transaction<Validated>>,
+    exec_sender: tokio::sync::mpsc::Sender<Transaction<Validated>>,
 }
 
 impl Mempool {
-    pub async fn new(storage: Arc<dyn Storage>) -> Result<Self> {
+    pub async fn new(
+        storage: Arc<dyn Storage>,
+        exec_sender: tokio::sync::mpsc::Sender<Transaction<Validated>>,
+    ) -> Result<Self> {
         let mut deque = VecDeque::new();
         storage.fill_deque(&mut deque).await?;
 
-        Ok(Self { storage, deque })
+        Ok(Self {
+            storage,
+            //            deque,
+            exec_sender,
+        })
     }
 
-    pub fn next(&mut self) -> Option<Transaction<Validated>> {
-        // TODO(tuommaki): Should storage reflect the POP in state?
-        self.deque.pop_front()
-    }
+    // pub fn next(&mut self) -> Option<Transaction<Validated>> {
+    //     // TODO(tuommaki): Should storage reflect the POP in state?
+    //     self.deque.pop_front()
+    // }
 
-    pub fn peek(&self) -> Option<&Transaction<Validated>> {
-        self.deque.front()
-    }
+    // pub fn peek(&self) -> Option<&Transaction<Validated>> {
+    //     self.deque.front()
+    // }
 
     pub async fn add(&mut self, tx: Transaction<Validated>) -> Result<()> {
         self.storage.set(&tx).await?;
-        self.deque.push_back(tx);
+        //        self.deque.push_back(tx);
+        self.exec_sender.send(tx).await?;
         Ok(())
     }
 
-    pub fn size(&self) -> usize {
-        self.deque.len()
-    }
+    // pub fn size(&self) -> usize {
+    //     self.deque.len()
+    // }
 }
 
 #[async_trait::async_trait]

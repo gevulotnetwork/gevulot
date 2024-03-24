@@ -136,7 +136,7 @@ impl P2P {
 
     async fn forward_tx(&self, tx: Transaction<Created>) {
         tracing::debug!("submitting received tx to tx_handler");
-        if let Err(err) = self.tx_sender.send_tx(tx) {
+        if let Err(err) = self.tx_sender.send_tx(tx).await {
             tracing::error!("P2P error during received Tx sending:{err}");
         }
     }

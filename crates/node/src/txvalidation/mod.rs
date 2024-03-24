@@ -16,8 +16,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use thiserror::Error;
 use tokio::select;
-use tokio::sync::mpsc::UnboundedSender;
-use tokio::sync::mpsc::{self, UnboundedReceiver};
+use tokio::sync::mpsc::{self, Receiver, Sender};
 use tokio::sync::oneshot;
 use tokio::sync::RwLock;
 use tokio::task::JoinHandle;
@@ -71,29 +70,30 @@ pub struct TxResultSender;
 // `TxEventSender` holds the received transaction of a specific state together with an optional callback interface.
 #[derive(Debug, Clone)]
 pub struct TxEventSender<T> {
-    sender: UnboundedSender<(Transaction<Received>, Option<CallbackSender>)>,
+    sender: Sender<(Transaction<Received>, Option<CallbackSender>)>,
     _marker: PhantomData<T>,
 }
 
 //Manage send from the p2p source
 impl TxEventSender<P2pSender> {
-    pub fn build(sender: UnboundedSender<(Transaction<Received>, Option<CallbackSender>)>) -> Self {
+    pub fn build(sender: Sender<(Transaction<Received>, Option<CallbackSender>)>) -> Self {
         TxEventSender {
             sender,
             _marker: PhantomData,
         }
     }
 
-    pub fn send_tx(&self, tx: Transaction<Created>) -> Result<(), EventProcessError> {
+    pub async fn send_tx(&self, tx: Transaction<Created>) -> Result<(), EventProcessError> {
         self.sender
             .send((tx.into_received(Received::P2P), None))
+            .await
             .map_err(|err| err.into())
     }
 }
 
 //Manage send from the RPC source
 impl TxEventSender<RpcSender> {
-    pub fn build(sender: UnboundedSender<(Transaction<Received>, Option<CallbackSender>)>) -> Self {
+    pub fn build(sender: Sender<(Transaction<Received>, Option<CallbackSender>)>) -> Self {
         TxEventSender {
             sender,
             _marker: PhantomData,
@@ -104,6 +104,7 @@ impl TxEventSender<RpcSender> {
         let (sender, rx) = oneshot::channel();
         self.sender
             .send((tx.into_received(Received::RPC), Some(sender)))
+            .await
             .map_err(EventProcessError::from)?;
         rx.await?
     }
@@ -111,7 +112,7 @@ impl TxEventSender<RpcSender> {
 
 //Manage send from the Tx result execution source
 impl TxEventSender<TxResultSender> {
-    pub fn build(sender: UnboundedSender<(Transaction<Received>, Option<CallbackSender>)>) -> Self {
+    pub fn build(sender: Sender<(Transaction<Received>, Option<CallbackSender>)>) -> Self {
         TxEventSender {
             sender,
             _marker: PhantomData,
@@ -122,6 +123,7 @@ impl TxEventSender<TxResultSender> {
         let (sender, rx) = oneshot::channel();
         self.sender
             .send((tx.into_received(Received::TXRESULT), Some(sender)))
+            .await
             .map_err(EventProcessError::from)?;
         rx.await?
     }
@@ -136,7 +138,7 @@ pub async fn spawn_event_loop(
     http_peer_list: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>>,
     acl_whitelist: Arc<impl acl::AclWhitelist + 'static>,
     // Used to receive new transactions that arrive to the node from the outside.
-    mut rcv_tx_event_rx: UnboundedReceiver<(Transaction<Received>, Option<CallbackSender>)>,
+    mut rcv_tx_event_rx: Receiver<(Transaction<Received>, Option<CallbackSender>)>,
     // Endpoint where validated transactions are sent to. Usually configured with Mempool.
     new_tx_receiver: Arc<RwLock<dyn ValidatedTxReceiver + 'static>>,
     storage: Arc<impl Storage + 'static>,

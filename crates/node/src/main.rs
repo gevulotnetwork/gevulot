@@ -203,24 +203,26 @@ async fn run(config: Arc<Config>) -> Result<()> {
 
     // Define the channel that receives transactions from the outside of the node.
     // These transactions must be validated first.
+    //bound channel to block the back presure
     let (tx_sender, rcv_tx_event_rx) =
-        mpsc::unbounded_channel::<(Transaction<Received>, Option<CallbackSender>)>();
+        mpsc::channel::<(Transaction<Received>, Option<CallbackSender>)>(200);
 
     //To show to idea. Should use your config definition
     let new_validated_tx_receiver: Arc<RwLock<dyn ValidatedTxReceiver>> = if !config.no_execution {
-        let mempool = Arc::new(RwLock::new(Mempool::new(database.clone()).await?));
+        //Define send Tx to execution channel
+        let (exec_tx, exec_rx) = tokio::sync::mpsc::channel(1000);
 
-        let scheduler = scheduler::start_scheduler(
+        let mempool = Arc::new(RwLock::new(Mempool::new(database.clone(), exec_tx).await?));
+
+        scheduler::start_scheduler(
             config.clone(),
             database.clone(),
             mempool.clone(),
             node_key,
             tx_sender.clone(),
+            exec_rx,
         )
         .await;
-
-        // Run Scheduler in its own task.
-        tokio::spawn(async move { scheduler.run().await });
         mempool
     } else {
         struct ArchiveMempool(Arc<Database>);
@@ -316,7 +318,7 @@ async fn p2p_beacon(config: P2PBeaconConfig) -> Result<()> {
     // Build an empty channel for P2P interface's `Transaction` management.
     // Indicate some domain conflict issue.
     // P2P network should be started (peer domain) without Tx management (Node domain).
-    let (tx, mut rcv_tx_event_rx) = mpsc::unbounded_channel();
+    let (tx, mut rcv_tx_event_rx) = mpsc::channel(1000);
     tokio::spawn(async move { while rcv_tx_event_rx.recv().await.is_some() {} });
 
     let (_, p2p_recv) = mpsc::unbounded_channel::<Transaction<Validated>>();

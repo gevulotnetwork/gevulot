@@ -1,6 +1,14 @@
+use crate::scheduler::ExecuteTaskError;
 use crate::types::file::IMAGES_DIR;
-use async_trait::async_trait;
-use eyre::{eyre, Result};
+
+use crate::vmm::ResourceAllocation;
+
+use super::{VMClient, VMId};
+use crate::{
+    cli::Config,
+    types::{Hash, Program},
+};
+use eyre::Result;
 use gevulot_node::types::file::TaskVmFile;
 use qapi::{
     futures::{QapiStream, QmpStreamTokio},
@@ -9,12 +17,13 @@ use qapi::{
 };
 use rand::{distributions::Alphanumeric, Rng};
 use serde_json::json;
+use std::path::PathBuf;
 use std::{
     any::Any,
-    collections::{BTreeSet, HashMap},
+    collections::BTreeSet,
     fs::File,
     path::Path,
-    process::{Child, Command, Stdio},
+    process::{Command, Stdio},
     sync::{
         atomic::{AtomicU32, Ordering},
         Arc,
@@ -27,16 +36,8 @@ use tokio::{
     sync::Mutex,
     time::{sleep, timeout},
 };
-use tokio_vsock::{Incoming, VsockConnectInfo, VsockListener};
-use tonic::Extensions;
+use tokio_vsock::{Incoming, VsockListener};
 use vsock::get_local_cid;
-
-use super::{vm_server::ProgramRegistry, Provider, VMClient, VMHandle, VMId};
-use crate::{
-    cli::Config,
-    types::{Hash, Program},
-    vmm::ResourceRequest,
-};
 
 const QMP_CONNECT_TIMEOUT: Duration = Duration::from_secs(3);
 
@@ -56,21 +57,12 @@ fn u32_from_any(x: &dyn Any) -> u32 {
         None => panic!("incompatible VMId type"),
     }
 }
-#[derive(Debug)]
-pub struct QEMUVMHandle {
-    child: Option<Child>,
-    cid: u32,
-    tx_hash: Hash,
-    program_id: Hash,
-    workspace_volume_label: String,
-    //qmp: Arc<Mutex<Qmp>>,
-}
 
 pub struct Qemu {
     config: Arc<Config>,
     next_cid: AtomicU32,
     cid_allocations: BTreeSet<u32>,
-    vm_registry: HashMap<u32, QEMUVMHandle>,
+    //    vm_registry: HashMap<u32, QEMUVMHandle>,
 }
 
 impl Qemu {
@@ -79,11 +71,11 @@ impl Qemu {
             config,
             next_cid: AtomicU32::new(4),
             cid_allocations: Default::default(),
-            vm_registry: HashMap::new(),
+            //            vm_registry: HashMap::new(),
         }
     }
 
-    fn allocate_cid(&mut self) -> u32 {
+    pub fn allocate_cid(&mut self) -> u32 {
         loop {
             let cid = self.next_cid.fetch_add(1, Ordering::Relaxed);
 
@@ -101,10 +93,8 @@ impl Qemu {
         }
     }
 
-    fn release_cid(&mut self, cid: u32) {
-        if self.cid_allocations.remove(&cid) {
-            self.vm_registry.remove(&cid);
-        }
+    pub fn release_cid(&mut self, cid: u32) {
+        self.cid_allocations.remove(&cid);
     }
 
     pub fn vm_server_listener(&self) -> Result<Incoming> {
@@ -121,41 +111,32 @@ impl Qemu {
         let listener = VsockListener::bind(cid, self.config.vsock_listen_port).expect("bind");
         Ok(listener.incoming())
     }
-}
 
-impl ProgramRegistry for Qemu {
-    fn find_by_req(&mut self, extensions: &Extensions) -> Option<(Hash, Hash, Arc<dyn VMId>)> {
-        let conn_info = extensions.get::<VsockConnectInfo>().unwrap();
-        match conn_info.peer_addr() {
-            Some(addr) => {
-                self.vm_registry
-                    .get(&addr.cid())
-                    .map(|handle| -> (Hash, Hash, Arc<dyn VMId>) {
-                        (handle.tx_hash, handle.program_id, Arc::new(addr.cid()))
-                    })
-            }
-            None => None,
-        }
-    }
-}
-
-#[async_trait]
-impl Provider for Qemu {
-    async fn start_vm(
-        &mut self,
+    pub async fn start_vm(
+        cid: u32,
+        resource_allocation: &ResourceAllocation,
+        gpu_devices: Option<String>,
+        data_directory: &PathBuf,
+        log_directory: &PathBuf,
         tx_hash: Hash,
-        program: Program,
-        req: ResourceRequest,
-    ) -> Result<VMHandle> {
+        program: &Program,
+    ) -> Result<(std::process::Child, impl VMClient, Instant), ExecuteTaskError> {
         // TODO:
         //  - Builder to construct QEMU flags
         //  - Handle GPUs
         //  - Verify that the file exists before booting the VM. Otherwise the node panics because the QEMU won't start.
-
-        let img_file = Path::new(&self.config.data_directory)
+        let img_file = Path::new(data_directory)
             .join(IMAGES_DIR)
             .join(program.hash.to_string())
-            .join(program.image_file_name);
+            .join(&program.image_file_name);
+
+        let cpus = resource_allocation.cpus;
+        let mem_req = resource_allocation.mem;
+
+        // Random unprivileged port computed from allocated CID.
+        // If there is collision with the port, QEMU startup will fail and
+        // watchdog will reap it.
+        let qmp_port = (cid % 64512) + 1024;
 
         let workspace_volume_label: String = rand::thread_rng()
             .sample_iter(&Alphanumeric)
@@ -164,35 +145,10 @@ impl Provider for Qemu {
             .collect::<String>()
             .to_lowercase();
 
-        let cpus = req.cpus;
-        let mem_req = req.mem;
-        let cid = self.allocate_cid();
-
-        // Random unprivileged port computed from allocated CID.
-        // If there is collision with the port, QEMU startup will fail and
-        // watchdog will reap it.
-        let qmp_port = (cid % 64512) + 1024;
-
-        let program_id = program.hash;
-        let qemu_vm_handle = QEMUVMHandle {
-            child: None,
-            cid,
-            tx_hash,
-            program_id,
-            workspace_volume_label,
-        };
-
-        // Must VM must be registered before start, because when the VM starts,
-        // the program in it starts immediately and queries for task, which
-        // requires the VM to be registered for identification.
-        self.vm_registry.insert(cid, qemu_vm_handle);
-
-        // Update the child process field.
-        let qemu_vm_handle = &mut self.vm_registry.get_mut(&cid).unwrap();
         let mut cmd = Command::new("/usr/bin/qemu-system-x86_64");
 
         //define the VirtFs local path and create all necessary folder
-        let workspace_path = TaskVmFile::get_workspace_path(&self.config.data_directory, tx_hash);
+        let workspace_path = TaskVmFile::get_workspace_path(&Path::new(data_directory), tx_hash);
         // Ensure any necessary subdirectories exists.
         if let Ok(false) = tokio::fs::try_exists(&workspace_path).await {
             if let Err(err) = tokio::fs::create_dir_all(&workspace_path).await {
@@ -249,25 +205,28 @@ impl Provider for Qemu {
             .args(["-qmp", &format!("tcp:localhost:{qmp_port},server")]);
 
         // TODO: When GPU argument handling is refactored, this should be fixed as well.
-        if self.config.gpu_devices.is_some() && req.gpus > 0 {
+        if gpu_devices.is_some() && resource_allocation.gpus > 0 {
             cmd.args(parse_gpu_devices_into_qemu_params(
-                self.config.gpu_devices.as_ref().unwrap(),
+                gpu_devices.as_ref().unwrap(),
             ));
         }
 
         // Setup stdout & stderr log to VM execution.
         {
             // Change to have an unique log per Tx so that log are not mix between program execution.
-            let log_dir_path = Path::new(&self.config.log_directory).join(tx_hash.to_string());
-            std::fs::create_dir_all(&log_dir_path)?;
+            let log_dir_path = Path::new(&log_directory).join(tx_hash.to_string());
+            std::fs::create_dir_all(&log_dir_path)
+                .map_err(|err| ExecuteTaskError::VMStartExecutionFail(err.to_string()))?;
             let stdout = File::options()
                 .create(true)
                 .append(true)
-                .open(Path::new(&log_dir_path).join("stdout.log"))?;
+                .open(Path::new(&log_dir_path).join("stdout.log"))
+                .map_err(|err| ExecuteTaskError::VMStartExecutionFail(err.to_string()))?;
             let stderr = File::options()
                 .create(true)
                 .append(true)
-                .open(Path::new(&log_dir_path).join("stderr.log"))?;
+                .open(Path::new(&log_dir_path).join("stderr.log"))
+                .map_err(|err| ExecuteTaskError::VMStartExecutionFail(err.to_string()))?;
             cmd.stdout(Stdio::from(stdout));
             cmd.stderr(Stdio::from(stderr));
         }
@@ -278,7 +237,9 @@ impl Provider for Qemu {
             cmd.get_args(),
         );
 
-        qemu_vm_handle.child = Some(cmd.spawn().expect("failed to start VM"));
+        let mut cmd_handle = cmd
+            .spawn()
+            .map_err(|err| ExecuteTaskError::VMStartExecutionFail(err.to_string()))?;
 
         let start_time = Instant::now();
 
@@ -292,23 +253,16 @@ impl Provider for Qemu {
 
                 if retry_count > 100 {
                     tracing::error!("tx: {} - Failed to get QEMU started. Giving up.", tx_hash);
+                    cmd_handle
+                        .kill()
+                        .map_err(|err| ExecuteTaskError::VMStartExecutionFail(err.to_string()))?;
+                    cmd_handle
+                        .wait()
+                        .map_err(|err| ExecuteTaskError::VMStartExecutionFail(err.to_string()))?;
 
-                    let cid = qemu_vm_handle.cid;
-                    qemu_vm_handle
-                        .child
-                        .as_mut()
-                        .ok_or(std::io::Error::other(
-                            "No child process defined for this handle",
-                        ))
-                        .and_then(|p| {
-                            p.kill()?;
-                            p.wait()
-                        })?;
-
-                    self.vm_registry.remove(&cid);
-                    self.cid_allocations.remove(&cid);
-
-                    return Err(eyre!("Failed to start QEMU"));
+                    return Err(ExecuteTaskError::VMStartExecutionFail(
+                        ("Failed to start QEMU").to_string(),
+                    ));
                 }
 
                 match timeout(
@@ -330,58 +284,49 @@ impl Provider for Qemu {
                             "tx: {} - QEMU QMP connect timeout. Terminating VM.",
                             tx_hash
                         );
-                        let cid = qemu_vm_handle.cid;
-                        qemu_vm_handle
-                            .child
-                            .as_mut()
-                            .ok_or(std::io::Error::other(
-                                "No child process defined for this handle",
-                            ))
-                            .and_then(|p| {
-                                p.kill()?;
-                                p.wait()
-                            })?;
+                        cmd_handle.kill().map_err(|err| {
+                            ExecuteTaskError::VMStartExecutionFail(err.to_string())
+                        })?;
+                        cmd_handle.wait().map_err(|err| {
+                            ExecuteTaskError::VMStartExecutionFail(err.to_string())
+                        })?;
 
-                        self.vm_registry.remove(&cid);
-                        self.cid_allocations.remove(&cid);
-                        return Err(eyre!("Failed to connect to QEMU QMP"));
+                        return Err(ExecuteTaskError::VMStartExecutionFail(
+                            ("Failed to connect to QEMU QMP").to_string(),
+                        ));
                     }
                 };
             }
             client.unwrap()
         };
 
-        Ok(VMHandle {
-            start_time,
-            vm_id: Arc::new(cid),
-            vm_client: Arc::new(qmp_client),
-        })
+        Ok((cmd_handle, qmp_client, start_time))
     }
 
-    fn stop_vm(&mut self, vm: VMHandle) -> Result<()> {
-        if let Some(qemu_vm_handle) = self.vm_registry.get_mut(&u32_from_any(vm.vm_id.as_any())) {
-            drop(vm);
+    // fn stop_vm(vm: VMHandle) -> Result<()> {
+    //     if let Some(qemu_vm_handle) = self.vm_registry.get_mut(&u32_from_any(vm.vm_id.as_any())) {
+    //         drop(vm);
 
-            qemu_vm_handle
-                .child
-                .as_mut()
-                .ok_or(std::io::Error::other(
-                    "No child process defined for this handle",
-                ))
-                .and_then(|p| {
-                    p.kill()?;
-                    p.wait()
-                })?;
+    //         qemu_vm_handle
+    //             .child
+    //             .as_mut()
+    //             .ok_or(std::io::Error::other(
+    //                 "No child process defined for this handle",
+    //             ))
+    //             .and_then(|p| {
+    //                 p.kill()?;
+    //                 p.wait()
+    //             })?;
 
-            let cid = qemu_vm_handle.cid;
-            self.release_cid(cid);
-            self.vm_registry.remove(&cid);
+    //         let cid = qemu_vm_handle.cid;
+    //         self.release_cid(cid);
+    //         self.vm_registry.remove(&cid);
 
-            Ok(())
-        } else {
-            todo!("create error type for VM NOT FOUND");
-        }
-    }
+    //         Ok(())
+    //     } else {
+    //         todo!("create error type for VM NOT FOUND");
+    //     }
+    // }
 
     fn prepare_image(&mut self, _program: Program, _image: &std::path::Path) -> Result<()> {
         // QEMU provider doesn't need to do anything for the image.
