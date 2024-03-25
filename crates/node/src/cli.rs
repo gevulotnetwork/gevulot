@@ -59,7 +59,12 @@ pub struct Config {
     )]
     pub node_key_file: PathBuf,
 
-    #[arg(long, long_help = "", env = "GEVULOT_P2P_DISCOVERY_ADDR")]
+    #[arg(
+        long,
+        long_help = "",
+        value_delimiter = ',',
+        env = "GEVULOT_P2P_DISCOVERY_ADDR"
+    )]
     pub p2p_discovery_addrs: Vec<String>,
 
     #[arg(
