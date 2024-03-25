@@ -210,12 +210,9 @@ impl P2P {
             my_local_bind_addr.port(),
         ));
 
-        let peers: BTreeSet<SocketAddr> = {
-            let mut peer_list = self.peer_list.write().await;
-            // Ensure that our local address is present.
-            (*peer_list).insert(my_p2p_listen_addr);
-            peer_list.clone()
-        };
+        let mut peers: BTreeSet<SocketAddr> = self.peer_list.write().await.clone();
+        //add local peer address to the advertised peer list.
+        peers.insert(my_p2p_listen_addr);
 
         protocol::Handshake::V1(protocol::HandshakeV1 {
             my_p2p_listen_addr,
@@ -252,7 +249,8 @@ impl P2P {
         Ok(())
     }
 
-    // Connect to peer at `addr`. Subsequent connections to newly discovered nodes are done in sequence, one at a time.
+    // Connect to peer at `addr`. Subsequent connections to newly discovered nodes are done in parallel .
+    // Only return the connection that  has been established when the initial connection is done.
     // Peer can be fail because they was 2 simultaneous connection. One is fail and the orher is ok.
     pub async fn connect(
         &self,
@@ -260,8 +258,6 @@ impl P2P {
     ) -> io::Result<(BTreeSet<SocketAddr>, BTreeSet<SocketAddr>)> {
         self.node.connect(addr).await?;
         let peers = self.peer_list.read().await.clone();
-
-        //
         if peers.contains(&addr) {
             Ok((peers, BTreeSet::new()))
         } else {
@@ -647,16 +643,22 @@ mod tests {
         peer2.node().start_listening().await.expect("peer2 listen");
         peer3.node().start_listening().await.expect("peer3 listen");
 
-        let (new_peers, fail_peers) = peer2.connect(peer1.node().listening_addr().unwrap()).await;
+        let (new_peers, fail_peers) = peer2
+            .connect(peer1.node().listening_addr().unwrap())
+            .await
+            .unwrap();
 
         assert_eq!(new_peers.len(), 1);
         assert_eq!(fail_peers.len(), 0);
 
-        let (new_peers, fail_peers) = peer3.connect(peer1.node().listening_addr().unwrap()).await;
+        let (new_peers, fail_peers) = peer3
+            .connect(peer1.node().listening_addr().unwrap())
+            .await
+            .unwrap();
 
         assert_eq!(new_peers.len(), 1);
-        assert_eq!(fail_peers.len(), 1);
-        assert_eq!(fail_peers.first(), Some(&"128.0.0.1:0".parse().unwrap()));
+        //no fail peer because the connection is done in //
+        assert_eq!(fail_peers.len(), 0);
 
         // Wait for the connection fail timeout.
         tokio::time::sleep(tokio::time::Duration::from_millis(2000)).await;
@@ -714,20 +716,45 @@ mod tests {
         let bind_add = peer4.node().start_listening().await.expect("peer4 listen");
         let bind_add = peer5.node().start_listening().await.expect("peer5 listen");
 
-        let (new_peers, fail_peers) = peer2.connect(peer1.node().listening_addr().unwrap()).await;
+        let (new_peers, fail_peers) = peer2
+            .connect(peer1.node().listening_addr().unwrap())
+            .await
+            .unwrap();
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
         assert_eq!(new_peers.len(), 1);
 
         assert_eq!(peer1.peer_http_port_list.read().await.len(), 1);
         assert_eq!(peer2.peer_http_port_list.read().await.len(), 1);
 
-        let (new_peers, fail_peers) = peer3.connect(peer1.node().listening_addr().unwrap()).await;
-        assert_eq!(new_peers.len(), 2);
+        let (new_peers, fail_peers) = peer3
+            .connect(peer1.node().listening_addr().unwrap())
+            .await
+            .unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-        let (new_peers, fail_peers) = peer4.connect(peer3.node().listening_addr().unwrap()).await;
-        assert_eq!(new_peers.len(), 3);
+        assert_eq!(new_peers.len(), 1);
+        let peer3_list = peer3.peer_list.write().await.clone();
+        assert_eq!(peer3_list.len(), 2);
 
-        let (new_peers, fail_peers) = peer5.connect(peer4.node().listening_addr().unwrap()).await;
-        assert_eq!(new_peers.len(), 4);
+        let (new_peers, fail_peers) = peer4
+            .connect(peer3.node().listening_addr().unwrap())
+            .await
+            .unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        let peer4_list = peer4.peer_list.write().await.clone();
+        assert_eq!(new_peers.len(), 1);
+        assert_eq!(peer4_list.len(), 3);
+
+        let (new_peers, fail_peers) = peer5
+            .connect(peer4.node().listening_addr().unwrap())
+            .await
+            .unwrap();
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        let peer5_list = peer5.peer_list.write().await.clone();
+        assert_eq!(new_peers.len(), 1);
+        assert_eq!(peer5_list.len(), 4);
 
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
@@ -781,8 +808,10 @@ mod tests {
             let (peer2, tx_sender2, mut tx_receiver2) = create_peer("peer2").await;
             peer2.node().start_listening().await.expect("peer2 listen");
 
-            let (new_peers, fail_peers) =
-                peer1.connect(peer2.node().listening_addr().unwrap()).await;
+            let (new_peers, fail_peers) = peer1
+                .connect(peer2.node().listening_addr().unwrap())
+                .await
+                .unwrap();
             assert_eq!(new_peers.len(), 1);
             assert_eq!(fail_peers.len(), 0);
             assert_eq!(peer1.peer_http_port_list.read().await.len(), 1);
@@ -811,7 +840,7 @@ mod tests {
         tx_sender1.send(tx).unwrap();
         tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
-        assert_eq!(peer1.peer_list.read().await.len(), 1);
+        assert_eq!(peer1.peer_list.read().await.len(), 0);
         assert!(peer1.peer_addr_mapping.read().await.is_empty());
         assert_eq!(peer1.peer_http_port_list.read().await.len(), 0);
         assert_eq!(peer1.peer_http_port_list.read().await.len(), 0);
@@ -819,7 +848,7 @@ mod tests {
 
     // Test 2 peers that connect each other.
     #[tokio::test]
-    async fn test_two_peers() {
+    async fn test_two_peers_connected() {
         //start_logger(LevelFilter::ERROR);
 
         let (peer1, tx_sender1, mut tx_receiver1) = create_peer("peer1").await;
@@ -828,7 +857,10 @@ mod tests {
         peer1.node().start_listening().await.expect("peer1 listen");
         peer2.node().start_listening().await.expect("peer2 listen");
 
-        let (new_peers, fail_peers) = peer2.connect(peer1.node().listening_addr().unwrap()).await;
+        let (new_peers, fail_peers) = peer2
+            .connect(peer1.node().listening_addr().unwrap())
+            .await
+            .unwrap();
         assert_eq!(new_peers.len(), 1);
         assert_eq!(fail_peers.len(), 0);
 
