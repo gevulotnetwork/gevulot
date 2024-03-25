@@ -271,10 +271,18 @@ async fn run(config: Arc<Config>) -> Result<()> {
         match addr.to_socket_addrs() {
             Ok(mut socket_iter) => {
                 if let Some(peer) = socket_iter.next() {
-                    let (connected, fail) = p2p.connect(peer).await;
-                    connected_nodes += connected.len();
-                    if !fail.is_empty() {
-                        tracing::info!("Peer connection, fail to connect to these peers:{fail:?}");
+                    match p2p.connect(peer).await {
+                        Ok((connected, fail)) => {
+                            connected_nodes += connected.len();
+                            if !fail.is_empty() {
+                                tracing::info!(
+                                    "Peer connection, fail to connect to these peers:{fail:?}"
+                                );
+                            }
+                        }
+                        Err(err) => {
+                            tracing::error!("Connect to peer:{peer} fail because :{err}.");
+                        }
                     }
                 }
             }

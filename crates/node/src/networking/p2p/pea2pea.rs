@@ -49,6 +49,9 @@ pub struct P2P {
 
     // Send Tx to the process loop.
     tx_sender: TxEventSender<P2pSender>,
+
+    //send now advertised peers to connect too
+    advertised_peer_sender: tokio::sync::mpsc::Sender<protocol::HandshakeV1>,
 }
 
 impl Pea2Pea for P2P {
@@ -84,6 +87,9 @@ impl P2P {
         hasher.update(psk_passphrase);
         let psk = hasher.finalize();
 
+        let (advertised_peer_sender, mut advertised_peer_recv) =
+            tokio::sync::mpsc::channel::<protocol::HandshakeV1>(1000);
+
         let instance = Self {
             node,
             noise_states: Default::default(),
@@ -97,6 +103,7 @@ impl P2P {
             http_port,
             nat_listen_addr,
             tx_sender,
+            advertised_peer_sender,
         };
 
         // Enable node functionalities.
@@ -126,6 +133,57 @@ impl P2P {
                     tracing::debug!("broadcasting transaction {}", tx_hash);
                     if let Err(err) = p2p.broadcast(bs) {
                         tracing::error!("Tx:{tx_hash} not send because :{err}");
+                    }
+                }
+            }
+        });
+
+        // Start peer advertised connection loop
+        tokio::spawn({
+            let p2p = instance.clone();
+            async move {
+                let mut failed_peers = BTreeSet::new();
+                while let Some(handshake_msg) = advertised_peer_recv.recv().await {
+                    // Capture the broadcasted public P2P listening addresses. These can be
+                    // different than the actual bind addresses (e.g. w/ port forwarding).
+                    //
+                    let local_p2p_addr = p2p
+                        .nat_listen_addr
+                        .unwrap_or(p2p.node.listening_addr().unwrap());
+
+                    // Merge remote peer list with the local one to get full view on the network.
+                    let mut local_diff = {
+                        let mut local_peer_list = p2p.peer_list.write().await;
+                        let local_diff: BTreeSet<SocketAddr> = handshake_msg
+                            .peers
+                            .difference(&*local_peer_list)
+                            .cloned()
+                            .collect();
+
+                        // Add current connection peer.
+                        (*local_peer_list).insert(handshake_msg.my_p2p_listen_addr);
+
+                        local_diff
+                    };
+
+                    local_diff.remove(&local_p2p_addr);
+                    local_diff.remove(&handshake_msg.my_p2p_listen_addr);
+
+                    //connect to new peers
+                    for peer in local_diff {
+                        // Clear new peer list before connect
+                        match p2p.node.connect(peer).await {
+                            Ok(_) => {
+                                // Only add peer that are connected.
+                                p2p.peer_list.write().await.insert(peer);
+                            }
+                            Err(err) => {
+                                tracing::error!(
+                                    "An error occurs during peer:{peer} connection: {err}",
+                                );
+                                failed_peers.insert(peer);
+                            }
+                        };
                     }
                 }
             }
@@ -196,32 +254,21 @@ impl P2P {
 
     // Connect to peer at `addr`. Subsequent connections to newly discovered nodes are done in sequence, one at a time.
     // Peer can be fail because they was 2 simultaneous connection. One is fail and the orher is ok.
-    pub async fn connect(&self, addr: SocketAddr) -> (BTreeSet<SocketAddr>, BTreeSet<SocketAddr>) {
-        let mut connected_peers = BTreeSet::new();
-        let mut failed_peers = BTreeSet::new();
-        let mut peer_to_connect_list = vec![addr];
-        while !peer_to_connect_list.is_empty() {
-            // Clear new peer list before connect
-            self.current_connecting_peer_list.write().await.clear();
-            let addr = peer_to_connect_list.pop().unwrap(); //unwrap tested in the while.
-            match self.node.connect(addr).await {
-                Ok(_) => {
-                    connected_peers.insert(addr);
-                    {
-                        let peers = self.current_connecting_peer_list.write().await.clone();
-                        peer_to_connect_list.extend(peers.iter());
-                    };
+    pub async fn connect(
+        &self,
+        addr: SocketAddr,
+    ) -> io::Result<(BTreeSet<SocketAddr>, BTreeSet<SocketAddr>)> {
+        self.node.connect(addr).await?;
+        let peers = self.peer_list.read().await.clone();
 
-                    // Only add peer that are connected.
-                    self.peer_list.write().await.insert(addr);
-                }
-                Err(err) => {
-                    tracing::error!("An error occurs during peer:{addr} connection: {err}",);
-                    failed_peers.insert(addr);
-                }
-            };
+        //
+        if peers.contains(&addr) {
+            Ok((peers, BTreeSet::new()))
+        } else {
+            let mut fails = BTreeSet::new();
+            fails.insert(addr);
+            Ok((peers, fails))
         }
-        (connected_peers, failed_peers)
     }
 }
 
@@ -360,6 +407,9 @@ impl Handshake for P2P {
             remote_peer
         );
 
+        // Insert current connection
+        self.peer_list.write().await.insert(*remote_peer_p2p_addr);
+
         // Insert mapping between current TCP connection peer address and
         // the advertised remote listen address (the one present in peer list).
         self.peer_addr_mapping
@@ -367,42 +417,46 @@ impl Handshake for P2P {
             .await
             .insert(remote_peer, *remote_peer_p2p_addr);
 
-        // Capture the broadcasted public P2P listening addresses. These can be
-        // different than the actual bind addresses (e.g. w/ port forwarding).
-        let local_p2p_addr = self
-            .nat_listen_addr
-            .unwrap_or(self.node.listening_addr().unwrap());
-
-        // Merge remote peer list with the local one to get full view on the network.
-        let mut local_diff = {
-            let mut local_peer_list = self.peer_list.write().await;
-            let local_diff: BTreeSet<SocketAddr> = handshake_msg
-                .peers
-                .difference(&*local_peer_list)
-                .cloned()
-                .collect();
-
-            // Add current connection peer.
-            (*local_peer_list).insert(*remote_peer_p2p_addr);
-
-            local_diff
-        };
-
-        local_diff.remove(&local_p2p_addr);
-        local_diff.remove(remote_peer_p2p_addr);
-
-        //add new peer to node list
-        {
-            self.current_connecting_peer_list
-                .write()
-                .await
-                .append(&mut local_diff);
-        }
-
         self.peer_http_port_list
             .write()
             .await
-            .insert(handshake_msg.my_p2p_listen_addr, handshake_msg.http_port);
+            .insert(*remote_peer_p2p_addr, handshake_msg.http_port);
+
+        if let Err(err) = self.advertised_peer_sender.send(handshake_msg).await {
+            tracing::error!("Channel error, fail to send connection handshake:{err}");
+        }
+
+        // // Capture the broadcasted public P2P listening addresses. These can be
+        // // different than the actual bind addresses (e.g. w/ port forwarding).
+        // let local_p2p_addr = self
+        //     .nat_listen_addr
+        //     .unwrap_or(self.node.listening_addr().unwrap());
+
+        // // Merge remote peer list with the local one to get full view on the network.
+        // let mut local_diff = {
+        //     let mut local_peer_list = self.peer_list.write().await;
+        //     let local_diff: BTreeSet<SocketAddr> = handshake_msg
+        //         .peers
+        //         .difference(&*local_peer_list)
+        //         .cloned()
+        //         .collect();
+
+        //     // Add current connection peer.
+        //     (*local_peer_list).insert(*remote_peer_p2p_addr);
+
+        //     local_diff
+        // };
+
+        // local_diff.remove(&local_p2p_addr);
+        // local_diff.remove(remote_peer_p2p_addr);
+
+        // //add new peer to node list
+        // {
+        //     self.current_connecting_peer_list
+        //         .write()
+        //         .await
+        //         .append(&mut local_diff);
+        // }
 
         Ok(conn)
     }
