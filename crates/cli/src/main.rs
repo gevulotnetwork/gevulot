@@ -36,6 +36,8 @@ pub struct ArgConfiguration {
 enum ConfCommands {
     /// Generate a private key file using --keyfile option.
     GenerateKey,
+    /// Print a public key using --keyfile option.
+    PrintPublicKey,
 
     /// Deploy prover and verifier.
     #[command(arg_required_else_help = true)]
@@ -191,6 +193,13 @@ async fn main() {
                 args.keyfile.to_str().unwrap_or("")
             ),
             Err(err) => println!("Error during key file creation:{err}"),
+        },
+        ConfCommands::PrintPublicKey => match gevulot_cli::keyfile::read_key_file(&args.keyfile) {
+            Ok(pubkey) => println!(
+                "Extracted pubkey:{}",
+                hex::encode(pubkey.serialize())
+            ),
+            Err(err) => println!("Error during key file access:{err}"),
         },
         ConfCommands::Deploy {
             name,
