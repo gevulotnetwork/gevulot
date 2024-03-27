@@ -447,6 +447,7 @@ mod tests {
             mem_gb: None,
             gpu_devices: None,
             http_download_port: 0,
+            http_watchdog_listen_addr: "127.0.0.1:8888".parse().unwrap(),
         });
 
         let db = Arc::new(Database::new(&cfg.db_url).await.unwrap());

@@ -126,6 +126,14 @@ pub struct Config {
 
     #[arg(long, long_help = "GPU PCI devices", env = "GEVULOT_GPU_DEVICES")]
     pub gpu_devices: Option<String>,
+
+    #[arg(
+        long,
+        long_help = "Watchdog listen address",
+        env = "GEVULOT_WATCHDOG_LISTEN_ADDR",
+        default_value = "127.0.0.1:8888"
+    )]
+    pub http_watchdog_listen_addr: SocketAddr,
 }
 
 #[derive(Debug, Args)]
