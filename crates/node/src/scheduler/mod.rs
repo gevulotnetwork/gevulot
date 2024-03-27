@@ -1,10 +1,3 @@
-use crate::types::transaction::Created;
-use crate::vmm::VMHandle;
-use gevulot_node::types::transaction::Validated;
-use tokio_stream::StreamExt;
-mod program_manager;
-pub mod resource_manager;
-
 use self::program_manager::ProgramHandle;
 use crate::cli::Config;
 use crate::storage::Database;
@@ -13,19 +6,23 @@ use crate::txvalidation::CallbackSender;
 use crate::txvalidation::TxEventSender;
 use crate::txvalidation::TxResultSender;
 use crate::types::file::{move_vmfile, Output, TaskVmFile, TxFile, VmOutput};
+use crate::types::transaction::Created;
 use crate::vmm::qemu::Qemu;
 use crate::vmm::vm_server::grpc;
 use crate::vmm::vm_server::ShareVMRunningTaskMap;
 use crate::vmm::vm_server::VMServer;
+use crate::vmm::VMHandle;
 use crate::workflow::{WorkflowEngine, WorkflowError};
 use crate::{
     mempool::Mempool,
     types::{Hash, Task},
 };
 use eyre::Result;
+use futures::future::BoxFuture;
 use futures::stream::FuturesUnordered;
 use gevulot_node::types::transaction::Payload;
 use gevulot_node::types::transaction::Received;
+use gevulot_node::types::transaction::Validated;
 use gevulot_node::types::{TaskKind, Transaction};
 use libsecp256k1::SecretKey;
 pub use program_manager::ProgramManager;
@@ -44,8 +41,13 @@ use systemstat::System;
 use thiserror::Error;
 use tokio::select;
 use tokio::sync::mpsc::Sender;
+use tokio::task::JoinHandle;
 use tokio::{sync::RwLock, time::sleep};
+use tokio_stream::StreamExt;
 use tonic::transport::Server;
+
+mod program_manager;
+pub mod resource_manager;
 
 // If VM doesn't have running task within `MAX_VM_IDLE_RUN_TIME`, it will be terminated.
 const MAX_VM_IDLE_RUN_TIME: Duration = Duration::from_secs(10);
@@ -254,6 +256,7 @@ impl Scheduler {
             resource_manager,
             running_task,
         );
+        let mut pending_tasks: VecDeque<BoxFuture<'static, Task>> = VecDeque::new();
 
         let mut running_task: HashMap<Hash, VMHandle> = HashMap::new();
 
@@ -265,6 +268,8 @@ impl Scheduler {
                 //Everify Zombies  VM.
                 _ = reap_zombies_timer.tick() => {
                     //TODO.
+                    tracing::warn!(" torun_task_futures.len:{} pending_tasks.len:{} result_vm_futures.len:{} running_task.len:{}"
+                        , torun_task_futures.len(), pending_tasks.len(), result_vm_futures.len(),running_task.len());
                 }
 
                 //process task execution result
@@ -353,10 +358,16 @@ impl Scheduler {
                 //get a task from mempool if any.
                 Some(tx) = exec_receiver.recv() => {
                     if let Some(task) = self.get_task_from_tx(&tx).await {
-                        torun_task_futures.push(tokio::spawn(async move{task}));
+                        async fn schedule_fut(task: Task) -> Task {
+                            task
+                        }
+                        Self::schedule_task(Box::pin(schedule_fut(task)), &mut torun_task_futures, &mut pending_tasks);
                     }
                 }
                 Some(Ok(task)) = torun_task_futures.next() => {
+                    //move pending fut to torun if any.
+                    Self::move_task_from_pending(&mut torun_task_futures, &mut pending_tasks);
+
                     tracing::debug!("task {}/{} scheduled for running", task.id, task.tx);
                     let qemu_vm_handle = match task_manager.prepare_task_execution(&task).await {
                         Ok(handle) => handle,
@@ -364,14 +375,12 @@ impl Scheduler {
                             match err {
                                 ExecuteTaskError::NotEnoughResources(_) => {
                                     tracing::info!("{err} reschedule");
-                                    let task_jh = tokio::spawn(
-                                        async move {
-                                            sleep(Duration::from_millis(500)).await;
-                                            task
-                                        }
-                                    );
                                     //reshedule the task.
-                                    torun_task_futures.push(task_jh);
+                                    async fn reschedule_fut(task: Task) -> Task {
+                                        sleep(Duration::from_millis(500)).await;
+                                        task
+                                    }
+                                    Self::schedule_task(Box::pin(reschedule_fut(task)), &mut torun_task_futures, &mut pending_tasks);
                                 }
                                 _ => {
                                     tracing::error!("{err} Abort Tx:{}", task.tx);
@@ -416,6 +425,30 @@ impl Scheduler {
                     }
                 }
             }
+        }
+    }
+
+    const MAX_SCHEDULED_FUTURE_TASK: usize = 20;
+    fn schedule_task(
+        task_future: BoxFuture<'static, Task>, //Box<dyn Future<Output = Task> + Send + 'static>,
+        torun_task_futures: &mut FuturesUnordered<JoinHandle<Task>>,
+        pending_tasks: &mut VecDeque<BoxFuture<'static, Task>>,
+    ) {
+        if torun_task_futures.len() <= Self::MAX_SCHEDULED_FUTURE_TASK {
+            torun_task_futures.push(tokio::spawn(task_future));
+        } else {
+            pending_tasks.push_back(task_future);
+        }
+    }
+
+    fn move_task_from_pending(
+        torun_task_futures: &mut FuturesUnordered<JoinHandle<Task>>,
+        pending_tasks: &mut VecDeque<BoxFuture<'static, Task>>,
+    ) {
+        if let Some(Some(fut)) = (torun_task_futures.len() <= Self::MAX_SCHEDULED_FUTURE_TASK)
+            .then(|| pending_tasks.pop_front())
+        {
+            torun_task_futures.push(tokio::spawn(fut));
         }
     }
 
