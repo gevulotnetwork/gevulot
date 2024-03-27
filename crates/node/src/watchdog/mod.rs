@@ -1,6 +1,7 @@
 use eyre::Result;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
+use hyper::Method;
 use hyper::{Response, StatusCode};
 use hyper_util::rt::TokioIo;
 use std::net::SocketAddr;
@@ -39,13 +40,13 @@ impl From<WatchDogState> for StatusCode {
     }
 }
 
-pub async fn start_watchdog(bind_addr: SocketAddr) -> Result<mpsc::Sender<HealthCheckSignal>> {
+pub async fn start_healthcheck(bind_addr: SocketAddr) -> Result<mpsc::Sender<HealthCheckSignal>> {
     let (scheduler_health_tx, scheduler_health_rx) = mpsc::channel::<HealthCheckSignal>(100);
     let watchdog_state = Arc::new(Mutex::new(WatchDogState::Alive));
     tokio::spawn({
         let watchdog_state = watchdog_state.clone();
         async move {
-            run_watchdog(
+            run_healthcheck(
                 GRACEFULL_SIGNAL_COUNTER_LIMIT,
                 SCHEDULER_HEALTH_SIGNAL_TIMEOUT_MILLIS,
                 NO_LOOP_DETECT_TIMEOUT_MILLIS,
@@ -60,14 +61,30 @@ pub async fn start_watchdog(bind_addr: SocketAddr) -> Result<mpsc::Sender<Health
     Ok(scheduler_health_tx)
 }
 
-async fn run_watchdog(
+#[derive(Clone, Debug, Copy, PartialEq, PartialOrd)]
+struct HealthcheckState {
+    scheduler_alive: bool,
+    scheduler_mempool_empty: bool,
+    scheduler_signal_valid: bool,
+}
+impl Default for HealthcheckState {
+    fn default() -> Self {
+        HealthcheckState {
+            scheduler_alive: true,
+            scheduler_mempool_empty: true,
+            scheduler_signal_valid: true,
+        }
+    }
+}
+
+async fn run_healthcheck(
     graceful_signal_counter_limit: usize,
     scheduler_health_signal_timeout: Duration,
     no_loop_detect_timeout: Duration,
     watchdog_state: Arc<Mutex<WatchDogState>>,
     mut scheduler_health_rx: mpsc::Receiver<HealthCheckSignal>,
 ) {
-    let mut scheduler_state = (true, true, true);
+    let mut scheduler_state = HealthcheckState::default();
 
     // Define a timer to detect when the mempool pick_task is never call but the loop is working.
     let mut no_loop_detect_timer = tokio::time::interval(no_loop_detect_timeout);
@@ -81,22 +98,22 @@ async fn run_watchdog(
              _ = no_loop_detect_timer.tick() => {
                 // No loop ok since last call. Set scheduler loop issue
                 if !see_scheduler_loop_ok {
-                    new_state.0 = false
+                    new_state.scheduler_alive = false
                 }
                 see_scheduler_loop_ok = false;
              }
             res = timeout(scheduler_health_signal_timeout, scheduler_health_rx.recv()) => match res {
                 Ok(res) => {
-                    //The scheduler signal is alive
+                    // The scheduler signal is alive
                     timeout_counter = 0;
-                    new_state.2 = true;
+                    new_state.scheduler_signal_valid = true;
                     match res {
                         Some(msg) => match msg {
                             HealthCheckSignal::SchedulerLoopOk => {
                                 see_scheduler_loop_ok = true;
-                                new_state.0 = true
+                                new_state.scheduler_alive = true
                             },
-                            HealthCheckSignal::SchedulerMempoolLen(len) => new_state.1 = len == 0,
+                            HealthCheckSignal::SchedulerMempoolLen(len) => new_state.scheduler_mempool_empty = len == 0,
                         },
                         None => {
                             tracing::error!(
@@ -104,7 +121,7 @@ async fn run_watchdog(
                                     );
                             // Alone receiver won't get any message. recv always timeout.
                             (_, scheduler_health_rx) = tokio::sync::mpsc::channel(1);
-                            new_state.2 = false;
+                            new_state.scheduler_signal_valid = false;
                         }
                     }
                 }
@@ -112,7 +129,7 @@ async fn run_watchdog(
                     tracing::error!("Scheduler Health signal Timeout, no health signal available.");
                     timeout_counter += 1;
                     if timeout_counter >= graceful_signal_counter_limit {
-                        new_state.2 = false;
+                        new_state.scheduler_signal_valid = false;
                     }
                 }
             }
@@ -124,14 +141,14 @@ async fn run_watchdog(
         //update watchdog state
         if state_changed {
             let mut watchdog_state = watchdog_state.lock().await;
-            if !scheduler_state.0 || !scheduler_state.1 {
+            if !scheduler_state.scheduler_alive || !scheduler_state.scheduler_mempool_empty {
                 tracing::warn!(
                     "watchdog detect critical state loop:{} mempool:{}",
-                    scheduler_state.0,
-                    scheduler_state.1
+                    scheduler_state.scheduler_alive,
+                    scheduler_state.scheduler_mempool_empty
                 );
                 *watchdog_state = WatchDogState::Critical;
-            } else if !scheduler_state.2 {
+            } else if !scheduler_state.scheduler_signal_valid {
                 tracing::warn!("watchdog detect Graceful issue.");
                 *watchdog_state = WatchDogState::Graceful;
             } else {
@@ -154,7 +171,7 @@ async fn serve_healthcheck(
     tokio::spawn({
         async move {
             tracing::info!(
-                "Watchdog listening for http at {}",
+                "Healthcheck listening for http at {}",
                 listener
                     .local_addr()
                     .expect("http listener's local address")
@@ -170,11 +187,21 @@ async fn serve_healthcheck(
                                 if let Err(err) = http1::Builder::new()
                                     .serve_connection(
                                         io,
-                                        service_fn(|_| {
+                                        service_fn(|req| {
                                             let watchdog_state = watchdog_state.clone();
                                             async move {
                                                 let status: StatusCode =
-                                                    (*watchdog_state.lock().await).into();
+                                                    match (req.method(), req.uri().path()) {
+                                                        (&Method::GET, "/healthz")
+                                                        | (&Method::HEAD, "/healthz") => {
+                                                            (*watchdog_state.lock().await).into()
+                                                        }
+                                                        (&Method::GET, "/ready")
+                                                        | (&Method::HEAD, "/ready") => {
+                                                            StatusCode::NO_CONTENT
+                                                        }
+                                                        _ => StatusCode::OK,
+                                                    };
                                                 Response::builder()
                                                     .status(status)
                                                     .body(String::new())
@@ -183,7 +210,7 @@ async fn serve_healthcheck(
                                     )
                                     .await
                                 {
-                                    tracing::error!("Error serving watchdog connection: {err}.");
+                                    tracing::error!("Error serving healthcheck connection: {err}.");
                                 }
                             }
                         });
@@ -212,7 +239,7 @@ mod tests {
         tokio::spawn({
             let watchdog_state = watchdog_state.clone();
             async move {
-                run_watchdog(
+                run_healthcheck(
                     2,
                     Duration::from_millis(100),
                     Duration::from_millis(300),
