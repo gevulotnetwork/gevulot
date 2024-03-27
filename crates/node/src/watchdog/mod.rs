@@ -83,7 +83,7 @@ async fn run_watchdog(
                         tracing::error!(
                                     "Scheduler Health channel error, Health channel closed. Stop health check."
                                 );
-                        //Alone receiver get message
+                        // Alone receiver won't get any message. recv always timeout.
                         (_, scheduler_health_rx) = tokio::sync::mpsc::channel(1);
                         new_state.2 = false;
                     }
