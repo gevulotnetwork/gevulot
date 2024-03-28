@@ -7,6 +7,7 @@ use gevulot_node::types::Hash;
 use gevulot_node::types::TransactionTree;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use libsecp256k1::PublicKey;
 
 #[derive(Parser, Debug)]
 #[clap(author = "Gevulot Team", version, about, long_about = None)]
@@ -195,15 +196,17 @@ async fn main() {
             Err(err) => println!("Error during key file creation:{err}"),
         },
         ConfCommands::PrintPublicKey => {
-            let key = gevulot_cli::keyfile::read_key_file(&args.keyfile);
-            match PublicKey::from_secret_key(&key) {
-                Ok(pubkey) => println!(
-                    "Extracted pubkey:{}",
-                    hex::encode(pubkey.serialize())
-                ),
+            match gevulot_cli::keyfile::read_key_file(&args.keyfile) {
+                Ok(key) => {
+                    let pubkey = PublicKey::from_secret_key(&key);
+                    return println!(
+                        "Extracted pubkey:{}",
+                        hex::encode(pubkey.serialize())
+                    )
+                },
                 Err(err) => println!("Error during key file access:{err}"),
             }
-        },
+        }
         ConfCommands::Deploy {
             name,
             prover,
