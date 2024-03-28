@@ -194,12 +194,15 @@ async fn main() {
             ),
             Err(err) => println!("Error during key file creation:{err}"),
         },
-        ConfCommands::PrintPublicKey => match gevulot_cli::keyfile::read_key_file(&args.keyfile) {
-            Ok(pubkey) => println!(
-                "Extracted pubkey:{}",
-                hex::encode(pubkey.serialize())
-            ),
-            Err(err) => println!("Error during key file access:{err}"),
+        ConfCommands::PrintPublicKey => {
+            let key = gevulot_cli::keyfile::read_key_file(&args.keyfile);
+            match PublicKey::from_secret_key(&key) {
+                Ok(pubkey) => println!(
+                    "Extracted pubkey:{}",
+                    hex::encode(pubkey.serialize())
+                ),
+                Err(err) => println!("Error during key file access:{err}"),
+            }
         },
         ConfCommands::Deploy {
             name,
