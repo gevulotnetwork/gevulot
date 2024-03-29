@@ -361,7 +361,6 @@ impl TxEvent<WaitTx> {
         for new_tx in &new_txs {
             parent_cache.add_cached_tx(new_tx.tx.hash);
         }
-
         Ok(new_txs)
     }
 }
