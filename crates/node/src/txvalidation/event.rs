@@ -1,18 +1,20 @@
 use super::ValidatedTxReceiver;
-use crate::mempool::Storage;
 use crate::txvalidation::acl::AclWhitelist;
 use crate::txvalidation::download_manager;
 use crate::txvalidation::EventProcessError;
+use crate::txvalidation::ValidateStorage;
 use crate::types::Hash;
 use crate::types::{
     transaction::{Received, Validated},
-    Transaction,
+    Program, Transaction,
 };
 use futures::future::join_all;
 use futures_util::TryFutureExt;
 use lru::LruCache;
 use std::collections::HashMap;
 use std::fmt::Debug;
+use std::future::Future;
+use std::marker::PhantomData;
 use std::net::SocketAddr;
 use std::path::Path;
 use std::time::Duration;
@@ -196,37 +198,134 @@ impl TxEvent<PropagateTx> {
     }
 }
 
+// Run Tx depends on Deploy Tx program.
+// Proof/Verify Tx depends on Run Tx to propagated.
+// Do it in 2 step.
+// Manage Run Tx and put to wait depending on progam.
+// Manage Proof and Verify Tx to wait depending on Run Tx.
+
 impl TxEvent<WaitTx> {
     pub async fn process_event(
         self,
-        cache: &mut TxCache,
-        storage: &impl Storage,
+        programid_cache: &mut TxCache<Program>,
+        parent_cache: &mut TxCache<Transaction<Validated>>,
+        storage: &impl ValidateStorage,
     ) -> Result<Vec<TxEvent<NewTx>>, EventProcessError> {
-        // Verify Tx'x parent is present or not.
-        let new_tx = if let Some(parent) = self.tx.payload.get_parent_tx() {
-            if cache.is_tx_cached(parent)
-                || storage
-                    .get(parent)
+        // First validate program dep
+        let prg_ok_txs = self.manage_program_dep(programid_cache, storage).await?;
+        //validate parent dep
+        let mut new_txs = vec![];
+        for prog_ok_tx in prg_ok_txs {
+            let mut ret = prog_ok_tx.manage_parent_dep(parent_cache, storage).await?;
+            new_txs.append(&mut ret);
+        }
+
+        // Transfort tx in NewTx
+        let ret = new_txs.into_iter().map(|tx| tx.into()).collect();
+
+        Ok(ret)
+    }
+
+    async fn wait_if_not_cached<'a, Kind, Fut>(
+        self,
+        cache: &mut TxCache<Kind>,
+        cache_key: std::option::Option<&'a gevulot_node::types::Hash>,
+        storage: &'a impl ValidateStorage,
+        storage_contains: impl FnOnce(&'a Hash, &'a dyn ValidateStorage) -> Fut,
+    ) -> Result<Option<Self>, EventProcessError>
+    where
+        Fut: Future<Output = eyre::Result<bool>>,
+    {
+        if let Some(cache_key) = cache_key {
+            if cache.is_tx_cached(cache_key)
+                || storage_contains(cache_key, storage)
                     .await
                     .map_err(|err| EventProcessError::StorageError(format!("{err}")))?
-                    .is_some()
             {
                 // Present return the Tx
-                Some(self)
+                Ok(Some(self))
             } else {
-                // Parent is missing add to waiting list
-                cache.add_new_waiting_tx(*parent, self);
-                None
+                // Program is missing add to waiting list
+                cache.add_new_waiting_tx(*cache_key, self);
+                Ok(None)
             }
         } else {
-            // No parent always new Tx.
-            Some(self)
-        };
+            Ok(Some(self))
+        }
+    }
+
+    // Validate if the Tx is a Run, its program has been installed.
+    // If not, wait the Tx until the program deploy Tx arrives
+    pub async fn manage_program_dep(
+        self,
+        programid_cache: &mut TxCache<Program>,
+        storage: &impl ValidateStorage,
+    ) -> Result<Vec<TxEvent<WaitTx>>, EventProcessError> {
+        // Verify that Tx associated program are present.
+        let run_tx_programs = self.tx.payload.get_run_programs_dep();
+        fn query_db_for_program<'a>(
+            cache_key: &'a Hash,
+            storage: &'a dyn ValidateStorage,
+        ) -> impl Future<Output = eyre::Result<bool>> + 'a {
+            storage.contains_program(*cache_key)
+        }
+        // Only test for the first program, because all Tx program came from the same deploy tx.
+        let new_tx = self
+            .wait_if_not_cached(
+                programid_cache,
+                run_tx_programs.first(),
+                storage,
+                query_db_for_program,
+            )
+            .await?;
+
+        let new_txs = new_tx
+            .map(|tx| {
+                //if it's a deploy Tx free the Tx that are waiting.
+                let mut ret_tx: Vec<_> = tx
+                    .tx
+                    .payload
+                    .get_deploy_programs()
+                    .into_iter()
+                    .flat_map(|prg| {
+                        //add deploy prg to the cache
+                        programid_cache.add_cached_tx(prg);
+                        programid_cache.remove_waiting_children_txs(&prg)
+                    })
+                    .collect();
+                // Add the deploy Tx is any first to be processed the first.
+                ret_tx.insert(0, tx);
+                ret_tx
+            })
+            .unwrap_or(vec![]);
+
+        Ok(new_txs)
+    }
+
+    pub async fn manage_parent_dep(
+        self,
+        parent_cache: &mut TxCache<Transaction<Validated>>,
+        storage: &impl ValidateStorage,
+    ) -> Result<Vec<TxEvent<WaitTx>>, EventProcessError> {
+        // Verify Tx'x parent is present or not.
+        fn query_db_for_tx<'a>(
+            cache_key: &'a Hash,
+            storage: &'a dyn ValidateStorage,
+        ) -> impl Future<Output = eyre::Result<bool>> + 'a {
+            storage
+                .get_tx(cache_key)
+                .and_then(|res| async move { Ok(res.is_some()) })
+        }
+        // Only test for the first program, because all Tx program came from the same deploy tx.
+        let parent = self.tx.payload.get_parent_tx().cloned();
+        let new_tx = self
+            .wait_if_not_cached(parent_cache, parent.as_ref(), storage, query_db_for_tx)
+            .await?;
 
         //remove child Tx if any from waiting list.
         let new_txs = new_tx
             .map(|tx| {
-                let mut ret = cache.remove_waiting_children_txs(&tx.tx.hash);
+                let mut ret = parent_cache.remove_waiting_children_txs(&tx.tx.hash);
                 // Add the parent Tx first to be processed the first.
                 ret.insert(0, tx);
                 ret
@@ -234,15 +333,11 @@ impl TxEvent<WaitTx> {
             .unwrap_or(vec![]);
 
         // Add new tx to the cache.
-        let ret = new_txs
-            .into_iter()
-            .map(|tx| {
-                cache.add_cached_tx(tx.tx.hash);
-                tx.into()
-            })
-            .collect();
+        for new_tx in &new_txs {
+            parent_cache.add_cached_tx(new_tx.tx.hash);
+        }
 
-        Ok(ret)
+        Ok(new_txs)
     }
 }
 
@@ -275,7 +370,7 @@ impl TxEvent<NewTx> {
 }
 
 // Use to cache New tx and store waiting Tx that have missing parent.
-pub struct TxCache {
+pub struct TxCache<Kind> {
     // List of Tx waiting for parent.let waiting_txs =
     waiting_tx: HashMap<Hash, (Vec<TxEvent<WaitTx>>, Instant)>,
     // Cache of the last saved Tx in the DB. To avoid to query the db for Tx.
@@ -284,9 +379,11 @@ pub struct TxCache {
     max_waiting_tx: usize,
     // Max time a Tx can wait in millisecond.
     max_waiting_time: Duration,
+    //marker to avoid to mix cache use
+    _marker: PhantomData<Kind>,
 }
 
-impl TxCache {
+impl<Kind> TxCache<Kind> {
     pub fn new() -> Self {
         Self::build(
             MAX_CACHED_TX_FOR_VERIFICATION,
@@ -302,6 +399,7 @@ impl TxCache {
             cached_tx_for_verification,
             max_waiting_tx,
             max_waiting_time: Duration::from_millis(max_waiting_time),
+            _marker: PhantomData,
         }
     }
 
@@ -352,7 +450,7 @@ impl TxCache {
     }
 }
 
-impl Default for TxCache {
+impl<Kind> Default for TxCache<Kind> {
     fn default() -> Self {
         Self::new()
     }
@@ -364,25 +462,32 @@ mod tests {
     use super::*;
     use crate::txvalidation::Created;
     use crate::types::transaction::Payload;
+    use crate::types::transaction::ProgramMetadata;
+    use crate::types::transaction::{Workflow, WorkflowStep};
     use eyre::Result;
     use libsecp256k1::SecretKey;
     use rand::{rngs::StdRng, SeedableRng};
-    use std::collections::VecDeque;
+    use std::collections::HashSet;
     use tokio::sync::Mutex;
 
-    struct TestDb(Mutex<HashMap<Hash, Transaction<Validated>>>);
+    struct TestDb {
+        tx_db: Mutex<HashMap<Hash, Transaction<Validated>>>,
+        program_db: Mutex<HashSet<Hash>>,
+    }
+
+    impl TestDb {
+        async fn set_tx(&self, tx: Transaction<Validated>) {
+            self.tx_db.lock().await.insert(tx.hash, tx);
+        }
+    }
 
     #[async_trait::async_trait]
-    impl Storage for TestDb {
-        async fn get(&self, hash: &Hash) -> Result<Option<Transaction<Validated>>> {
-            Ok(self.0.lock().await.get(hash).cloned())
+    impl ValidateStorage for TestDb {
+        async fn get_tx(&self, hash: &Hash) -> Result<Option<Transaction<Validated>>> {
+            Ok(self.tx_db.lock().await.get(hash).cloned())
         }
-        async fn set(&self, tx: &Transaction<Validated>) -> Result<()> {
-            self.0.lock().await.insert(tx.hash, tx.clone());
-            Ok(())
-        }
-        async fn fill_deque(&self, deque: &mut VecDeque<Transaction<Validated>>) -> Result<()> {
-            Ok(())
+        async fn contains_program(&self, hash: Hash) -> eyre::Result<bool> {
+            Ok(self.program_db.lock().await.contains(hash.as_ref()))
         }
     }
 
@@ -397,6 +502,43 @@ mod tests {
             proof: vec![],
             files: vec![],
         };
+
+        new_tx_event(payload)
+    }
+
+    fn new_deploy_tx_event(seed: u8) -> TxEvent<WaitTx> {
+        let prover_program = ProgramMetadata {
+            hash: Hash::new([seed; 32]),
+            ..Default::default()
+        };
+        let verifier_program = ProgramMetadata {
+            hash: Hash::new([seed + 1; 32]),
+            ..Default::default()
+        };
+        let payload = Payload::Deploy {
+            name: "test".to_string(),
+            prover: prover_program,
+            verifier: verifier_program,
+        };
+
+        new_tx_event(payload)
+    }
+
+    fn new_run_tx_event(seed: u8) -> TxEvent<WaitTx> {
+        let prover_program = WorkflowStep {
+            program: Hash::new([seed; 32]),
+            args: vec![],
+            inputs: vec![],
+        };
+        let verifier_program = WorkflowStep {
+            program: Hash::new([seed + 1; 32]),
+            args: vec![],
+            inputs: vec![],
+        };
+        let workflow = Workflow {
+            steps: vec![prover_program, verifier_program],
+        };
+        let payload = Payload::Run { workflow };
 
         new_tx_event(payload)
     }
@@ -436,10 +578,103 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_evict_wait_tx() {
-        let db = TestDb(Mutex::new(HashMap::new()));
+    async fn test_wait_tx_for_program() {
+        let db = TestDb {
+            tx_db: Mutex::new(HashMap::new()),
+            program_db: Mutex::new(HashSet::new()),
+        };
         // Set parameters to have Tx eviction
-        let mut wait_tx_cache = TxCache::build(2, 2, 10);
+        let mut wait_progam_cache = TxCache::<Program>::build(4, 2, 10);
+
+        // Create the parent Txs that will only be processed at the end.
+        // Create 2 parents to have 2 waiting child Tx
+        let deploy1_tx_event = new_deploy_tx_event(1);
+        let run1_tx_event = new_run_tx_event(1);
+
+        // First do normal process
+        // Deploy then Run.
+        let res = deploy1_tx_event
+            .manage_program_dep(&mut wait_progam_cache, &db)
+            .await;
+        assert!(res.is_ok());
+        assert_eq!(wait_progam_cache.waiting_tx.len(), 0);
+        assert_eq!(1, res.unwrap().len());
+        // 2 programs cached
+        assert_eq!(wait_progam_cache.cached_tx_for_verification.len(), 2);
+
+        let res = run1_tx_event
+            .manage_program_dep(&mut wait_progam_cache, &db)
+            .await;
+        assert!(res.is_ok());
+        assert_eq!(wait_progam_cache.waiting_tx.len(), 0);
+        assert_eq!(1, res.unwrap().len());
+        // 2 same programs cached. No changes.
+        assert_eq!(wait_progam_cache.cached_tx_for_verification.len(), 2);
+
+        // Test Run Tx waiting for deploy Tx and proof tx not waiting.
+        let deploy2_tx_event = new_deploy_tx_event(3);
+        let run2_tx_event = new_run_tx_event(3);
+        let proof2_tx_event = new_proof_tx_event(run2_tx_event.tx.hash);
+        let res = run2_tx_event
+            .manage_program_dep(&mut wait_progam_cache, &db)
+            .await;
+        assert!(res.is_ok());
+        //Run Tx is waiting
+        assert_eq!(wait_progam_cache.waiting_tx.len(), 1);
+        assert_eq!(0, res.unwrap().len());
+        // No new cache done.
+        assert_eq!(wait_progam_cache.cached_tx_for_verification.len(), 2);
+
+        let res = proof2_tx_event
+            .manage_program_dep(&mut wait_progam_cache, &db)
+            .await;
+        assert!(res.is_ok());
+        assert_eq!(wait_progam_cache.waiting_tx.len(), 1);
+        // Not managed by program. ProofTx return. Will wait with parent detection.
+        assert_eq!(1, res.unwrap().len());
+        // No new  cache done.
+        assert_eq!(wait_progam_cache.cached_tx_for_verification.len(), 2);
+
+        let deploy2_tx_hash = deploy2_tx_event.tx.hash;
+        let res = deploy2_tx_event
+            .manage_program_dep(&mut wait_progam_cache, &db)
+            .await;
+        assert!(res.is_ok());
+        // Run Tx remove from cache
+        assert_eq!(wait_progam_cache.waiting_tx.len(), 0);
+        // Run Tx + Deploy
+        let res = res.unwrap();
+        assert_eq!(2, res.len());
+        //deploy tx first.
+        assert_eq!(res[0].tx.hash, deploy2_tx_hash);
+        // +2 programs cached
+        assert_eq!(wait_progam_cache.cached_tx_for_verification.len(), 4);
+
+        //test  case miss and db query and get from db.
+        db.program_db.lock().await.insert(Hash::new([5; 32]));
+        db.program_db.lock().await.insert(Hash::new([6; 32]));
+        let deploy_tx_event = new_deploy_tx_event(5);
+        let run_tx_event = new_run_tx_event(5);
+        let res = run_tx_event
+            .manage_program_dep(&mut wait_progam_cache, &db)
+            .await;
+        assert!(res.is_ok());
+        //Run Tx is waiting
+        assert_eq!(wait_progam_cache.waiting_tx.len(), 0);
+        assert_eq!(1, res.unwrap().len());
+        // No new cache done.
+        assert_eq!(wait_progam_cache.cached_tx_for_verification.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn test_evict_wait_tx() {
+        let db = TestDb {
+            tx_db: Mutex::new(HashMap::new()),
+            program_db: Mutex::new(HashSet::new()),
+        };
+        // Set parameters to have Tx eviction
+        let mut wait_progam_cache = TxCache::<Program>::build(2, 2, 10);
+        let mut wait_tx_cache = TxCache::<Transaction<Validated>>::build(2, 2, 10);
 
         // Create the parent Txs that will only be processed at the end.
         // Create 2 parents to have 2 waiting child Tx
@@ -450,13 +685,17 @@ mod tests {
 
         // New Tx that will wait.
         let tx_event = new_proof_tx_event(parent1_hash);
-        let res = tx_event.process_event(&mut wait_tx_cache, &db).await;
+        let res = tx_event
+            .process_event(&mut wait_progam_cache, &mut wait_tx_cache, &db)
+            .await;
         assert!(res.is_ok());
         assert_eq!(wait_tx_cache.waiting_tx.len(), 1);
 
         // New Tx that will wait.
         let tx_event = new_proof_tx_event(parent2_hash);
-        let res = tx_event.process_event(&mut wait_tx_cache, &db).await;
+        let res = tx_event
+            .process_event(&mut wait_progam_cache, &mut wait_tx_cache, &db)
+            .await;
         assert!(res.is_ok());
         assert_eq!(wait_tx_cache.waiting_tx.len(), 2);
 
@@ -465,14 +704,16 @@ mod tests {
         // Add new Tx to evict the old one.
         let tx_event = new_proof_tx_event(parent1_hash);
         let tx_hash = tx_event.tx.hash;
-        let res = tx_event.process_event(&mut wait_tx_cache, &db).await;
+        let res = tx_event
+            .process_event(&mut wait_progam_cache, &mut wait_tx_cache, &db)
+            .await;
         assert!(res.is_ok());
         // Evicted but new tx added => len=1.
         assert_eq!(wait_tx_cache.waiting_tx.len(), 1);
 
         //Process the parent Tx. Do child Tx return because they have been evicted.
         let res = parent1_tx_event
-            .process_event(&mut wait_tx_cache, &db)
+            .process_event(&mut wait_progam_cache, &mut wait_tx_cache, &db)
             .await;
         assert!(res.is_ok());
         let ret_txs = res.unwrap();
@@ -484,18 +725,24 @@ mod tests {
 
     #[tokio::test]
     async fn test_wait_tx_process_event() {
-        let db = TestDb(Mutex::new(HashMap::new()));
+        let db = TestDb {
+            tx_db: Mutex::new(HashMap::new()),
+            program_db: Mutex::new(HashSet::new()),
+        };
         // Set parameters to avoid wait tx eviction.
-        let mut wait_tx_cache = TxCache::build(2, 10, 1000);
+        let mut wait_progam_cache = TxCache::<Program>::build(2, 2, 10);
+        let mut wait_tx_cache = TxCache::<Transaction<Validated>>::build(2, 2, 10);
 
         // Test a new tx without parent. No wait and added to cache.
         let tx_event1 = new_empty_tx_event();
         let tx1_hash = tx_event1.tx.hash;
         let tx1 = tx_event1.tx.clone();
-        let res = tx_event1.process_event(&mut wait_tx_cache, &db).await;
+        let res = tx_event1
+            .process_event(&mut wait_progam_cache, &mut wait_tx_cache, &db)
+            .await;
         assert!(res.is_ok());
         // Save the Tx in db to test cache miss.
-        let _ = db.set(&into_receive(tx1)).await;
+        let _ = db.set_tx(into_receive(tx1)).await;
         // Not in wait cache because no parent.
         assert_eq!(wait_tx_cache.waiting_tx.len(), 0);
         assert!(wait_tx_cache.is_tx_cached(&tx1_hash));
@@ -504,10 +751,12 @@ mod tests {
         let tx2_event = new_proof_tx_event(tx1_hash);
         let tx2_hash = tx2_event.tx.hash;
         let tx2 = tx2_event.tx.clone();
-        let res = tx2_event.process_event(&mut wait_tx_cache, &db).await;
+        let res = tx2_event
+            .process_event(&mut wait_progam_cache, &mut wait_tx_cache, &db)
+            .await;
         assert!(res.is_ok());
         // Save the Tx in db to test cache miss.
-        let _ = db.set(&into_receive(tx2)).await;
+        let _ = db.set_tx(into_receive(tx2)).await;
         // Not cached because no parent.
         assert_eq!(wait_tx_cache.waiting_tx.len(), 0);
         assert!(wait_tx_cache.is_tx_cached(&tx2_hash));
@@ -518,13 +767,17 @@ mod tests {
         let parent_tx = parent_tx_event.tx.clone();
         let tx_event3 = new_proof_tx_event(parent_tx_event.tx.hash);
         let tx3_hash = tx_event3.tx.hash;
-        let res = tx_event3.process_event(&mut wait_tx_cache, &db).await;
+        let res = tx_event3
+            .process_event(&mut wait_progam_cache, &mut wait_tx_cache, &db)
+            .await;
         assert!(res.is_ok());
         assert_eq!(wait_tx_cache.waiting_tx.len(), 1);
         assert!(!wait_tx_cache.is_tx_cached(&tx3_hash));
 
         // Test process parent Tx: Tx3 removed from waiting, Tx3 and parent added to cached. Return Tx3 and parent.
-        let res = parent_tx_event.process_event(&mut wait_tx_cache, &db).await;
+        let res = parent_tx_event
+            .process_event(&mut wait_progam_cache, &mut wait_tx_cache, &db)
+            .await;
         assert!(res.is_ok());
         assert_eq!(wait_tx_cache.waiting_tx.len(), 0);
         assert!(wait_tx_cache.is_tx_cached(&parent_hash));
@@ -538,7 +791,9 @@ mod tests {
         assert!(!wait_tx_cache.is_tx_cached(&tx1_hash));
         let tx4_event = new_proof_tx_event(tx1_hash); // tx1_hash not in the cache but in the DB
         let tx4_hash = tx4_event.tx.hash;
-        let res = tx4_event.process_event(&mut wait_tx_cache, &db).await;
+        let res = tx4_event
+            .process_event(&mut wait_progam_cache, &mut wait_tx_cache, &db)
+            .await;
         assert!(res.is_ok());
         // Not cached because parent in db
         assert_eq!(wait_tx_cache.waiting_tx.len(), 0);

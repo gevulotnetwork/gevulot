@@ -202,6 +202,23 @@ impl Payload {
             _ => None,
         }
     }
+
+    pub fn get_deploy_programs(&self) -> Vec<Hash> {
+        match self {
+            Payload::Deploy {
+                prover, verifier, ..
+            } => vec![prover.hash, verifier.hash],
+            _ => vec![],
+        }
+    }
+
+    pub fn get_run_programs_dep(&self) -> Vec<Hash> {
+        match self {
+            Payload::Run { workflow } => workflow.steps.iter().map(|s| s.program).collect(),
+            _ => vec![],
+        }
+    }
+
     pub fn serialize_into(&self, buf: &mut Vec<u8>) {
         match self {
             Payload::Empty => {}
