@@ -91,7 +91,7 @@ async fn send_transaction(params: Params<'static>, ctx: Arc<Context>) -> RpcResp
     if let Err(err) = ctx.tx_sender.send_tx(tx).await {
         tracing::error!("failed to persist transaction: {}", err);
         return RpcResponse::Err(RpcError::InvalidRequest(
-            "failed to persist transaction".to_string(),
+            format!("failed to persist transaction: {:#}", err),
         ));
     }
 
