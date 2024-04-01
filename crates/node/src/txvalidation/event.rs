@@ -362,9 +362,10 @@ impl TxEvent<NewTx> {
             tx.hash.to_string(),
             tx.payload
         );
+        let tx_hash = tx.hash;
         newtx_receiver
             .send_new_tx(tx)
-            .map_err(|err| EventProcessError::SaveTxError(format!("{err}")))
+            .map_err(|err| EventProcessError::SaveTxError(format!("Tx:{} {err}", tx_hash)))
             .await
     }
 }
