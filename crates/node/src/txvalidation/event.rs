@@ -312,6 +312,14 @@ impl TxEvent<WaitTx> {
             })
             .unwrap_or(vec![]);
 
+        tracing::warn!(
+            "manage_program_dep {:?}",
+            new_txs
+                .iter()
+                .map(|tx| tx.tx.hash.to_string())
+                .collect::<Vec<_>>()
+        );
+
         Ok(new_txs)
     }
 
