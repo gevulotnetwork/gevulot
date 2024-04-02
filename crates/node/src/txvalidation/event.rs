@@ -299,6 +299,14 @@ impl TxEvent<WaitTx> {
             })
             .unwrap_or(vec![]);
 
+        tracing::warn!(
+            "manage_program_dep {:?}",
+            new_txs
+                .iter()
+                .map(|tx| tx.tx.hash.to_string())
+                .collect::<Vec<_>>()
+        );
+
         Ok(new_txs)
     }
 
@@ -336,6 +344,14 @@ impl TxEvent<WaitTx> {
         for new_tx in &new_txs {
             parent_cache.add_cached_tx(new_tx.tx.hash);
         }
+
+        tracing::warn!(
+            "manage_parent_dep {:?}",
+            new_txs
+                .iter()
+                .map(|tx| tx.tx.hash.to_string())
+                .collect::<Vec<_>>()
+        );
 
         Ok(new_txs)
     }
