@@ -172,7 +172,7 @@ impl TxEvent<DownloadTx> {
     }
 }
 
-//Propagate Tx processing
+// Propagate Tx processing.
 impl TxEvent<PropagateTx> {
     pub async fn process_event(
         self,
@@ -203,7 +203,6 @@ impl TxEvent<PropagateTx> {
 // Do it in 2 step.
 // Manage Run Tx and put to wait depending on progam.
 // Manage Proof and Verify Tx to wait depending on Run Tx.
-
 impl TxEvent<WaitTx> {
     pub async fn process_event(
         self,
@@ -322,7 +321,7 @@ impl TxEvent<WaitTx> {
             .wait_if_not_cached(parent_cache, parent.as_ref(), storage, query_db_for_tx)
             .await?;
 
-        //remove child Tx if any from waiting list.
+        // Remove child Tx if any from waiting list.
         let new_txs = new_tx
             .map(|tx| {
                 let mut ret = parent_cache.remove_waiting_children_txs(&tx.tx.hash);

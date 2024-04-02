@@ -209,11 +209,11 @@ pub async fn spawn_event_loop(
                             Ok(wait_tx) => {
                                match wait_tx.process_event(&mut program_wait_tx_cache, &mut parent_wait_tx_cache, storage.as_ref()).await {
                                     Ok(new_tx_list) => {
-                                        // Process new Tx synchronized with the dependent Tx validation
-                                        // To avoid when there's a lot of Txs free by one Tx that a next Tx that
-                                        // depend on the free is saved before the free one.
+                                        // Process new Tx synchronized with the Tx validation
+                                        // to avoid when there's a lot of waiting Txs free by one Tx that a next Tx that
+                                        // depend on the free one is saved before.
                                         // Can lock the loop during the save.
-                                        // The unbounded channel will buffer the wait.
+                                        // The unbounded channel will buffer the Tx waiting.
                                         let mut res = Ok(());
                                         for new_tx in new_tx_list {
                                            if let Err(err) =  new_tx.process_event(&mut *(new_tx_receiver.write().await)).await {

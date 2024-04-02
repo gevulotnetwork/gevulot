@@ -56,14 +56,13 @@ async fn main() -> Result<()> {
     .await
     .expect("deploy");
 
-    for nonce in 1..20 {
+    for nonce in 1..2 {
         send_proving_task(&client, &key, nonce, &prover_hash, &verifier_hash)
             .await
             .expect("send proving task");
-        sleep(Duration::from_millis(300)).await;
     }
 
-    //sleep(Duration::from_secs(360)).await;
+    sleep(Duration::from_secs(360)).await;
 
     Ok(())
 }
