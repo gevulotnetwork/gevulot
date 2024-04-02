@@ -299,14 +299,6 @@ impl TxEvent<WaitTx> {
             })
             .unwrap_or(vec![]);
 
-        tracing::warn!(
-            "manage_program_dep {:?}",
-            new_txs
-                .iter()
-                .map(|tx| tx.tx.hash.to_string())
-                .collect::<Vec<_>>()
-        );
-
         Ok(new_txs)
     }
 
@@ -326,13 +318,6 @@ impl TxEvent<WaitTx> {
         }
         // Only test for the first program, because all Tx program came from the same deploy tx.
         let parent = self.tx.payload.get_parent_tx().cloned();
-        tracing::warn!(
-            "manage_parent_dep parent {:?}",
-            parent
-                .iter()
-                .map(|hash| hash.to_string())
-                .collect::<Vec<_>>()
-        );
         let new_tx = self
             .wait_if_not_cached(parent_cache, parent.as_ref(), storage, query_db_for_tx)
             .await?;
@@ -351,14 +336,6 @@ impl TxEvent<WaitTx> {
         for new_tx in &new_txs {
             parent_cache.add_cached_tx(new_tx.tx.hash);
         }
-
-        tracing::warn!(
-            "manage_parent_dep {:?}",
-            new_txs
-                .iter()
-                .map(|tx| tx.tx.hash.to_string())
-                .collect::<Vec<_>>()
-        );
 
         Ok(new_txs)
     }
