@@ -5,6 +5,7 @@ use gevulot_node::rpc_client::RpcClient;
 use gevulot_node::types::program::ResourceRequest;
 use gevulot_node::types::Hash;
 use gevulot_node::types::TransactionTree;
+use libsecp256k1::PublicKey;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
@@ -36,6 +37,9 @@ pub struct ArgConfiguration {
 enum ConfCommands {
     /// Generate a private key file using --keyfile option.
     GenerateKey,
+
+    /// Show public key from the keyfile.
+    ShowPublicKey,
 
     /// Deploy prover and verifier.
     #[command(arg_required_else_help = true)]
@@ -192,6 +196,18 @@ async fn main() {
             ),
             Err(err) => println!("Error during key file creation:{err}"),
         },
+
+        ConfCommands::ShowPublicKey => match gevulot_cli::keyfile::read_key_file(&args.keyfile) {
+            Ok(secret_key) => {
+                let pubkey = PublicKey::from_secret_key(&secret_key);
+                println!("Public key: {}", hex::encode(pubkey.serialize()));
+            }
+            Err(err) => println!(
+                "Error: Couldn't read the keyfile {:?}: {err}",
+                &args.keyfile
+            ),
+        },
+
         ConfCommands::Deploy {
             name,
             prover,
