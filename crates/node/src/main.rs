@@ -37,6 +37,7 @@ mod scheduler;
 mod storage;
 mod txvalidation;
 mod vmm;
+mod watchdog;
 mod workflow;
 
 use mempool::Mempool;
@@ -209,7 +210,8 @@ async fn run(config: Arc<Config>) -> Result<()> {
     //To show to idea. Should use your config definition
     let new_validated_tx_receiver: Arc<RwLock<dyn ValidatedTxReceiver>> = if !config.no_execution {
         let mempool = Arc::new(RwLock::new(Mempool::new(database.clone()).await?));
-
+        let scheduler_watchdog_sender =
+            watchdog::start_watchdog(config.http_healthcheck_listen_addr).await?;
         let scheduler = scheduler::start_scheduler(
             config.clone(),
             database.clone(),
@@ -220,7 +222,7 @@ async fn run(config: Arc<Config>) -> Result<()> {
         .await;
 
         // Run Scheduler in its own task.
-        tokio::spawn(async move { scheduler.run().await });
+        tokio::spawn(async move { scheduler.run(scheduler_watchdog_sender).await });
         mempool
     } else {
         struct ArchiveMempool(Arc<Database>);
