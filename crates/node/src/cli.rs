@@ -129,11 +129,11 @@ pub struct Config {
 
     #[arg(
         long,
-        long_help = "Watchdog listen address",
-        env = "GEVULOT_WATCHDOG_LISTEN_ADDR",
+        long_help = "Healthcheck listen address",
+        env = "GEVULOT_HEALTHCHECK_LISTEN_ADDR",
         default_value = "127.0.0.1:8888"
     )]
-    pub http_watchdog_listen_addr: SocketAddr,
+    pub http_healthcheck_listen_addr: SocketAddr,
 }
 
 #[derive(Debug, Args)]

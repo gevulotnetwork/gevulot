@@ -13,8 +13,8 @@ use tokio::time::timeout;
 use tokio::time::Duration;
 
 pub const GRACEFULL_SIGNAL_COUNTER_LIMIT: usize = 20;
-pub const SCHEDULER_HEATH_SIGNAL_TIMEOUT_MILLI: Duration = Duration::from_millis(1000);
-pub const NO_LOOP_DETECT_TIMEOUT_MILLI: Duration = Duration::from_millis(1000);
+pub const SCHEDULER_HEALTH_SIGNAL_TIMEOUT_MILLIS: Duration = Duration::from_millis(1000);
+pub const NO_LOOP_DETECT_TIMEOUT_MILLIS: Duration = Duration::from_millis(1000);
 
 #[derive(Clone, Debug, Copy, PartialEq, PartialOrd)]
 pub enum HealthCheckSignal {
@@ -47,8 +47,8 @@ pub async fn start_watchdog(bind_addr: SocketAddr) -> Result<mpsc::Sender<Health
         async move {
             run_watchdog(
                 GRACEFULL_SIGNAL_COUNTER_LIMIT,
-                SCHEDULER_HEATH_SIGNAL_TIMEOUT_MILLI,
-                NO_LOOP_DETECT_TIMEOUT_MILLI,
+                SCHEDULER_HEALTH_SIGNAL_TIMEOUT_MILLIS,
+                NO_LOOP_DETECT_TIMEOUT_MILLIS,
                 watchdog_state,
                 scheduler_health_rx,
             )
@@ -56,13 +56,13 @@ pub async fn start_watchdog(bind_addr: SocketAddr) -> Result<mpsc::Sender<Health
         }
     });
 
-    serve_files(bind_addr, watchdog_state).await?;
+    serve_healthcheck(bind_addr, watchdog_state).await?;
     Ok(scheduler_health_tx)
 }
 
 async fn run_watchdog(
-    gracefull_signal_counter_limit: usize,
-    scheduler_heath_signal_timeout: Duration,
+    graceful_signal_counter_limit: usize,
+    scheduler_health_signal_timeout: Duration,
     no_loop_detect_timeout: Duration,
     watchdog_state: Arc<Mutex<WatchDogState>>,
     mut scheduler_health_rx: mpsc::Receiver<HealthCheckSignal>,
@@ -73,7 +73,7 @@ async fn run_watchdog(
     let mut no_loop_detect_timer = tokio::time::interval(no_loop_detect_timeout);
     let mut see_scheduler_loop_ok = true;
 
-    let mut timout_counter = 0;
+    let mut timeout_counter = 0;
 
     loop {
         let mut new_state = scheduler_state;
@@ -85,10 +85,10 @@ async fn run_watchdog(
                 }
                 see_scheduler_loop_ok = false;
              }
-            res = timeout(scheduler_heath_signal_timeout, scheduler_health_rx.recv()) => match res {
+            res = timeout(scheduler_health_signal_timeout, scheduler_health_rx.recv()) => match res {
                 Ok(res) => {
                     //The scheduler signal is alive
-                    timout_counter = 0;
+                    timeout_counter = 0;
                     new_state.2 = true;
                     match res {
                         Some(msg) => match msg {
@@ -110,8 +110,8 @@ async fn run_watchdog(
                 }
                 Err(_) => {
                     tracing::error!("Scheduler Health signal Timeout, no health signal available.");
-                    timout_counter += 1;
-                    if timout_counter >= gracefull_signal_counter_limit {
+                    timeout_counter += 1;
+                    if timeout_counter >= graceful_signal_counter_limit {
                         new_state.2 = false;
                     }
                 }
@@ -145,7 +145,7 @@ async fn run_watchdog(
 // WatchDogState::Alive => 200
 // WatchDogState::Graceful => 204
 // WatchDogState::Critical => 503
-async fn serve_files(
+async fn serve_healthcheck(
     bind_addr: SocketAddr,
     watchdog_state: Arc<Mutex<WatchDogState>>,
 ) -> Result<()> {

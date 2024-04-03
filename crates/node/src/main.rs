@@ -211,7 +211,7 @@ async fn run(config: Arc<Config>) -> Result<()> {
     let new_validated_tx_receiver: Arc<RwLock<dyn ValidatedTxReceiver>> = if !config.no_execution {
         let mempool = Arc::new(RwLock::new(Mempool::new(database.clone()).await?));
         let scheduler_watchdog_sender =
-            watchdog::start_watchdog(config.http_watchdog_listen_addr).await?;
+            watchdog::start_watchdog(config.http_healthcheck_listen_addr).await?;
         let scheduler = scheduler::start_scheduler(
             config.clone(),
             database.clone(),
