@@ -13,8 +13,8 @@ use tokio::time::timeout;
 use tokio::time::Duration;
 
 pub const GRACEFULL_SIGNAL_COUNTER_LIMIT: usize = 20;
-pub const SCHEDULER_HEALTH_SIGNAL_TIMEOUT_MILLIS: Duration = Duration::from_millis(1000);
-pub const NO_LOOP_DETECT_TIMEOUT_MILLIS: Duration = Duration::from_millis(1000);
+pub const SCHEDULER_HEATH_SIGNAL_TIMEOUT_MILLI: Duration = Duration::from_millis(1000);
+pub const NO_LOOP_DETECT_TIMEOUT_MILLI: Duration = Duration::from_millis(1000);
 
 #[derive(Clone, Debug, Copy, PartialEq, PartialOrd)]
 pub enum HealthCheckSignal {
@@ -61,8 +61,8 @@ pub async fn start_watchdog(bind_addr: SocketAddr) -> Result<mpsc::Sender<Health
 }
 
 async fn run_watchdog(
-    graceful_signal_counter_limit: usize,
-    scheduler_health_signal_timeout: Duration,
+    gracefull_signal_counter_limit: usize,
+    scheduler_heath_signal_timeout: Duration,
     no_loop_detect_timeout: Duration,
     watchdog_state: Arc<Mutex<WatchDogState>>,
     mut scheduler_health_rx: mpsc::Receiver<HealthCheckSignal>,
@@ -73,7 +73,7 @@ async fn run_watchdog(
     let mut no_loop_detect_timer = tokio::time::interval(no_loop_detect_timeout);
     let mut see_scheduler_loop_ok = true;
 
-    let mut timeout_counter = 0;
+    let mut timout_counter = 0;
 
     loop {
         let mut new_state = scheduler_state;
@@ -145,7 +145,7 @@ async fn run_watchdog(
 // WatchDogState::Alive => 200
 // WatchDogState::Graceful => 204
 // WatchDogState::Critical => 503
-async fn serve_healthcheck(
+async fn serve_files(
     bind_addr: SocketAddr,
     watchdog_state: Arc<Mutex<WatchDogState>>,
 ) -> Result<()> {
