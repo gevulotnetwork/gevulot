@@ -215,7 +215,9 @@ impl TxEvent<WaitTx> {
         //validate parent dep
         let mut new_txs = vec![];
         for prog_ok_tx in prg_ok_txs {
-            let mut ret = prog_ok_tx.manage_parent_dep(parent_cache, storage).await?;
+            let mut ret = prog_ok_tx
+                .manage_parent_dep(programid_cache, parent_cache, storage)
+                .await?;
             new_txs.append(&mut ret);
         }
 
@@ -268,15 +270,27 @@ impl TxEvent<WaitTx> {
         ) -> impl Future<Output = eyre::Result<bool>> + 'a {
             storage.contains_program(*cache_key)
         }
-        // Only test for the first program, because all Tx program came from the same deploy tx.
-        let new_tx = self
-            .wait_if_not_cached(
-                programid_cache,
-                run_tx_programs.first(),
-                storage,
-                query_db_for_program,
-            )
-            .await?;
+        // Test  all Tx progam id because Run tx can have program from different deploy Tx.
+        let mut new_tx: Option<Self> = Some(self);
+        for program_id in run_tx_programs {
+            // Cache for only one dep.
+            // If the tx depends on several deploy tx,
+            // The Tx need to wait for all.
+            // To avoid to cache for all dep,
+            // released Run Tx are re validated with program id.
+            new_tx = new_tx
+                .unwrap()
+                .wait_if_not_cached(
+                    programid_cache,
+                    Some(&program_id),
+                    storage,
+                    query_db_for_program,
+                )
+                .await?;
+            if new_tx.is_none() {
+                break;
+            }
+        }
 
         let new_txs = new_tx
             .map(|tx| {
@@ -303,6 +317,7 @@ impl TxEvent<WaitTx> {
 
     pub async fn manage_parent_dep(
         self,
+        programid_cache: &mut TxCache<Program>,
         parent_cache: &mut TxCache<Transaction<Validated>>,
         storage: &impl ValidateStorage,
     ) -> Result<Vec<TxEvent<WaitTx>>, EventProcessError> {
@@ -322,7 +337,7 @@ impl TxEvent<WaitTx> {
             .await?;
 
         // Remove child Tx if any from waiting list.
-        let new_txs = new_tx
+        let tmp_new_txs = new_tx
             .map(|tx| {
                 let mut ret = parent_cache.remove_waiting_children_txs(&tx.tx.hash);
                 // Add the parent Tx first to be processed the first.
@@ -330,6 +345,17 @@ impl TxEvent<WaitTx> {
                 ret
             })
             .unwrap_or(vec![]);
+
+        //Re validated Run tx for program dep.
+        let mut new_txs = vec![];
+        for new_tx in tmp_new_txs {
+            if new_tx.tx.payload.is_run_payload() {
+                let mut valid_txs = new_tx.manage_program_dep(programid_cache, storage).await?;
+                new_txs.append(&mut valid_txs);
+            } else {
+                new_txs.push(new_tx);
+            }
+        }
 
         // Add new tx to the cache.
         for new_tx in &new_txs {
@@ -525,13 +551,16 @@ mod tests {
     }
 
     fn new_run_tx_event(seed: u8) -> TxEvent<WaitTx> {
+        new_run_tx_event_for_programs(seed, seed + 1)
+    }
+    fn new_run_tx_event_for_programs(proover_seed: u8, verifier_seed: u8) -> TxEvent<WaitTx> {
         let prover_program = WorkflowStep {
-            program: Hash::new([seed; 32]),
+            program: Hash::new([proover_seed; 32]),
             args: vec![],
             inputs: vec![],
         };
         let verifier_program = WorkflowStep {
-            program: Hash::new([seed + 1; 32]),
+            program: Hash::new([verifier_seed; 32]),
             args: vec![],
             inputs: vec![],
         };
@@ -577,6 +606,54 @@ mod tests {
         }
     }
 
+    #[tokio::test]
+    async fn test_wait_tx_for_different_deploy_program() {
+        let db = TestDb {
+            tx_db: Mutex::new(HashMap::new()),
+            program_db: Mutex::new(HashSet::new()),
+        };
+        // Set parameters to have Tx eviction
+        let mut wait_progam_cache = TxCache::<Program>::build(4, 2, 10);
+        let mut wait_tx_cache = TxCache::<Transaction<Validated>>::build(2, 2, 10);
+
+        // Create the parent Txs that will only be processed at the end.
+        // Create 2 parents to have 2 waiting child Tx
+        let deploy1_tx_event = new_deploy_tx_event(1);
+        let deploy2_tx_event = new_deploy_tx_event(3);
+        let run1_tx_event = new_run_tx_event_for_programs(1, 4); //(proof Tx1, verif Tx2)
+
+        // Valide Run Tx. Put in Wait cache
+        let res = run1_tx_event
+            .process_event(&mut wait_progam_cache, &mut wait_tx_cache, &db)
+            .await;
+        assert!(res.is_ok());
+        // Run Tx is waiting
+        assert_eq!(wait_progam_cache.waiting_tx.len(), 1);
+        assert_eq!(0, res.unwrap().len());
+        // No programs in cache.
+        assert_eq!(wait_progam_cache.cached_tx_for_verification.len(), 0);
+
+        // Deploy1 Tx, only return the deploy Tx. Wait for deploy2 program.
+        let res = deploy1_tx_event
+            .process_event(&mut wait_progam_cache, &mut wait_tx_cache, &db)
+            .await;
+        assert!(res.is_ok());
+        assert_eq!(wait_progam_cache.waiting_tx.len(), 1);
+        assert_eq!(1, res.unwrap().len());
+        // 2 programs cached
+        assert_eq!(wait_progam_cache.cached_tx_for_verification.len(), 2);
+
+        // Deploy2 Tx, return 2 tx, deploy2 + Run.
+        let res = deploy2_tx_event
+            .process_event(&mut wait_progam_cache, &mut wait_tx_cache, &db)
+            .await;
+        assert!(res.is_ok());
+        //remove from cache
+        assert_eq!(wait_progam_cache.waiting_tx.len(), 0);
+        assert_eq!(2, res.unwrap().len());
+        // 4 programs cached
+        assert_eq!(wait_progam_cache.cached_tx_for_verification.len(), 4);
+    }
     #[tokio::test]
     async fn test_wait_tx_for_program() {
         let db = TestDb {
