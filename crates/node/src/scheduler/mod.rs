@@ -261,7 +261,7 @@ impl Scheduler {
                 }
                 (None, size) => {
                     if let Err(err) = watchdog_sender
-                        .send(HealthCheckSignal::SchedulerMempoolLen(0))
+                        .send(HealthCheckSignal::SchedulerMempoolLen(size))
                         .await
                     {
                         tracing::error!("Watchdog channel send return an error:{err}");

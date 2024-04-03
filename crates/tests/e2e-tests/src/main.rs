@@ -56,7 +56,7 @@ async fn main() -> Result<()> {
     .await
     .expect("deploy");
 
-    for nonce in 1..2 {
+    for nonce in 1..20 {
         send_proving_task(&client, &key, nonce, &prover_hash, &verifier_hash)
             .await
             .expect("send proving task");
