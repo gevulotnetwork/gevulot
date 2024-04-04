@@ -553,11 +553,11 @@ impl TaskManager for Scheduler {
 
         let mut state = self.state.lock().await;
         if let Some(running_task) = state.running_tasks.remove(&tx_hash) {
-            let task_runtime = running_task.task_started.elapsed();
+            let task_run_time = running_task.task_started.elapsed();
             tracing::info!(
                 "task of Tx {} finished in {}sec",
                 running_task.task.tx,
-                task_runtime.as_secs()
+                task_run_time.as_secs()
             );
 
             let kind = match running_task.task.kind {
@@ -632,7 +632,7 @@ impl TaskManager for Scheduler {
                     // Log the execution time.
                     metrics::TX_EXECUTION_TIME_COLLECTOR
                         .with_label_values(&[kind, "success"])
-                        .observe(task_runtime.as_millis() as f64);
+                        .observe(task_run_time.as_millis() as f64);
 
                     tracing::info!("Submit result Tx created:{}", tx.hash.to_string());
 
@@ -651,7 +651,7 @@ impl TaskManager for Scheduler {
                     // Log the execution time.
                     metrics::TX_EXECUTION_TIME_COLLECTOR
                         .with_label_values(&[kind, "failure"])
-                        .observe(task_runtime.as_millis() as f64);
+                        .observe(task_run_time.as_millis() as f64);
 
                     tracing::warn!("Error during Tx:{tx_hash} execution:{error:?}");
                 }
