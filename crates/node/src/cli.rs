@@ -134,6 +134,13 @@ pub struct Config {
         default_value = "127.0.0.1:8888"
     )]
     pub http_healthcheck_listen_addr: SocketAddr,
+
+    #[arg(
+        long,
+        long_help = "Metrics server listen address",
+        env = "GEVULOT_METRICS_LISTEN_ADDR"
+    )]
+    pub http_metrics_listen_addr: Option<SocketAddr>,
 }
 
 #[derive(Debug, Args)]

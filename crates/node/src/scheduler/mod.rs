@@ -2,6 +2,7 @@ mod program_manager;
 mod resource_manager;
 
 use crate::cli::Config;
+use crate::metrics;
 use crate::storage::Database;
 use crate::txvalidation;
 use crate::txvalidation::CallbackSender;
@@ -231,6 +232,7 @@ impl Scheduler {
 
                             // Return the popped program_id back to pending queue.
                             state.pending_programs.push_back((tx_hash, program_id));
+                            metrics::TX_SCHEDULING_REQUEUED.inc();
                             continue 'SCHEDULING_LOOP;
                         }
                         Err(e) => {
@@ -241,6 +243,7 @@ impl Scheduler {
                             );
                             // Return the popped program_id back to pending queue.
                             state.pending_programs.push_back((tx_hash, program_id));
+                            metrics::TX_SCHEDULING_REQUEUED.inc();
                             continue 'SCHEDULING_LOOP;
                         }
                     }
@@ -334,6 +337,7 @@ impl Scheduler {
                     // The task is already pending in program's work queue. Push program ID
                     // to pending programs queue to wait available resources.
                     state.pending_programs.push_back((task.tx, task.program_id));
+                    metrics::TX_SCHEDULING_REQUEUED.inc();
                     tracing::warn!("task {} rescheduled: {}", task.id.to_string(), err);
                     continue;
                 }

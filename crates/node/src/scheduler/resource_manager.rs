@@ -1,4 +1,4 @@
-use crate::types::program::ResourceRequest;
+use crate::{metrics, types::program::ResourceRequest};
 use eyre::Result;
 use std::sync::{Arc, Mutex};
 use thiserror::Error;
@@ -36,6 +36,11 @@ pub struct ResourceManager {
 
 impl ResourceManager {
     pub fn new(total_mem: u64, total_cpus: u64, total_gpus: u64) -> Self {
+        // Set total amount of resources.
+        metrics::CPUS_TOTAL.set(total_cpus as i64);
+        metrics::MEM_TOTAL.set(total_mem as i64);
+        metrics::GPUS_TOTAL.set(total_gpus as i64);
+
         ResourceManager {
             available_mem: total_mem,
             available_cpus: total_cpus,
@@ -66,6 +71,11 @@ impl ResourceManager {
         rm.available_cpus -= request.cpus;
         rm.available_gpus -= request.gpus;
 
+        // Update metrics.
+        metrics::CPUS_AVAILABLE.set(rm.available_cpus as i64);
+        metrics::MEM_AVAILABLE.set(rm.available_mem as i64);
+        metrics::GPUS_AVAILABLE.set(rm.available_gpus as i64);
+
         Ok(ResourceAllocation {
             resource_manager: resource_manager.clone(),
             mem: request.mem,
@@ -78,6 +88,11 @@ impl ResourceManager {
         self.available_mem += allocation.mem;
         self.available_cpus += allocation.cpus;
         self.available_gpus += allocation.gpus;
+
+        // Update metrics.
+        metrics::CPUS_AVAILABLE.set(self.available_cpus as i64);
+        metrics::MEM_AVAILABLE.set(self.available_mem as i64);
+        metrics::GPUS_AVAILABLE.set(self.available_gpus as i64);
     }
 }
 
