@@ -1,3 +1,4 @@
+use crate::metrics;
 use crate::txvalidation::P2pSender;
 use crate::txvalidation::TxEventSender;
 use futures_util::Stream;
@@ -49,6 +50,8 @@ pub struct P2P {
 
     // Send Tx to the process loop.
     tx_sender: TxEventSender<P2pSender>,
+
+    protocol_version: u64,
 }
 
 impl Pea2Pea for P2P {
@@ -97,6 +100,7 @@ impl P2P {
             http_port,
             nat_listen_addr,
             tx_sender,
+            protocol_version: 0,
         };
 
         // Enable node functionalities.
@@ -104,6 +108,8 @@ impl P2P {
         instance.enable_reading().await;
         instance.enable_writing().await;
         instance.enable_disconnect().await;
+
+        metrics::P2P_PROTOCOL_VERSION.set(instance.protocol_version as i64);
 
         // Start a new Tx stream loop.
         tokio::spawn({
@@ -255,8 +261,8 @@ impl Handshake for P2P {
 
         let peer_handshake_msg: protocol::Handshake = match node_conn_side {
             ConnectionSide::Initiator => {
-                // Send protocol version. Set to 0 .
-                stream.write_u64(0).await?;
+                // Send protocol version.
+                stream.write_u64(self.protocol_version).await?;
                 // Get Responder protocol version.
                 let _protocol_version = stream.read_u64().await?;
 
@@ -288,8 +294,8 @@ impl Handshake for P2P {
             ConnectionSide::Responder => {
                 // Get Initiator protocol version.
                 let _protocol_version = stream.read_u64().await?;
-                // Send protocol version. Set to 0 .
-                stream.write_u64(0).await?;
+                // Send protocol version.
+                stream.write_u64(self.protocol_version).await?;
 
                 // Receive the handshake message from the connecting peer.
                 let buffer_len = stream.read_u32().await? as usize;
@@ -404,6 +410,8 @@ impl Handshake for P2P {
             .await
             .insert(handshake_msg.my_p2p_listen_addr, handshake_msg.http_port);
 
+        metrics::P2P_CONNECTED_PEERS.inc();
+
         Ok(conn)
     }
 }
@@ -420,6 +428,8 @@ impl Reading for P2P {
 
     async fn process_message(&self, source: SocketAddr, message: Self::Message) -> io::Result<()> {
         tracing::debug!(parent: self.node().span(), "decrypted a message from {}", source);
+
+        metrics::P2P_INCOMING_MESSAGES.inc();
 
         match bincode::deserialize(message.as_ref()) {
             Ok(protocol::Message::V0(msg)) => match msg {

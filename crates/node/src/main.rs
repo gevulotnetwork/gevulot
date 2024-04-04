@@ -31,6 +31,7 @@ use types::{transaction::Validated, Hash, Transaction};
 
 mod cli;
 mod mempool;
+mod metrics;
 mod networking;
 mod rpc_server;
 mod scheduler;
@@ -181,6 +182,15 @@ impl workflow::TransactionStore for storage::Database {
 
 async fn run(config: Arc<Config>) -> Result<()> {
     let node_key = read_node_key(&config.node_key_file)?;
+
+    // Register metrics counters.
+    metrics::register_metrics();
+
+    if let Some(http_metrics_bind_addr) = config.http_metrics_listen_addr {
+        // Start HTTP metrics server.
+        metrics::serve_metrics(http_metrics_bind_addr).await?;
+        tracing::info!("listening for metrics at {http_metrics_bind_addr}");
+    }
 
     let database = Arc::new(Database::new(&config.db_url).await?);
 
