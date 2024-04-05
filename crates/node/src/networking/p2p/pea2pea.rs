@@ -52,6 +52,7 @@ pub struct P2P {
     tx_sender: TxEventSender<P2pSender>,
 
     protocol_version: u64,
+    node_resources: (u64, u64, u64),
 }
 
 impl Pea2Pea for P2P {
@@ -72,6 +73,7 @@ impl P2P {
         peer_http_port_list: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>>,
         tx_sender: TxEventSender<P2pSender>,
         propagate_tx_stream: impl Stream<Item = Transaction<Validated>> + std::marker::Send + 'static,
+        node_resources: (u64, u64, u64),
     ) -> Self {
         let config = Config {
             name: Some(name.into()),
@@ -101,6 +103,7 @@ impl P2P {
             nat_listen_addr,
             tx_sender,
             protocol_version: 0,
+            node_resources,
         };
 
         // Enable node functionalities.
@@ -118,7 +121,7 @@ impl P2P {
                 pin!(propagate_tx_stream);
                 while let Some(tx) = propagate_tx_stream.next().await {
                     let tx_hash = tx.hash;
-                    let msg = protocol::Message::V0(protocol::MessageV0::Transaction(tx));
+                    let msg = protocol::v0::Message::V0(protocol::v0::MessageV0::Transaction(tx));
                     let bs = match bincode::serialize(&msg) {
                         Ok(bs) => bs,
                         Err(err) => {
@@ -147,7 +150,7 @@ impl P2P {
         }
     }
 
-    async fn build_handshake_msg(&self) -> protocol::Handshake {
+    async fn build_handshake_msg(&self) -> protocol::internal::Handshake {
         let my_local_bind_addr = self.node.listening_addr().expect("p2p node listening_addr");
 
         // If NAT listen address hasn't been set, default 0.0.0.0:<port> is
@@ -165,34 +168,55 @@ impl P2P {
             peer_list.clone()
         };
 
-        protocol::Handshake::V1(protocol::HandshakeV1 {
+        protocol::internal::Handshake {
             my_p2p_listen_addr,
             peers,
             http_port: self.http_port,
-        })
+        }
     }
 
     async fn process_diagnostics_request(
         &self,
         source: SocketAddr,
-        req: protocol::DiagnosticsRequestKind,
+        req: protocol::internal::DiagnosticsRequestKind,
     ) -> io::Result<()> {
-        let resp = protocol::Message::V0(protocol::MessageV0::DiagnosticsResponse(
-            self.public_node_key,
-            protocol::DiagnosticsResponseV0::Version {
-                major: env!("CARGO_PKG_VERSION_MAJOR").parse::<u16>().unwrap(),
-                minor: env!("CARGO_PKG_VERSION_MINOR").parse::<u16>().unwrap(),
-                patch: env!("CARGO_PKG_VERSION_PATCH").parse::<u16>().unwrap(),
-                build: format!(
-                    "{}: {}",
-                    env!("VERGEN_BUILD_TIMESTAMP"),
-                    env!("VERGEN_GIT_DESCRIBE")
-                ),
-            },
-        ));
+        let resp = match req {
+            protocol::internal::DiagnosticsRequestKind::Version => {
+                protocol::internal::Message::DiagnosticsResponse(
+                    self.public_node_key,
+                    protocol::internal::DiagnosticsResponse::Version {
+                        major: env!("CARGO_PKG_VERSION_MAJOR").parse::<u16>().unwrap(),
+                        minor: env!("CARGO_PKG_VERSION_MINOR").parse::<u16>().unwrap(),
+                        patch: env!("CARGO_PKG_VERSION_PATCH").parse::<u16>().unwrap(),
+                        build: format!(
+                            "{}: {}",
+                            env!("VERGEN_BUILD_TIMESTAMP"),
+                            env!("VERGEN_GIT_DESCRIBE")
+                        ),
+                    },
+                )
+            }
+            protocol::internal::DiagnosticsRequestKind::Resources => {
+                let (cpus, mem, gpus) = self.node_resources;
+                protocol::internal::Message::DiagnosticsResponse(
+                    self.public_node_key,
+                    protocol::internal::DiagnosticsResponse::Resources { cpus, mem, gpus },
+                )
+            }
 
-        let bs =
-            Bytes::from(bincode::serialize(&resp).expect("diagnostics response serialization"));
+            protocol::internal::DiagnosticsRequestKind::Metrics => {
+                let data = metrics::export_metrics();
+                protocol::internal::Message::DiagnosticsResponse(
+                    self.public_node_key,
+                    protocol::internal::DiagnosticsResponse::Metrics(data),
+                )
+            }
+        };
+
+        let bs = Bytes::from(
+            protocol::new_serialize_msg(self.protocol_version, resp)
+                .expect("diagnostics response serialization"),
+        );
 
         // Reply to requester.
         self.unicast(source, bs)?;
@@ -259,7 +283,7 @@ impl Handshake for P2P {
         let node_conn_side = !conn.side();
         let stream = self.borrow_stream(&mut conn);
 
-        let peer_handshake_msg: protocol::Handshake = match node_conn_side {
+        let mut peer_handshake_msg: protocol::internal::Handshake = match node_conn_side {
             ConnectionSide::Initiator => {
                 // Send protocol version.
                 stream.write_u64(self.protocol_version).await?;
@@ -267,13 +291,12 @@ impl Handshake for P2P {
                 let _protocol_version = stream.read_u64().await?;
 
                 // Serialize & send our handshake message.
-                let handshake_msg_bytes = bincode::serialize(&self.build_handshake_msg().await)
-                    .map_err(|err| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            format!("serialize error:{err}"),
-                        )
-                    })?;
+                let handshake_msg_bytes = protocol::serialize_handshake(
+                    self.build_handshake_msg().await,
+                )
+                .map_err(|err| {
+                    std::io::Error::new(std::io::ErrorKind::Other, format!("serialize error:{err}"))
+                })?;
                 stream.write_u32(handshake_msg_bytes.len() as u32).await?;
                 stream.write_all(&handshake_msg_bytes).await?;
 
@@ -284,7 +307,7 @@ impl Handshake for P2P {
                 let mut buffer = vec![0; buffer_len];
                 stream.read_exact(&mut buffer).await?;
 
-                bincode::deserialize(&buffer).map_err(|err| {
+                protocol::deserialize_handshake(&buffer).map_err(|err| {
                     std::io::Error::new(
                         std::io::ErrorKind::Other,
                         format!("deserialize error:{err}"),
@@ -302,8 +325,8 @@ impl Handshake for P2P {
                 let mut buffer = vec![0; buffer_len];
                 stream.read_exact(&mut buffer).await?;
 
-                let peer_handshake_msg: protocol::Handshake = bincode::deserialize(&buffer)
-                    .map_err(|err| {
+                let peer_handshake_msg: protocol::internal::Handshake =
+                    protocol::deserialize_handshake(&buffer).map_err(|err| {
                         std::io::Error::new(
                             std::io::ErrorKind::Other,
                             format!("deserialize error:{err}"),
@@ -311,23 +334,17 @@ impl Handshake for P2P {
                     })?;
 
                 // Serialize & send our handshake message.
-                let handshake_msg_bytes = bincode::serialize(&self.build_handshake_msg().await)
-                    .map_err(|err| {
-                        std::io::Error::new(
-                            std::io::ErrorKind::Other,
-                            format!("serialize error:{err}"),
-                        )
-                    })?;
+                let handshake_msg_bytes = protocol::serialize_handshake(
+                    self.build_handshake_msg().await,
+                )
+                .map_err(|err| {
+                    std::io::Error::new(std::io::ErrorKind::Other, format!("serialize error:{err}"))
+                })?;
                 stream.write_u32(handshake_msg_bytes.len() as u32).await?;
                 stream.write_all(&handshake_msg_bytes).await?;
 
                 peer_handshake_msg
             }
-        };
-
-        #[allow(clippy::infallible_destructuring_match)]
-        let mut handshake_msg = match peer_handshake_msg {
-            protocol::Handshake::V1(msg) => msg,
         };
 
         // Current TCP connection peer address.
@@ -336,29 +353,36 @@ impl Handshake for P2P {
         // Check if the remote P2P listen address needs to be updated from
         // the one observed in connection.
         let default_ip = IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0));
-        if handshake_msg.my_p2p_listen_addr.ip() == default_ip {
-            handshake_msg
+        if peer_handshake_msg.my_p2p_listen_addr.ip() == default_ip {
+            peer_handshake_msg
                 .peers
-                .remove(&handshake_msg.my_p2p_listen_addr);
-            handshake_msg.my_p2p_listen_addr =
-                SocketAddr::new(remote_peer.ip(), handshake_msg.my_p2p_listen_addr.port());
-            handshake_msg.peers.insert(handshake_msg.my_p2p_listen_addr);
+                .remove(&peer_handshake_msg.my_p2p_listen_addr);
+            peer_handshake_msg.my_p2p_listen_addr = SocketAddr::new(
+                remote_peer.ip(),
+                peer_handshake_msg.my_p2p_listen_addr.port(),
+            );
+            peer_handshake_msg
+                .peers
+                .insert(peer_handshake_msg.my_p2p_listen_addr);
         }
 
         tracing::debug!("tcp connection peer address: {}", remote_peer);
         tracing::debug!(
             "peer advertised address: {}",
-            handshake_msg.my_p2p_listen_addr
+            peer_handshake_msg.my_p2p_listen_addr
         );
 
         if tracing::enabled!(tracing::Level::DEBUG) {
-            let print_peers: Vec<String> =
-                handshake_msg.peers.iter().map(|x| x.to_string()).collect();
+            let print_peers: Vec<String> = peer_handshake_msg
+                .peers
+                .iter()
+                .map(|x| x.to_string())
+                .collect();
             tracing::debug!("peer contact list addresses: {:#?}", print_peers);
         }
 
         // Advertised remote peer listen address.
-        let remote_peer_p2p_addr = &handshake_msg.my_p2p_listen_addr;
+        let remote_peer_p2p_addr = &peer_handshake_msg.my_p2p_listen_addr;
 
         tracing::debug!(
             "new connection: local:{} peer:{}",
@@ -382,7 +406,7 @@ impl Handshake for P2P {
         // Merge remote peer list with the local one to get full view on the network.
         let mut local_diff = {
             let mut local_peer_list = self.peer_list.write().await;
-            let local_diff: BTreeSet<SocketAddr> = handshake_msg
+            let local_diff: BTreeSet<SocketAddr> = peer_handshake_msg
                 .peers
                 .difference(&*local_peer_list)
                 .cloned()
@@ -405,10 +429,10 @@ impl Handshake for P2P {
                 .append(&mut local_diff);
         }
 
-        self.peer_http_port_list
-            .write()
-            .await
-            .insert(handshake_msg.my_p2p_listen_addr, handshake_msg.http_port);
+        self.peer_http_port_list.write().await.insert(
+            peer_handshake_msg.my_p2p_listen_addr,
+            peer_handshake_msg.http_port,
+        );
 
         metrics::P2P_CONNECTED_PEERS.inc();
 
@@ -431,34 +455,32 @@ impl Reading for P2P {
 
         metrics::P2P_INCOMING_MESSAGES.inc();
 
-        match bincode::deserialize(message.as_ref()) {
-            Ok(protocol::Message::V0(msg)) => match msg {
-                protocol::MessageV0::Transaction(tx) => {
-                    tracing::debug!(
-                        "received transaction {}:{} author:{}",
-                        tx.hash,
-                        tx.payload,
-                        hex::encode(tx.author.serialize())
-                    );
-                    let tx: Transaction<Created> = Transaction {
-                        author: tx.author,
-                        hash: tx.hash,
-                        payload: tx.payload,
-                        nonce: tx.nonce,
-                        signature: tx.signature,
-                        propagated: tx.propagated,
-                        executed: tx.executed,
-                        state: Created,
-                    };
-                    self.forward_tx(tx).await;
-                }
-                protocol::MessageV0::DiagnosticsRequest(kind) => {
-                    tracing::debug!("received diagnostics request");
-                    self.process_diagnostics_request(source, kind).await?;
-                }
-                // Nodes are expected to ignore the diagnostics response.
-                protocol::MessageV0::DiagnosticsResponse(_, _) => (),
-            },
+        match protocol::deserialize_msg(message.as_ref()) {
+            Ok(protocol::internal::Message::Transaction(tx)) => {
+                tracing::debug!(
+                    "received transaction {}:{} author:{}",
+                    tx.hash,
+                    tx.payload,
+                    hex::encode(tx.author.serialize())
+                );
+                let tx: Transaction<Created> = Transaction {
+                    author: tx.author,
+                    hash: tx.hash,
+                    payload: tx.payload,
+                    nonce: tx.nonce,
+                    signature: tx.signature,
+                    propagated: tx.propagated,
+                    executed: tx.executed,
+                    state: Created,
+                };
+                self.forward_tx(tx).await;
+            }
+            Ok(protocol::internal::Message::DiagnosticsRequest(kind)) => {
+                tracing::debug!("received diagnostics request");
+                self.process_diagnostics_request(source, kind).await?;
+            }
+            // Nodes are expected to ignore the diagnostics response.
+            Ok(protocol::internal::Message::DiagnosticsResponse(_, _)) => (),
             Err(err) => tracing::error!("failed to decode incoming transaction: {}", err),
         }
 
@@ -535,6 +557,7 @@ mod tests {
             http_peer_list1,
             txsender1,
             p2p_stream1,
+            (0, 0, 0),
         )
         .await;
         (peer, tx_sender, txreceiver1)
@@ -568,6 +591,7 @@ mod tests {
             http_peer_list1,
             txsender1,
             p2p_stream1,
+            (0, 0, 0),
         )
         .await;
         (peer, tx_sender, txreceiver1)

@@ -1,6 +1,7 @@
 use crate::{metrics, types::program::ResourceRequest};
 use eyre::Result;
 use std::sync::{Arc, Mutex};
+use systemstat::{Platform, System};
 use thiserror::Error;
 
 pub struct ResourceAllocation {
@@ -94,6 +95,26 @@ impl ResourceManager {
         metrics::MEM_AVAILABLE.set(self.available_mem as i64);
         metrics::GPUS_AVAILABLE.set(self.available_gpus as i64);
     }
+}
+
+pub fn get_configured_resources(config: &crate::cli::Config) -> (u64, u64, u64) {
+    let sys = System::new();
+    let num_gpus = if config.gpu_devices.is_some() { 1 } else { 0 };
+    let num_cpus = match config.num_cpus {
+        Some(cpus) => cpus,
+        None => num_cpus::get() as u64,
+    };
+    let available_mem = match config.mem_gb {
+        Some(mem_gb) => mem_gb * 1024 * 1024 * 1024,
+        None => {
+            let mem = sys
+                .memory()
+                .expect("failed to lookup available system memory");
+            mem.total.as_u64()
+        }
+    };
+
+    (num_cpus, available_mem, num_gpus)
 }
 
 #[cfg(test)]
