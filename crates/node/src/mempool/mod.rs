@@ -32,24 +32,20 @@ impl Mempool {
         storage: Arc<dyn Storage>,
         exec_sender: tokio::sync::mpsc::Sender<Transaction<Validated>>,
     ) -> Result<Self> {
-        let mut deque = VecDeque::new();
-        storage.fill_deque(&mut deque).await?;
+        let mut unexec_tx_deque = VecDeque::new();
+        storage.fill_deque(&mut unexec_tx_deque).await?;
+        for tx in unexec_tx_deque {
+            tracing::trace!("Mempool init Rexecuting tx:{}", tx.hash);
+            if let Err(err) = exec_sender.send(tx).await {
+                tracing::error!("Error during sending unexecuted Tx during start :{err}");
+            }
+        }
 
         Ok(Self {
             storage,
-            //            deque,
             exec_sender,
         })
     }
-
-    // pub fn next(&mut self) -> Option<Transaction<Validated>> {
-    //     // TODO(tuommaki): Should storage reflect the POP in state?
-    //     self.deque.pop_front()
-    // }
-
-    // pub fn peek(&self) -> Option<&Transaction<Validated>> {
-    //     self.deque.front()
-    // }
 
     pub async fn add(&mut self, tx: Transaction<Validated>) -> Result<()> {
         self.storage.set(&tx).await?;
@@ -57,10 +53,6 @@ impl Mempool {
         self.exec_sender.send(tx).await?;
         Ok(())
     }
-
-    // pub fn size(&self) -> usize {
-    //     self.deque.len()
-    // }
 }
 
 #[async_trait::async_trait]

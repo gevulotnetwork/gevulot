@@ -147,4 +147,8 @@ impl ProgramManager {
         }
         self.vm_provider.release_cid(cid);
     }
+
+    pub async fn remove_zombie_task_with_cid(&self, cid: u32) -> Option<Task> {
+        self.running_task.remove_task_with_cid(cid).await
+    }
 }

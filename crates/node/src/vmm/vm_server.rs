@@ -80,6 +80,10 @@ impl ShareVMRunningTaskMap {
         }
     }
 
+    pub async fn remove_task_with_cid(&self, cid: u32) -> Option<Task> {
+        self.task_list.lock().await.remove(&cid)
+    }
+
     pub async fn len(&self) -> usize {
         self.task_list.lock().await.len()
     }

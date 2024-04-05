@@ -250,6 +250,7 @@ impl Scheduler {
         let mut start_vm_futures = FuturesUnordered::new();
         let mut torun_task_futures = FuturesUnordered::new();
         let mut result_vm_futures = FuturesUnordered::new();
+        let mut zombie_verification_futures = FuturesUnordered::new();
         let mut task_manager = ProgramManager::new(
             self.database.clone(),
             vm_provider,
@@ -260,16 +261,135 @@ impl Scheduler {
 
         let mut running_task: HashMap<Hash, VMHandle> = HashMap::new();
 
-        //Reap zombies every  second.
+        // Reap zombies every  second.
         let mut reap_zombies_timer = tokio::time::interval(Duration::from_millis(1000));
 
         loop {
             select! {
-                //Everify Zombies  VM.
+                // Verify Zombies  VM.
                 _ = reap_zombies_timer.tick() => {
                     //TODO.
                     tracing::warn!(" torun_task_futures.len:{} pending_tasks.len:{} result_vm_futures.len:{} running_task.len:{}"
                         , torun_task_futures.len(), pending_tasks.len(), result_vm_futures.len(),running_task.len());
+
+                    //if a verification is pending do nothing
+                    if !zombie_verification_futures.is_empty()  {
+                        continue;
+                    }
+
+                    // Verify VMs state (Alive or Zombie)
+                    // Build the list of VM client and call all client is alive in a separate task.
+                    // When the  task return with  all fail is alive call VM/task, the list should be re verified as follow in the main loop.
+                    // For all VM that the call fail there's 2 possibilities:
+                    //  * the VM crash and is a zombie: the process should be stopped and the associated task restarted.
+                    //  * the VM has finished during the verification process. Verify if the VM process still exist and if the VM is still in the running task.
+                    // For all VM that fail is_alive do:
+                    // * verify the Task is still in the running list.
+                    // * verify the process still run
+                    // If yes kill the process and restart the task.
+                    // otherwise to nothing.
+                    let to_verify_list: Vec<_> = running_task
+                        .iter()
+                        .map(|(hash, vm_handle)| (*hash, vm_handle.vm_client.clone(), vm_handle.start_time))
+                        .collect();
+                    let verify_jh  =  tokio::spawn(async move {
+                        let mut zombies  = vec!();
+                        for (hash, client, start_time)  in to_verify_list {
+                            match client.is_alive().await {
+                                Ok(true) => {
+                                    if start_time.elapsed() > MAX_VM_RUN_TIME {
+                                        tracing::warn!(
+                                            "VM for tx:{hash} is still alive but has exceeded MAX_VM_RUN_TIME ({:#?} > {:#?}) - terminating it.",
+                                            start_time.elapsed(),
+                                            MAX_VM_RUN_TIME
+                                        );
+                                        zombies.push((hash, false));  //false indicate that  the Tx should not be restarted but ended.
+                                    }
+                                }
+                                Ok(false) => {
+                                    // VM is not running anymore.
+                                    // This case never arrive. I've mostly kernel crash and always running VM.
+                                    tracing::warn!(
+                                        "VM running for task of tx {} has stopped",
+                                        hash
+                                    );
+                                    zombies.push((hash, true));
+                                }
+                                Err(err) => (), // The VM ended during the verification. Result sublitted do nothing.
+
+                            }
+                        }
+                        //wait that ending VM end before VM re verification.
+                        sleep(Duration::from_millis(500)).await;
+                        zombies
+                    });
+                    zombie_verification_futures.push(verify_jh);
+
+                }
+                //End zombie verification.
+                Some(Ok(zombies))= zombie_verification_futures.next() => {
+                    let mut task_to_restart = vec!();
+
+                    for (tx_hash, restart) in zombies {
+                        //remove zombies task if still present.
+                        if let Some(ref mut vm_handle)  = running_task.remove(&tx_hash)  {
+                            //deallocate the VM resources and task
+                            task_manager
+                                .end_task(
+                                    tx_hash,
+                                    vm_handle.qemu_vm_handle.cid,
+                                    Some(&vm_handle.qemu_vm_handle.resource_allocation),
+                                )
+                                .await;
+                            let task  = task_manager.remove_zombie_task_with_cid(vm_handle.qemu_vm_handle.cid).await;
+
+                            // If the process is still running, it's a real zombie, restart the task
+                            match vm_handle.qemu_vm_handle.child.as_mut() {
+                                Some(child) => match child.try_wait(){
+                                    Ok(None) => {
+                                        // VM not ended
+                                        if let Err(err) = child.kill().and_then(|_| child.wait())  {
+                                            tracing::error!("Error during zombie VM kill:{err}");
+                                        }
+                                        task_to_restart.push((task, restart));
+                                    }
+                                    Ok(Some(status)) => (), //already ended not a zombie.
+                                    Err(err) =>{
+                                        tracing::error!("Error during VM try_wait:{err}");
+                                        //restart the task
+                                        task_to_restart.push((task, restart));
+                                    }
+
+                                },
+
+                                None => {
+                                    tracing::error!("Error No child process defined for this handle");
+                                    //Task not started, restart the task
+                                    task_to_restart.push((task, restart));
+                                }
+                            }
+                        }
+                    }
+
+                    //restart zombies task
+                    for (task, restart)  in task_to_restart  {
+                        async fn schedule_fut(task: Task) -> Task {
+                            task
+                        }
+                        if let Some(task) = task  {
+                            if restart  {
+                                Self::schedule_task(Box::pin(schedule_fut(task)), &mut torun_task_futures, &mut pending_tasks);
+                            }  else  {
+                                if let Err(err) = self.database.mark_tx_executed(&task.tx).await {
+                                    tracing::error!(
+                                        "failed to update transaction.executed => true - tx.hash: {}",
+                                        &task.tx
+                                    );
+                                }
+                            }
+                        }
+                    }
+
                 }
 
                 //process task execution result
@@ -309,6 +429,7 @@ impl Scheduler {
                                 vm_handle.start_time.elapsed().as_secs()
                             );
                             let ressource_allocation = Some(vm_handle.qemu_vm_handle.resource_allocation.clone());
+                            // Kill VM process if still running.
                             tokio::task::spawn_blocking(move || {
                                 let cid = vm_handle.qemu_vm_handle.cid;
                                 if let Err(err) = vm_handle.qemu_vm_handle

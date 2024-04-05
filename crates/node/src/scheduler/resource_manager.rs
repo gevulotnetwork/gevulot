@@ -75,6 +75,8 @@ impl ResourceManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Arc;
+    use tokio::sync::Mutex;
 
     #[test]
     fn test_try_allocate_succeeds() {
