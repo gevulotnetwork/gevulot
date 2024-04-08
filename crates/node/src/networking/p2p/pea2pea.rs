@@ -102,7 +102,7 @@ impl P2P {
             http_port,
             nat_listen_addr,
             tx_sender,
-            protocol_version: 0,
+            protocol_version: 1,
             node_resources,
         };
 
