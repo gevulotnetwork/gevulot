@@ -113,3 +113,8 @@ pub(crate) async fn serve_metrics(bind_addr: SocketAddr) -> Result<()> {
 
     Ok(())
 }
+
+pub(crate) fn export_metrics() -> Vec<u8> {
+    // TODO: Implement :)
+    Vec::new()
+}

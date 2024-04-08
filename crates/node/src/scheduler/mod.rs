@@ -37,8 +37,6 @@ use std::{
     time::Duration,
 };
 use systemstat::ByteSize;
-use systemstat::Platform;
-use systemstat::System;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::{
@@ -49,6 +47,8 @@ use tonic::transport::Server;
 
 use self::program_manager::{ProgramError, ProgramHandle};
 use self::resource_manager::ResourceError;
+
+pub use self::resource_manager::get_configured_resources;
 
 // If VM doesn't have running task within `MAX_VM_IDLE_RUN_TIME`, it will be terminated.
 const MAX_VM_IDLE_RUN_TIME: Duration = Duration::from_secs(10);
@@ -109,21 +109,7 @@ pub async fn start_scheduler(
     node_key: SecretKey,
     tx_sender: UnboundedSender<(Transaction<Received>, Option<CallbackSender>)>,
 ) -> Arc<Scheduler> {
-    let sys = System::new();
-    let num_gpus = if config.gpu_devices.is_some() { 1 } else { 0 };
-    let num_cpus = match config.num_cpus {
-        Some(cpus) => cpus,
-        None => num_cpus::get() as u64,
-    };
-    let available_mem = match config.mem_gb {
-        Some(mem_gb) => mem_gb * 1024 * 1024 * 1024,
-        None => {
-            let mem = sys
-                .memory()
-                .expect("failed to lookup available system memory");
-            mem.total.as_u64()
-        }
-    };
+    let (num_cpus, available_mem, num_gpus) = get_configured_resources(&config);
 
     tracing::info!(
         "node configured with {} CPUs, {} MEM and {} GPUs",
