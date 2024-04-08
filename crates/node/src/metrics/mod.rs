@@ -3,7 +3,7 @@ use prometheus_hyper::Server;
 use std::{net::SocketAddr, sync::Arc};
 
 use lazy_static::lazy_static;
-use prometheus::{HistogramOpts, HistogramVec, IntCounter, IntGauge, Registry};
+use prometheus::{Encoder, HistogramOpts, HistogramVec, IntCounter, IntGauge, Registry};
 
 lazy_static! {
     pub static ref REGISTRY: Arc<Registry> = Arc::new(Registry::new());
@@ -115,6 +115,59 @@ pub(crate) async fn serve_metrics(bind_addr: SocketAddr) -> Result<()> {
 }
 
 pub(crate) fn export_metrics() -> Vec<u8> {
-    // TODO: Implement :)
-    Vec::new()
+    let mfs = REGISTRY.gather();
+    let text_encoder = prometheus::TextEncoder::new();
+
+    // TODO: Figure out some good pre-alloc size for this vector.
+    let buf = Vec::new();
+    let mut zstd_encoder = zstd::stream::write::Encoder::new(buf, 0).expect("new zstd encoder");
+
+    // Encode metrics as text and compress.
+    text_encoder
+        .encode(mfs.as_slice(), &mut zstd_encoder)
+        .expect("encoded prometheus metrics");
+
+    zstd_encoder.finish().expect("finish metrics compression")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        io::{BufReader, Read},
+        sync::Once,
+    };
+
+    use super::*;
+
+    static INIT: Once = Once::new();
+
+    #[test]
+    fn test_export_metrics_with_couple_metrics() {
+        // Metrics registration wrapped in `sync::Once` to account for other
+        // tests. Since metrics variables are static globals, they can be
+        // registered only once during the program lifetime.
+        INIT.call_once(|| {
+            register_metrics();
+        });
+
+        // Then set some values.
+        P2P_PROTOCOL_VERSION.set(1);
+        CPUS_TOTAL.set(4);
+        MEM_TOTAL.set(512);
+        GPUS_TOTAL.set(0);
+
+        // ...and export them.
+        let data = export_metrics();
+
+        let mut zstd_decoder = zstd::stream::read::Decoder::new(BufReader::new(data.as_slice()))
+            .expect("create new zstd decoder");
+
+        let mut metrics_text = String::new();
+        zstd_decoder
+            .read_to_string(&mut metrics_text)
+            .expect("uncompress metrics");
+
+        assert!(metrics_text.len() > 250);
+        println!("exported metrics:\n{metrics_text}");
+    }
 }

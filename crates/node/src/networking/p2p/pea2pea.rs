@@ -205,7 +205,7 @@ impl P2P {
             }
 
             protocol::internal::DiagnosticsRequestKind::Metrics => {
-                let data = metrics::export_metrics();
+                let data = tokio::task::spawn_blocking(move || metrics::export_metrics()).await?;
                 protocol::internal::Message::DiagnosticsResponse(
                     self.public_node_key,
                     protocol::internal::DiagnosticsResponse::Metrics(data),
