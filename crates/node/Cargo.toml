@@ -57,6 +57,7 @@ tonic = { version = "0.8.3", optional = true }
 tower = { version = "0.4.0", optional = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"], optional = true }
 vsock = { version = "0.3.0", optional = true }
+zstd = { version = "0.13", optional = true }
 
 [features]
 default = ["node-binary"]
@@ -90,6 +91,7 @@ node-binary = [
   "tower",
   "tracing-subscriber",
   "vsock",
+  "zstd",
 ]
 
 [[bin]]
