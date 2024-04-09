@@ -29,6 +29,15 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing_subscriber::{filter::LevelFilter, fmt::format::FmtSpan, EnvFilter};
 use types::{transaction::Validated, Hash, Transaction};
 
+use std::convert::Infallible;
+use http_body_util::Full;
+use hyper::body::Bytes;
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper::{Request, Response};
+use hyper_util::rt::TokioIo;
+use tokio::net::TcpListener;
+
 mod cli;
 mod mempool;
 mod metrics;
@@ -378,8 +387,23 @@ async fn p2p_beacon(config: P2PBeaconConfig) -> Result<()> {
         tracing::info!("No discovery addresses configured or none could be resolved. Assuming we're the first node.");
     }
 
+    // Start a basic healthcheck so kubernetes has something to wait on.
+    let listener = TcpListener::bind(config.http_healthcheck_listen_addr).await?;
+    tracing::info!("Healthcheck listening on: {}", listener.local_addr()?);
+
     loop {
-        sleep(Duration::from_secs(1));
+        let (stream, _) = listener.accept().await?;
+
+        let io = TokioIo::new(stream);
+
+        tokio::task::spawn(async move {
+            if let Err(err) = http1::Builder::new()
+                .serve_connection(io, service_fn(ok))
+                .await
+            {
+                eprintln!("Error serving connection: {:?}", err);
+            }
+        });
     }
 }
 
@@ -399,4 +423,8 @@ fn read_node_key(node_key_file: &PathBuf) -> Result<SecretKey> {
     };
 
     SecretKey::parse(bs.as_slice().try_into().expect("invalid node key")).map_err(|e| e.into())
+}
+
+async fn ok(_: Request<hyper::body::Incoming>) -> Result<Response<Full<Bytes>>, Infallible> {
+    Ok(Response::new(Full::new(Bytes::from("OK"))))
 }

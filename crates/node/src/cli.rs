@@ -222,6 +222,14 @@ pub struct P2PBeaconConfig {
         env = "GEVULOT_P2P_DISCOVERY_ADDR"
     )]
     pub p2p_discovery_addrs: Vec<String>,
+
+    #[arg(
+    long,
+    long_help = "Healthcheck listen address",
+    env = "GEVULOT_HEALTHCHECK_LISTEN_ADDR",
+    default_value = "127.0.0.1:8888"
+    )]
+    pub http_healthcheck_listen_addr: SocketAddr,
 }
 
 #[derive(Debug, Subcommand)]
