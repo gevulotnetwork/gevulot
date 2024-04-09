@@ -365,22 +365,28 @@ async fn p2p_beacon(config: P2PBeaconConfig) -> Result<()> {
     tracing::info!("listening for p2p at {}", p2p_addr);
 
     let mut connected_nodes = 0;
-    for addr in config.p2p_discovery_addrs.clone() {
-        tracing::info!("connecting to p2p peer {}", addr);
-        match addr.to_socket_addrs() {
-            Ok(mut socket_iter) => {
-                if let Some(peer) = socket_iter.next() {
-                    let (connected, fail) = p2p.connect(peer).await;
-                    connected_nodes += connected.len();
-                    if !fail.is_empty() {
-                        tracing::info!("Peer connection, fail to connect to these peers:{fail:?}");
+    let mut try_count = 0;
+
+    while connected_nodes == 0 && try_count < 5 {
+        for addr in config.p2p_discovery_addrs.clone() {
+            tracing::info!("connecting to p2p peer {}", addr);
+            match addr.to_socket_addrs() {
+                Ok(mut socket_iter) => {
+                    if let Some(peer) = socket_iter.next() {
+                        let (connected, fail) = p2p.connect(peer).await;
+                        connected_nodes += connected.len();
+                        if !fail.is_empty() {
+                            tracing::info!("Peer connection, fail to connect to these peers:{fail:?}");
+                        }
                     }
                 }
-            }
-            Err(err) => {
-                tracing::error!("failed to resolve {}: {}", addr, err);
+                Err(err) => {
+                    tracing::error!("failed to resolve {}: {}", addr, err);
+                }
             }
         }
+
+        try_count += 1;
     }
 
     if !config.p2p_discovery_addrs.is_empty() && connected_nodes == 0 {
@@ -401,7 +407,7 @@ async fn p2p_beacon(config: P2PBeaconConfig) -> Result<()> {
                 .serve_connection(io, service_fn(ok))
                 .await
             {
-                eprintln!("Error serving connection: {:?}", err);
+                tracing::error!("Error serving connection: {:?}", err);
             }
         });
     }
