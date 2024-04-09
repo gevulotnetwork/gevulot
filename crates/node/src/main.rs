@@ -367,7 +367,7 @@ async fn p2p_beacon(config: P2PBeaconConfig) -> Result<()> {
     let mut connected_nodes = 0;
     let mut try_count = 0;
 
-    while connected_nodes == 0 && try_count < 5 {
+    while connected_nodes == 0 && try_count < config.cluster_join_attempt_limit {
         for addr in config.p2p_discovery_addrs.clone() {
             tracing::info!("connecting to p2p peer {}", addr);
             match addr.to_socket_addrs() {
