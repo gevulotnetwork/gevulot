@@ -373,7 +373,7 @@ async fn p2p_beacon(config: P2PBeaconConfig) -> Result<()> {
             match addr.to_socket_addrs() {
                 Ok(mut socket_iter) => {
                     if let Some(peer) = socket_iter.next() {
-                        let (connected, fail) = p2p.connect(peer).await;
+                        let (connected, fail) = p2p.do_connect(peer, true).await;
                         connected_nodes += connected.len();
                         if !fail.is_empty() {
                             tracing::info!("Peer connection, fail to connect to these peers:{fail:?}");
