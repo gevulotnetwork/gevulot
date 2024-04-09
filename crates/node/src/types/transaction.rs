@@ -220,10 +220,7 @@ impl Payload {
     }
 
     pub fn is_run_payload(&self) -> bool {
-        match self {
-            Payload::Run { .. } => true,
-            _ => false,
-        }
+        matches!(self, Payload::Run { .. })
     }
 
     pub fn serialize_into(&self, buf: &mut Vec<u8>) {
