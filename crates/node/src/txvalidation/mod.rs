@@ -1,10 +1,10 @@
-use crate::mempool::Storage;
 use crate::txvalidation::event::TxCache;
 use crate::txvalidation::event::{ReceivedTx, TxEvent};
 use crate::types::{
     transaction::{Created, Received, Validated},
-    Transaction,
+    Hash, Program, Transaction,
 };
+use async_trait::async_trait;
 use futures::stream::FuturesUnordered;
 use futures_util::Stream;
 use futures_util::TryFutureExt;
@@ -33,6 +33,12 @@ mod event;
 #[async_trait::async_trait]
 pub trait ValidatedTxReceiver: Send + Sync {
     async fn send_new_tx(&mut self, tx: Transaction<Validated>) -> eyre::Result<()>;
+}
+
+#[async_trait]
+pub trait ValidateStorage: Send + Sync {
+    async fn get_tx(&self, hash: &Hash) -> eyre::Result<Option<Transaction<Validated>>>;
+    async fn contains_program(&self, hash: Hash) -> eyre::Result<bool>;
 }
 
 #[allow(clippy::enum_variant_names)]
@@ -139,7 +145,7 @@ pub async fn spawn_event_loop(
     mut rcv_tx_event_rx: UnboundedReceiver<(Transaction<Received>, Option<CallbackSender>)>,
     // Endpoint where validated transactions are sent to. Usually configured with Mempool.
     new_tx_receiver: Arc<RwLock<dyn ValidatedTxReceiver + 'static>>,
-    storage: Arc<impl Storage + 'static>,
+    storage: Arc<impl ValidateStorage + 'static>,
 ) -> eyre::Result<(
     JoinHandle<()>,
     // Output stream used to propagate transactions.
@@ -155,10 +161,9 @@ pub async fn spawn_event_loop(
     let p2p_stream = UnboundedReceiverStream::new(p2p_recv);
     let jh = tokio::spawn({
         let local_directory_path = local_directory_path.clone();
-        let mut wait_tx_cache = TxCache::new();
+        let mut program_wait_tx_cache = TxCache::<Program>::new();
+        let mut parent_wait_tx_cache = TxCache::<Transaction<Validated>>::new();
         let mut validated_txs_futures = FuturesUnordered::new();
-        let mut validation_okresult_futures = FuturesUnordered::new();
-        let mut validation_errresult_futures = FuturesUnordered::new();
 
         async move {
             loop {
@@ -198,55 +203,48 @@ pub async fn spawn_event_loop(
                             .and_then(|res| async move {Ok((res,callback))});
                         validated_txs_futures.push(fut);
                     }
-                    // Verify Tx parent and send to mempool all ready Tx.
+                    // Verify Tx parent dependency and send to mempool all ready Tx.
                     Some(Ok((wait_tx_res, callback))) = validated_txs_futures.next() =>  {
                         match wait_tx_res {
                             Ok(wait_tx) => {
-                               match wait_tx.process_event(&mut wait_tx_cache, storage.as_ref()).await {
+                               match wait_tx.process_event(&mut program_wait_tx_cache, &mut parent_wait_tx_cache, storage.as_ref()).await {
                                     Ok(new_tx_list) => {
-                                        //
-                                        let jh  = tokio::spawn({
-                                            let new_tx_receiver = new_tx_receiver.clone();
-                                            async move {
-                                                for new_tx in new_tx_list {
-                                                   new_tx.process_event(&mut *(new_tx_receiver.write().await)).await?;
-                                                }
-                                                Ok(())
-                                            }
-                                        });
-                                        let fut = jh
-                                            .or_else(|err| async move {Err(EventProcessError::ValidateError(format!("Process execution error:{err}")))} )
-                                            .and_then(|res| async move {Ok((res,callback))});
-                                        validation_okresult_futures.push(fut);
+                                        // Process new Tx in the main loop
+                                        // to avoid when there's a lot of waiting Txs free by one Tx,
+                                        // an arriving Tx that depend on a just free one is saved before and generate a db constrain error.
+                                        // Can lock the loop during the save.
+                                        // The unbounded channel will buffer the Tx waiting.
+                                        let mut res = Ok(());
+                                        for new_tx in new_tx_list {
+                                           if let Err(err) =  new_tx.process_event(&mut *(new_tx_receiver.write().await)).await {
+                                                tracing::error!("Error during validate save tx process_event :{err}");
+                                                res = Err(err);
+                                           }
+                                        }
+                                        if let Some(callback) = callback {
+                                            // Forget the result because if the RPC connection is closed the send can fail.
+                                            let _ = callback.send(res);
+                                        }
                                     }
                                     Err(err) => {
-                                        validation_errresult_futures.push(futures::future::ready((err, callback)));
+                                        tracing::error!("Error during Tx dependency verification :{err}");
+                                        if let Some(callback) = callback {
+                                            // Forget the result because if the RPC connection is closed the send can fail.
+                                            let _ = callback.send(Err(err));
+                                        }
                                     }
                                 }
 
                             }
                             Err(err)  => {
-                                validation_errresult_futures.push(futures::future::ready((err, callback)));
+                                tracing::error!("Error during verify tx process_event :{err}");
+                                if let Some(callback) = callback {
+                                    // Forget the result because if the RPC connection is closed the send can fail.
+                                    let _ = callback.send(Err(err));
+                                }
                             }
                         }
-                     }
-                     Some(Ok((res, callback))) = validation_okresult_futures.next() =>  {
-                        if let Err(ref err) = res {
-                            tracing::error!("Error during validate save tx process_event :{err}");
-                        }
-                        if let Some(callback) = callback {
-                            // Forget the result because if the RPC connection is closed the send can fail.
-                            let _ = callback.send(res);
-                        }
-                     }
-                     Some((res, callback)) = validation_errresult_futures.next() =>  {
-                        tracing::error!("Error during validate tx process_event :{res}");
-                        if let Some(callback) = callback {
-                            // Forget the result because if the RPC connection is closed the send can fail.
-                            let _ = callback.send(Err(res));
-                        }
-                     }
-
+                    }
                 } // End select!
             } // End loop
         }
