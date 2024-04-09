@@ -1,3 +1,4 @@
+use crate::metrics;
 use crate::txvalidation::RpcSender;
 use crate::txvalidation::TxEventSender;
 use crate::types::rpc::RpcTransaction;
@@ -17,6 +18,8 @@ use jsonrpsee::{
 };
 use std::rc::Rc;
 use std::{net::SocketAddr, sync::Arc};
+use tokio::time::Instant;
+use tower::ServiceBuilder;
 
 struct Context {
     database: Arc<Database>,
@@ -46,7 +49,13 @@ impl RpcServer {
             .unwrap_or(cfg.p2p_listen_addr);
         local_http_host.set_port(cfg.http_download_port);
 
-        let server = Server::builder().build(cfg.json_rpc_listen_addr).await?;
+        let server = Server::builder()
+            .set_middleware(ServiceBuilder::new().map_request(|req: _| {
+                metrics::RPC_INCOMING_REQUESTS.inc();
+                req
+            }))
+            .build(cfg.json_rpc_listen_addr)
+            .await?;
         let mut module = RpcModule::new(Context {
             database,
             tx_sender,
@@ -79,6 +88,18 @@ impl RpcServer {
 async fn send_transaction(params: Params<'static>, ctx: Arc<Context>) -> RpcResponse<()> {
     tracing::info!("JSON-RPC: send_transaction()");
 
+    let start = Instant::now();
+
+    let result = send_transaction_logic(params, ctx).await;
+
+    metrics::RPC_RESPONSE_TIME_COLLECTOR
+        .with_label_values(&["sendTransaction"])
+        .observe(start.elapsed().as_secs_f64());
+
+    result
+}
+
+async fn send_transaction_logic(params: Params<'static>, ctx: Arc<Context>) -> RpcResponse<()> {
     // Real logic
     let tx: Transaction<Created> = match params.one() {
         Ok(tx) => tx,
@@ -103,6 +124,21 @@ async fn get_transaction(
     params: Params<'static>,
     ctx: Arc<Context>,
 ) -> RpcResponse<RpcTransaction> {
+    let start = Instant::now();
+
+    let response = get_transaction_logic(params, ctx).await;
+
+    metrics::RPC_RESPONSE_TIME_COLLECTOR
+        .with_label_values(&["getTransaction"])
+        .observe(start.elapsed().as_secs_f64());
+
+    response
+}
+
+async fn get_transaction_logic(
+    params: Params<'static>,
+    ctx: Arc<Context>,
+) -> RpcResponse<RpcTransaction> {
     let tx_hash: Hash = match params.one() {
         Ok(tx_hash) => tx_hash,
         Err(e) => {
@@ -122,6 +158,21 @@ async fn get_transaction(
 
 #[tracing::instrument(level = "info")]
 async fn get_tx_tree(
+    params: Params<'static>,
+    ctx: Arc<Context>,
+) -> RpcResponse<Rc<TransactionTree>> {
+    let start = Instant::now();
+
+    let response = get_tx_tree_logic(params, ctx).await;
+
+    metrics::RPC_RESPONSE_TIME_COLLECTOR
+        .with_label_values(&["getTxTree"])
+        .observe(start.elapsed().as_secs_f64());
+
+    response
+}
+
+async fn get_tx_tree_logic(
     params: Params<'static>,
     ctx: Arc<Context>,
 ) -> RpcResponse<Rc<TransactionTree>> {
@@ -448,6 +499,7 @@ mod tests {
             gpu_devices: None,
             http_download_port: 0,
             http_healthcheck_listen_addr: "127.0.0.1:8888".parse().unwrap(),
+            http_metrics_listen_addr: None,
         });
 
         let db = Arc::new(Database::new(&cfg.db_url).await.unwrap());

@@ -31,6 +31,7 @@ use types::{transaction::Validated, Hash, Transaction};
 
 mod cli;
 mod mempool;
+mod metrics;
 mod networking;
 mod rpc_server;
 mod scheduler;
@@ -193,6 +194,15 @@ impl workflow::TransactionStore for storage::Database {
 async fn run(config: Arc<Config>) -> Result<()> {
     let node_key = read_node_key(&config.node_key_file)?;
 
+    // Register metrics counters.
+    metrics::register_metrics();
+
+    if let Some(http_metrics_bind_addr) = config.http_metrics_listen_addr {
+        // Start HTTP metrics server.
+        metrics::serve_metrics(http_metrics_bind_addr).await?;
+        tracing::info!("listening for metrics at {http_metrics_bind_addr}");
+    }
+
     let database = Arc::new(Database::new(&config.db_url).await?);
 
     // Launch the ACL whitelist syncing early in the startup.
@@ -260,6 +270,7 @@ async fn run(config: Arc<Config>) -> Result<()> {
     .await?;
 
     let public_node_key = PublicKey::from_secret_key(&node_key);
+    let node_resources = scheduler::get_configured_resources(&config);
     let p2p = Arc::new(
         networking::P2P::new(
             "gevulot-p2p-network",
@@ -271,6 +282,7 @@ async fn run(config: Arc<Config>) -> Result<()> {
             http_peer_list,
             txvalidation::TxEventSender::<txvalidation::P2pSender>::build(tx_sender.clone()),
             p2p_stream,
+            node_resources,
         )
         .await,
     );
@@ -346,6 +358,7 @@ async fn p2p_beacon(config: P2PBeaconConfig) -> Result<()> {
             http_peer_list,
             txvalidation::TxEventSender::<txvalidation::P2pSender>::build(tx),
             p2p_stream,
+            (0, 0, 0), // P2P beacon node's resources aren't really important.
         )
         .await,
     );

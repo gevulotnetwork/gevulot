@@ -2,6 +2,7 @@ mod program_manager;
 mod resource_manager;
 
 use crate::cli::Config;
+use crate::metrics;
 use crate::storage::Database;
 use crate::txvalidation;
 use crate::txvalidation::CallbackSender;
@@ -36,8 +37,6 @@ use std::{
     time::Duration,
 };
 use systemstat::ByteSize;
-use systemstat::Platform;
-use systemstat::System;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::{
@@ -48,6 +47,8 @@ use tonic::transport::Server;
 
 use self::program_manager::{ProgramError, ProgramHandle};
 use self::resource_manager::ResourceError;
+
+pub use self::resource_manager::get_configured_resources;
 
 // If VM doesn't have running task within `MAX_VM_IDLE_RUN_TIME`, it will be terminated.
 const MAX_VM_IDLE_RUN_TIME: Duration = Duration::from_secs(10);
@@ -108,21 +109,7 @@ pub async fn start_scheduler(
     node_key: SecretKey,
     tx_sender: UnboundedSender<(Transaction<Received>, Option<CallbackSender>)>,
 ) -> Arc<Scheduler> {
-    let sys = System::new();
-    let num_gpus = if config.gpu_devices.is_some() { 1 } else { 0 };
-    let num_cpus = match config.num_cpus {
-        Some(cpus) => cpus,
-        None => num_cpus::get() as u64,
-    };
-    let available_mem = match config.mem_gb {
-        Some(mem_gb) => mem_gb * 1024 * 1024 * 1024,
-        None => {
-            let mem = sys
-                .memory()
-                .expect("failed to lookup available system memory");
-            mem.total.as_u64()
-        }
-    };
+    let (num_cpus, available_mem, num_gpus) = get_configured_resources(&config);
 
     tracing::info!(
         "node configured with {} CPUs, {} MEM and {} GPUs",
@@ -231,6 +218,7 @@ impl Scheduler {
 
                             // Return the popped program_id back to pending queue.
                             state.pending_programs.push_back((tx_hash, program_id));
+                            metrics::TX_SCHEDULING_REQUEUED.inc();
                             continue 'SCHEDULING_LOOP;
                         }
                         Err(e) => {
@@ -241,6 +229,7 @@ impl Scheduler {
                             );
                             // Return the popped program_id back to pending queue.
                             state.pending_programs.push_back((tx_hash, program_id));
+                            metrics::TX_SCHEDULING_REQUEUED.inc();
                             continue 'SCHEDULING_LOOP;
                         }
                     }
@@ -334,6 +323,7 @@ impl Scheduler {
                     // The task is already pending in program's work queue. Push program ID
                     // to pending programs queue to wait available resources.
                     state.pending_programs.push_back((task.tx, task.program_id));
+                    metrics::TX_SCHEDULING_REQUEUED.inc();
                     tracing::warn!("task {} rescheduled: {}", task.id.to_string(), err);
                     continue;
                 }
@@ -498,6 +488,11 @@ impl TaskManager for Scheduler {
                 running_task.task_started.elapsed().as_secs()
             );
 
+            // NOTE: The transaction execution time measurement is not logged
+            // here as it doesn't represent the real time the tx took to execute
+            // and timeout value would only mess the statistics of valid run
+            // times.
+
             tracing::debug!("terminating VM running tx {}", tx_hash);
 
             if let Some(program_handle) = state.running_vms.remove(&tx_hash) {
@@ -544,11 +539,18 @@ impl TaskManager for Scheduler {
 
         let mut state = self.state.lock().await;
         if let Some(running_task) = state.running_tasks.remove(&tx_hash) {
+            let task_run_time = running_task.task_started.elapsed();
             tracing::info!(
                 "task of Tx {} finished in {}sec",
                 running_task.task.tx,
-                running_task.task_started.elapsed().as_secs()
+                task_run_time.as_secs()
             );
+
+            let kind = match running_task.task.kind {
+                TaskKind::Proof => "proof",
+                TaskKind::Verification => "verification",
+                _ => "unknown",
+            };
 
             if let Err(err) = self.database.mark_tx_executed(&running_task.task.tx).await {
                 tracing::error!(
@@ -612,6 +614,12 @@ impl TaskManager for Scheduler {
                             );
                         }
                     };
+
+                    // Log the execution time.
+                    metrics::TX_EXECUTION_TIME_COLLECTOR
+                        .with_label_values(&[kind, "success"])
+                        .observe(task_run_time.as_millis() as f64);
+
                     tracing::info!("Submit result Tx created:{}", tx.hash.to_string());
 
                     // Move tx file from execution Tx path to new Tx path
@@ -626,6 +634,11 @@ impl TaskManager for Scheduler {
                     })?;
                 }
                 grpc::task_result_request::Result::Error(error) => {
+                    // Log the execution time.
+                    metrics::TX_EXECUTION_TIME_COLLECTOR
+                        .with_label_values(&[kind, "failure"])
+                        .observe(task_run_time.as_millis() as f64);
+
                     tracing::warn!("Error during Tx:{tx_hash} execution:{error:?}");
                 }
             }

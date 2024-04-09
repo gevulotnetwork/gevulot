@@ -1,6 +1,7 @@
-use crate::types::program::ResourceRequest;
+use crate::{metrics, types::program::ResourceRequest};
 use eyre::Result;
 use std::sync::{Arc, Mutex};
+use systemstat::{Platform, System};
 use thiserror::Error;
 
 pub struct ResourceAllocation {
@@ -36,6 +37,11 @@ pub struct ResourceManager {
 
 impl ResourceManager {
     pub fn new(total_mem: u64, total_cpus: u64, total_gpus: u64) -> Self {
+        // Set total amount of resources.
+        metrics::CPUS_TOTAL.set(total_cpus as i64);
+        metrics::MEM_TOTAL.set(total_mem as i64);
+        metrics::GPUS_TOTAL.set(total_gpus as i64);
+
         ResourceManager {
             available_mem: total_mem,
             available_cpus: total_cpus,
@@ -66,6 +72,11 @@ impl ResourceManager {
         rm.available_cpus -= request.cpus;
         rm.available_gpus -= request.gpus;
 
+        // Update metrics.
+        metrics::CPUS_AVAILABLE.set(rm.available_cpus as i64);
+        metrics::MEM_AVAILABLE.set(rm.available_mem as i64);
+        metrics::GPUS_AVAILABLE.set(rm.available_gpus as i64);
+
         Ok(ResourceAllocation {
             resource_manager: resource_manager.clone(),
             mem: request.mem,
@@ -78,7 +89,32 @@ impl ResourceManager {
         self.available_mem += allocation.mem;
         self.available_cpus += allocation.cpus;
         self.available_gpus += allocation.gpus;
+
+        // Update metrics.
+        metrics::CPUS_AVAILABLE.set(self.available_cpus as i64);
+        metrics::MEM_AVAILABLE.set(self.available_mem as i64);
+        metrics::GPUS_AVAILABLE.set(self.available_gpus as i64);
     }
+}
+
+pub fn get_configured_resources(config: &crate::cli::Config) -> (u64, u64, u64) {
+    let sys = System::new();
+    let num_gpus = if config.gpu_devices.is_some() { 1 } else { 0 };
+    let num_cpus = match config.num_cpus {
+        Some(cpus) => cpus,
+        None => num_cpus::get() as u64,
+    };
+    let available_mem = match config.mem_gb {
+        Some(mem_gb) => mem_gb * 1024 * 1024 * 1024,
+        None => {
+            let mem = sys
+                .memory()
+                .expect("failed to lookup available system memory");
+            mem.total.as_u64()
+        }
+    };
+
+    (num_cpus, available_mem, num_gpus)
 }
 
 #[cfg(test)]
