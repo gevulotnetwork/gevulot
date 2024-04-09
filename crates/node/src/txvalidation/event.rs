@@ -331,7 +331,6 @@ impl TxEvent<WaitTx> {
                 .get_tx(cache_key)
                 .and_then(|res| async move { Ok(res.is_some()) })
         }
-        // Only test for the first program, because all Tx program came from the same deploy tx.
         let parent = self.tx.payload.get_parent_tx().cloned();
         let new_tx = self
             .wait_if_not_cached(parent_cache, parent.as_ref(), storage, query_db_for_tx)
