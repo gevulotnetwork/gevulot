@@ -310,7 +310,7 @@ impl TxEvent<WaitTx> {
                 ret_tx.insert(0, tx);
                 ret_tx
             })
-            .unwrap_or(vec![]);
+            .unwrap_or_default();
 
         Ok(new_txs)
     }
