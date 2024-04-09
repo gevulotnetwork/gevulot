@@ -157,6 +157,17 @@ fn generate_key(opts: KeyOptions) -> Result<()> {
 }
 
 #[async_trait]
+impl txvalidation::ValidateStorage for storage::Database {
+    async fn get_tx(&self, hash: &Hash) -> Result<Option<Transaction<Validated>>> {
+        self.find_transaction(hash).await
+    }
+
+    async fn contains_program(&self, hash: Hash) -> Result<bool> {
+        self.find_program(hash).await.map(|res| res.is_some())
+    }
+}
+
+#[async_trait]
 impl mempool::Storage for storage::Database {
     async fn get(&self, hash: &Hash) -> Result<Option<Transaction<Validated>>> {
         self.find_transaction(hash).await
