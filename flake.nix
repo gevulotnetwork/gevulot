@@ -25,18 +25,9 @@
                 (p.google-cloud-sdk.withExtraComponents [p.google-cloud-sdk.components.gke-gcloud-auth-plugin])
                 p.k9s
                 p.kube-capacity
-                #p.helix
-                # Language Servers
-                #p.nodePackages_latest.bash-language-server
-                #p.nodePackages_latest.dockerfile-language-server-nodejs
-                #p.terraform-ls
-                #p.nodePackages_latest.vscode-langservers-extracted
-                #p.marksman
-                #p.nil
-                #p.python311Packages.python-lsp-server
-                #p.taplo
-                #p.yaml-language-server
-                #p.ansible-language-server
+                p.openssl
+                p.pkg-config
+                p.protobuf
               ];
             };
         });

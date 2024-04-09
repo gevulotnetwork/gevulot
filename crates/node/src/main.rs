@@ -355,6 +355,29 @@ async fn p2p_beacon(config: P2PBeaconConfig) -> Result<()> {
     let p2p_addr = p2p.node().start_listening().await?;
     tracing::info!("listening for p2p at {}", p2p_addr);
 
+    let mut connected_nodes = 0;
+    for addr in config.p2p_discovery_addrs.clone() {
+        tracing::info!("connecting to p2p peer {}", addr);
+        match addr.to_socket_addrs() {
+            Ok(mut socket_iter) => {
+                if let Some(peer) = socket_iter.next() {
+                    let (connected, fail) = p2p.connect(peer).await;
+                    connected_nodes += connected.len();
+                    if !fail.is_empty() {
+                        tracing::info!("Peer connection, fail to connect to these peers:{fail:?}");
+                    }
+                }
+            }
+            Err(err) => {
+                tracing::error!("failed to resolve {}: {}", addr, err);
+            }
+        }
+    }
+
+    if !config.p2p_discovery_addrs.is_empty() && connected_nodes == 0 {
+        tracing::info!("No discovery addresses configured or none could be resolved. Assuming we're the first node.");
+    }
+
     loop {
         sleep(Duration::from_secs(1));
     }
