@@ -45,7 +45,6 @@ mod networking;
 mod rpc_server;
 mod scheduler;
 mod storage;
-mod txvalidation;
 mod vmm;
 mod watchdog;
 mod workflow;
@@ -53,8 +52,8 @@ mod workflow;
 use mempool::Mempool;
 use storage::{database::entity, Database};
 
+use crate::mempool::CallbackSender;
 use crate::networking::WhitelistSyncer;
-use crate::txvalidation::{CallbackSender, ValidatedTxReceiver};
 
 fn start_logger(default_level: LevelFilter) {
     let filter = match EnvFilter::try_from_default_env() {
@@ -157,7 +156,7 @@ fn generate_key(opts: KeyOptions) -> Result<()> {
 }
 
 #[async_trait]
-impl txvalidation::ValidateStorage for storage::Database {
+impl mempool::ValidateStorage for storage::Database {
     async fn get_tx(&self, hash: &Hash) -> Result<Option<Transaction<Validated>>> {
         self.find_transaction(hash).await
     }
@@ -189,6 +188,8 @@ impl mempool::Storage for storage::Database {
         Ok(())
     }
 }
+
+impl crate::mempool::MempoolStorage for storage::Database {}
 
 #[async_trait]
 impl workflow::TransactionStore for storage::Database {
@@ -237,9 +238,22 @@ async fn run(config: Arc<Config>) -> Result<()> {
     let (tx_sender, rcv_tx_event_rx) =
         mpsc::unbounded_channel::<(Transaction<Received>, Option<CallbackSender>)>();
 
-    //To show to idea. Should use your config definition
-    let new_validated_tx_receiver: Arc<RwLock<dyn ValidatedTxReceiver>> = if !config.no_execution {
-        let mempool = Arc::new(RwLock::new(Mempool::new(database.clone()).await?));
+    //Start Mempool
+    let mempool = Arc::new(RwLock::new(Mempool::new(database.clone()).await?));
+    let (txevent_loop_jh, p2p_stream) = mempool::Mempool::start_tx_validation_event_loop(
+        config.data_directory.clone(),
+        config.p2p_listen_addr,
+        config.http_download_port,
+        http_peer_list.clone(),
+        rcv_tx_event_rx,
+        mempool.clone(),
+        database.clone(),
+        database.clone(),
+    )
+    .await?;
+
+    if !config.no_execution {
+        //start execution scheduler.
         let scheduler_watchdog_sender =
             watchdog::start_healthcheck(config.http_healthcheck_listen_addr).await?;
         let scheduler = scheduler::start_scheduler(
@@ -253,30 +267,7 @@ async fn run(config: Arc<Config>) -> Result<()> {
 
         // Run Scheduler in its own task.
         tokio::spawn(async move { scheduler.run(scheduler_watchdog_sender).await });
-        mempool
-    } else {
-        struct ArchiveMempool(Arc<Database>);
-        #[async_trait]
-        impl ValidatedTxReceiver for ArchiveMempool {
-            async fn send_new_tx(&mut self, tx: Transaction<Validated>) -> eyre::Result<()> {
-                self.0.as_ref().add_transaction(&tx).await
-            }
-        }
-        Arc::new(RwLock::new(ArchiveMempool(database.clone())))
-    };
-
-    // Start Tx process event loop.
-    let (txevent_loop_jh, p2p_stream) = txvalidation::spawn_event_loop(
-        config.data_directory.clone(),
-        config.p2p_listen_addr,
-        config.http_download_port,
-        http_peer_list.clone(),
-        database.clone(),
-        rcv_tx_event_rx,
-        new_validated_tx_receiver.clone(),
-        database.clone(),
-    )
-    .await?;
+    }
 
     let public_node_key = PublicKey::from_secret_key(&node_key);
     let node_resources = scheduler::get_configured_resources(&config);
@@ -289,7 +280,7 @@ async fn run(config: Arc<Config>) -> Result<()> {
             Some(config.http_download_port),
             config.p2p_advertised_listen_addr,
             http_peer_list,
-            txvalidation::TxEventSender::<txvalidation::P2pSender>::build(tx_sender.clone()),
+            mempool::TxEventSender::<mempool::P2pSender>::build(tx_sender.clone()),
             p2p_stream,
             node_resources,
         )
@@ -329,7 +320,7 @@ async fn run(config: Arc<Config>) -> Result<()> {
     let rpc_server = rpc_server::RpcServer::run(
         config.clone(),
         database.clone(),
-        txvalidation::TxEventSender::<txvalidation::RpcSender>::build(tx_sender),
+        mempool::TxEventSender::<mempool::RpcSender>::build(tx_sender),
     )
     .await?;
 
@@ -365,7 +356,7 @@ async fn p2p_beacon(config: P2PBeaconConfig) -> Result<()> {
             None,
             config.p2p_advertised_listen_addr,
             http_peer_list,
-            txvalidation::TxEventSender::<txvalidation::P2pSender>::build(tx),
+            mempool::TxEventSender::<mempool::P2pSender>::build(tx),
             p2p_stream,
             (0, 0, 0), // P2P beacon node's resources aren't really important.
         )
