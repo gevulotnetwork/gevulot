@@ -14,7 +14,7 @@ pub struct Config {
     #[arg(
         long,
         long_help = "Directory where the node should store its data",
-        env = "GEVULOT_DATA_DIRECTORY", 
+        env = "GEVULOT_DATA_DIRECTORY",
         default_value_os_t = PathBuf::from("/var/lib/gevulot"),
     )]
     pub data_directory: PathBuf,
@@ -38,7 +38,7 @@ pub struct Config {
     #[arg(
         long,
         long_help = "Directory where the node should store logs",
-        env = "GEVULOT_LOG_DIRECTORY", 
+        env = "GEVULOT_LOG_DIRECTORY",
         default_value_os_t = PathBuf::from("/var/lib/gevulot/log"),
     )]
     pub log_directory: PathBuf,
@@ -180,7 +180,7 @@ pub struct P2PBeaconConfig {
     #[arg(
         long,
         long_help = "Directory where the node should store its data",
-        env = "GEVULOT_DATA_DIRECTORY", 
+        env = "GEVULOT_DATA_DIRECTORY",
         default_value_os_t = PathBuf::from("/var/lib/gevulot"),
     )]
     pub data_directory: PathBuf,
@@ -214,6 +214,30 @@ pub struct P2PBeaconConfig {
         default_value = "9995"
     )]
     pub http_download_port: u16,
+
+    #[arg(
+        long,
+        long_help = "",
+        value_delimiter = ',',
+        env = "GEVULOT_P2P_DISCOVERY_ADDR"
+    )]
+    pub p2p_discovery_addrs: Vec<String>,
+
+    #[arg(
+        long,
+        long_help = "Healthcheck listen address",
+        env = "GEVULOT_HEALTHCHECK_LISTEN_ADDR",
+        default_value = "127.0.0.1:8888"
+    )]
+    pub http_healthcheck_listen_addr: SocketAddr,
+
+    #[arg(
+        long,
+        long_help = "Cluster join attempt limit",
+        env = "GEVULOT_CLUSTER_JOIN_ATTEMPT_LIMIT",
+        default_value = "10"
+    )]
+    pub cluster_join_attempt_limit: u16,
 }
 
 #[derive(Debug, Subcommand)]

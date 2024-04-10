@@ -227,6 +227,13 @@ impl P2P {
     // Connect to peer at `addr`. Subsequent connections to newly discovered nodes are done in sequence, one at a time.
     // Peer can be fail because they was 2 simultaneous connection. One is fail and the orher is ok.
     pub async fn connect(&self, addr: SocketAddr) -> (BTreeSet<SocketAddr>, BTreeSet<SocketAddr>) {
+        self.do_connect(addr, false).await
+    }
+    pub async fn do_connect(
+        &self,
+        addr: SocketAddr,
+        squelch_error: bool,
+    ) -> (BTreeSet<SocketAddr>, BTreeSet<SocketAddr>) {
         let mut connected_peers = BTreeSet::new();
         let mut failed_peers = BTreeSet::new();
         let mut peer_to_connect_list = vec![addr];
@@ -246,7 +253,9 @@ impl P2P {
                     self.peer_list.write().await.insert(addr);
                 }
                 Err(err) => {
-                    tracing::error!("An error occurs during peer:{addr} connection: {err}",);
+                    if !squelch_error {
+                        tracing::error!("An error occurs during peer:{addr} connection: {err}",);
+                    }
                     failed_peers.insert(addr);
                 }
             };

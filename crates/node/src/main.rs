@@ -29,6 +29,15 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing_subscriber::{filter::LevelFilter, fmt::format::FmtSpan, EnvFilter};
 use types::{transaction::Validated, Hash, Transaction};
 
+use http_body_util::Full;
+use hyper::body::Bytes;
+use hyper::server::conn::http1;
+use hyper::service::service_fn;
+use hyper::{Request, Response};
+use hyper_util::rt::TokioIo;
+use std::convert::Infallible;
+use tokio::net::TcpListener;
+
 mod cli;
 mod mempool;
 mod metrics;
@@ -366,8 +375,54 @@ async fn p2p_beacon(config: P2PBeaconConfig) -> Result<()> {
     let p2p_addr = p2p.node().start_listening().await?;
     tracing::info!("listening for p2p at {}", p2p_addr);
 
+    let mut connected_nodes = 0;
+    let mut try_count = 0;
+
+    while connected_nodes == 0 && try_count < config.cluster_join_attempt_limit {
+        for addr in config.p2p_discovery_addrs.clone() {
+            tracing::info!("connecting to p2p peer {}", addr);
+            match addr.to_socket_addrs() {
+                Ok(mut socket_iter) => {
+                    if let Some(peer) = socket_iter.next() {
+                        let (connected, fail) = p2p.do_connect(peer, true).await;
+                        connected_nodes += connected.len();
+                        if !fail.is_empty() {
+                            tracing::info!(
+                                "Peer connection, fail to connect to these peers:{fail:?}"
+                            );
+                        }
+                    }
+                }
+                Err(err) => {
+                    tracing::error!("failed to resolve {}: {}", addr, err);
+                }
+            }
+        }
+
+        try_count += 1;
+    }
+
+    if !config.p2p_discovery_addrs.is_empty() && connected_nodes == 0 {
+        tracing::info!("No discovery addresses configured or none could be resolved. Assuming we're the first node.");
+    }
+
+    // Start a basic healthcheck so kubernetes has something to wait on.
+    let listener = TcpListener::bind(config.http_healthcheck_listen_addr).await?;
+    tracing::info!("Healthcheck listening on: {}", listener.local_addr()?);
+
     loop {
-        sleep(Duration::from_secs(1));
+        let (stream, _) = listener.accept().await?;
+
+        let io = TokioIo::new(stream);
+
+        tokio::task::spawn(async move {
+            if let Err(err) = http1::Builder::new()
+                .serve_connection(io, service_fn(ok))
+                .await
+            {
+                tracing::error!("Error serving connection: {:?}", err);
+            }
+        });
     }
 }
 
@@ -387,4 +442,8 @@ fn read_node_key(node_key_file: &PathBuf) -> Result<SecretKey> {
     };
 
     SecretKey::parse(bs.as_slice().try_into().expect("invalid node key")).map_err(|e| e.into())
+}
+
+async fn ok(_: Request<hyper::body::Incoming>) -> Result<Response<Full<Bytes>>, Infallible> {
+    Ok(Response::new(Full::new(Bytes::from("OK"))))
 }
