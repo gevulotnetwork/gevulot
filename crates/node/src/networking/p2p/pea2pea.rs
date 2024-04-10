@@ -72,7 +72,7 @@ impl P2P {
         nat_listen_addr: Option<SocketAddr>,
         peer_http_port_list: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>>,
         tx_sender: TxEventSender<P2pSender>,
-        propagate_tx_stream: impl Stream<Item=Transaction<Validated>> + std::marker::Send + 'static,
+        propagate_tx_stream: impl Stream<Item = Transaction<Validated>> + std::marker::Send + 'static,
         node_resources: (u64, u64, u64),
     ) -> Self {
         let config = Config {
@@ -229,7 +229,11 @@ impl P2P {
     pub async fn connect(&self, addr: SocketAddr) -> (BTreeSet<SocketAddr>, BTreeSet<SocketAddr>) {
         self.do_connect(addr, false).await
     }
-    pub async fn do_connect(&self, addr: SocketAddr, squelch_error: bool) -> (BTreeSet<SocketAddr>, BTreeSet<SocketAddr>) {
+    pub async fn do_connect(
+        &self,
+        addr: SocketAddr,
+        squelch_error: bool,
+    ) -> (BTreeSet<SocketAddr>, BTreeSet<SocketAddr>) {
         let mut connected_peers = BTreeSet::new();
         let mut failed_peers = BTreeSet::new();
         let mut peer_to_connect_list = vec![addr];
@@ -299,9 +303,9 @@ impl Handshake for P2P {
                 let handshake_msg_bytes = protocol::serialize_handshake(
                     self.build_handshake_msg().await,
                 )
-                    .map_err(|err| {
-                        std::io::Error::new(std::io::ErrorKind::Other, format!("serialize error:{err}"))
-                    })?;
+                .map_err(|err| {
+                    std::io::Error::new(std::io::ErrorKind::Other, format!("serialize error:{err}"))
+                })?;
                 stream.write_u32(handshake_msg_bytes.len() as u32).await?;
                 stream.write_all(&handshake_msg_bytes).await?;
 
@@ -342,9 +346,9 @@ impl Handshake for P2P {
                 let handshake_msg_bytes = protocol::serialize_handshake(
                     self.build_handshake_msg().await,
                 )
-                    .map_err(|err| {
-                        std::io::Error::new(std::io::ErrorKind::Other, format!("serialize error:{err}"))
-                    })?;
+                .map_err(|err| {
+                    std::io::Error::new(std::io::ErrorKind::Other, format!("serialize error:{err}"))
+                })?;
                 stream.write_u32(handshake_msg_bytes.len() as u32).await?;
                 stream.write_all(&handshake_msg_bytes).await?;
 
@@ -564,7 +568,7 @@ mod tests {
             p2p_stream1,
             (0, 0, 0),
         )
-            .await;
+        .await;
         (peer, tx_sender, txreceiver1)
     }
 
@@ -598,7 +602,7 @@ mod tests {
             p2p_stream1,
             (0, 0, 0),
         )
-            .await;
+        .await;
         (peer, tx_sender, txreceiver1)
     }
 

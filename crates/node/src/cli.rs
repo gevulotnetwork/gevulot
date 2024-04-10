@@ -224,18 +224,18 @@ pub struct P2PBeaconConfig {
     pub p2p_discovery_addrs: Vec<String>,
 
     #[arg(
-    long,
-    long_help = "Healthcheck listen address",
-    env = "GEVULOT_HEALTHCHECK_LISTEN_ADDR",
-    default_value = "127.0.0.1:8888"
+        long,
+        long_help = "Healthcheck listen address",
+        env = "GEVULOT_HEALTHCHECK_LISTEN_ADDR",
+        default_value = "127.0.0.1:8888"
     )]
     pub http_healthcheck_listen_addr: SocketAddr,
 
     #[arg(
-    long,
-    long_help = "Cluster join attempt limit",
-    env = "GEVULOT_CLUSTER_JOIN_ATTEMPT_LIMIT",
-    default_value = "10"
+        long,
+        long_help = "Cluster join attempt limit",
+        env = "GEVULOT_CLUSTER_JOIN_ATTEMPT_LIMIT",
+        default_value = "10"
     )]
     pub cluster_join_attempt_limit: u16,
 }

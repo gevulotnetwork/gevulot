@@ -29,13 +29,13 @@ use tokio_stream::wrappers::UnboundedReceiverStream;
 use tracing_subscriber::{filter::LevelFilter, fmt::format::FmtSpan, EnvFilter};
 use types::{transaction::Validated, Hash, Transaction};
 
-use std::convert::Infallible;
 use http_body_util::Full;
 use hyper::body::Bytes;
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
 use hyper::{Request, Response};
 use hyper_util::rt::TokioIo;
+use std::convert::Infallible;
 use tokio::net::TcpListener;
 
 mod cli;
@@ -387,7 +387,9 @@ async fn p2p_beacon(config: P2PBeaconConfig) -> Result<()> {
                         let (connected, fail) = p2p.do_connect(peer, true).await;
                         connected_nodes += connected.len();
                         if !fail.is_empty() {
-                            tracing::info!("Peer connection, fail to connect to these peers:{fail:?}");
+                            tracing::info!(
+                                "Peer connection, fail to connect to these peers:{fail:?}"
+                            );
                         }
                     }
                 }
