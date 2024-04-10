@@ -2,12 +2,12 @@ mod program_manager;
 mod resource_manager;
 
 use crate::cli::Config;
+use crate::mempool;
+use crate::mempool::CallbackSender;
+use crate::mempool::TxEventSender;
+use crate::mempool::TxResultSender;
 use crate::metrics;
 use crate::storage::Database;
-use crate::txvalidation;
-use crate::txvalidation::CallbackSender;
-use crate::txvalidation::TxEventSender;
-use crate::txvalidation::TxResultSender;
 use crate::types::file::{move_vmfile, Output, TaskVmFile, TxFile, VmOutput};
 use crate::types::TaskState;
 use crate::vmm::qemu::Qemu;
@@ -147,7 +147,7 @@ pub async fn start_scheduler(
         node_key,
         config.data_directory.clone(),
         download_url_prefix,
-        txvalidation::TxEventSender::<txvalidation::TxResultSender>::build(tx_sender.clone()),
+        mempool::TxEventSender::<mempool::TxResultSender>::build(tx_sender.clone()),
     ));
 
     let vm_server = VMServer::new(scheduler.clone(), provider, config.data_directory.clone());

@@ -1,6 +1,6 @@
+use crate::mempool::P2pSender;
+use crate::mempool::TxEventSender;
 use crate::metrics;
-use crate::txvalidation::P2pSender;
-use crate::txvalidation::TxEventSender;
 use futures_util::Stream;
 use libsecp256k1::PublicKey;
 use std::{
@@ -514,10 +514,8 @@ impl OnDisconnect for P2P {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::txvalidation;
-    use crate::txvalidation::CallbackSender;
-    use crate::txvalidation::EventProcessError;
-    use eyre::Result;
+    use crate::mempool;
+    use crate::mempool::CallbackSender;
     use gevulot_node::types::transaction::Payload;
     use gevulot_node::types::transaction::Received;
     use libsecp256k1::SecretKey;
@@ -525,7 +523,6 @@ mod tests {
     use tokio::sync::mpsc::UnboundedReceiver;
     use tokio::sync::mpsc::UnboundedSender;
     use tokio::sync::mpsc::{self};
-    use tokio::sync::oneshot;
     use tokio_stream::wrappers::UnboundedReceiverStream;
     use tracing::level_filters::LevelFilter;
     use tracing_subscriber::EnvFilter;
@@ -535,10 +532,7 @@ mod tests {
     ) -> (
         P2P,
         UnboundedSender<Transaction<Validated>>,
-        UnboundedReceiver<(
-            Transaction<Received>,
-            Option<oneshot::Sender<Result<(), EventProcessError>>>,
-        )>,
+        UnboundedReceiver<(Transaction<Received>, Option<CallbackSender>)>,
     ) {
         let http_peer_list1: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>> =
             Default::default();
@@ -546,7 +540,7 @@ mod tests {
         let p2p_stream1 = UnboundedReceiverStream::new(p2p_recv1);
         let (sendtx1, txreceiver1) =
             mpsc::unbounded_channel::<(Transaction<Received>, Option<CallbackSender>)>();
-        let txsender1 = txvalidation::TxEventSender::<txvalidation::P2pSender>::build(sendtx1);
+        let txsender1 = mempool::TxEventSender::<mempool::P2pSender>::build(sendtx1);
         let peer = P2P::new(
             name,
             "127.0.0.1:0".parse().unwrap(),
@@ -568,10 +562,7 @@ mod tests {
     ) -> (
         P2P,
         UnboundedSender<Transaction<Validated>>,
-        UnboundedReceiver<(
-            Transaction<Received>,
-            Option<oneshot::Sender<Result<(), EventProcessError>>>,
-        )>,
+        UnboundedReceiver<(Transaction<Received>, Option<CallbackSender>)>,
     ) {
         let http_peer_list1: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>> =
             Default::default();
@@ -579,7 +570,7 @@ mod tests {
         let p2p_stream1 = UnboundedReceiverStream::new(p2p_recv1);
         let (sendtx1, txreceiver1) =
             mpsc::unbounded_channel::<(Transaction<Received>, Option<CallbackSender>)>();
-        let txsender1 = txvalidation::TxEventSender::<txvalidation::P2pSender>::build(sendtx1);
+        let txsender1 = mempool::TxEventSender::<mempool::P2pSender>::build(sendtx1);
         let peer = P2P::new(
             name,
             "127.0.0.1:0".parse().unwrap(),

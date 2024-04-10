@@ -1,6 +1,6 @@
+use crate::mempool::RpcSender;
+use crate::mempool::TxEventSender;
 use crate::metrics;
-use crate::txvalidation::RpcSender;
-use crate::txvalidation::TxEventSender;
 use crate::types::rpc::RpcTransaction;
 use crate::{
     cli::Config,
@@ -249,9 +249,8 @@ fn build_tx_tree(hash: &Hash, txs: Vec<(Hash, Option<Hash>)>) -> Rc<TransactionT
 mod tests {
 
     use super::*;
-    use crate::txvalidation;
-    use crate::txvalidation::CallbackSender;
-    use crate::txvalidation::EventProcessError;
+    use crate::mempool;
+    use crate::mempool::CallbackSender;
     use gevulot_node::types::transaction::Received;
     use jsonrpsee::{
         core::{client::ClientT, params::ArrayParams},
@@ -262,7 +261,6 @@ mod tests {
     use std::{env::temp_dir, path::PathBuf};
     use tokio::sync::mpsc;
     use tokio::sync::mpsc::UnboundedReceiver;
-    use tokio::sync::oneshot;
     use tracing_subscriber::{filter::LevelFilter, fmt::format::FmtSpan, EnvFilter};
 
     #[ignore]
@@ -475,10 +473,7 @@ mod tests {
 
     async fn new_rpc_server() -> (
         RpcServer,
-        UnboundedReceiver<(
-            Transaction<Received>,
-            Option<oneshot::Sender<Result<(), EventProcessError>>>,
-        )>,
+        UnboundedReceiver<(Transaction<Received>, Option<CallbackSender>)>,
     ) {
         let cfg = Arc::new(Config {
             acl_whitelist_url: None,
@@ -506,7 +501,7 @@ mod tests {
 
         let (sendtx, txreceiver) =
             mpsc::unbounded_channel::<(Transaction<Received>, Option<CallbackSender>)>();
-        let txsender = txvalidation::TxEventSender::<txvalidation::RpcSender>::build(sendtx);
+        let txsender = mempool::TxEventSender::<mempool::RpcSender>::build(sendtx);
 
         (
             RpcServer::run(cfg, db, txsender)

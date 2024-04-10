@@ -1,8 +1,6 @@
 use super::ValidatedTxReceiver;
-use crate::txvalidation::acl::AclWhitelist;
-use crate::txvalidation::download_manager;
-use crate::txvalidation::EventProcessError;
-use crate::txvalidation::ValidateStorage;
+use crate::mempool::txvalidation::download_manager;
+use crate::mempool::ValidateStorage;
 use crate::types::Hash;
 use crate::types::{
     transaction::{Received, Validated},
@@ -10,6 +8,7 @@ use crate::types::{
 };
 use futures::future::join_all;
 use futures_util::TryFutureExt;
+use gevulot_node::acl;
 use lru::LruCache;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -19,11 +18,29 @@ use std::net::SocketAddr;
 use std::path::Path;
 use std::time::Duration;
 use std::time::Instant;
+use thiserror::Error;
 use tokio::sync::mpsc::UnboundedSender;
 
 const MAX_CACHED_TX_FOR_VERIFICATION: usize = 50;
 const MAX_WAITING_TX_FOR_VERIFICATION: usize = 100;
 const MAX_WAITING_TIME_IN_MS: u64 = 3600 * 1000; // One hour.
+
+#[allow(clippy::enum_variant_names)]
+#[derive(Error, Debug)]
+pub enum EventProcessError {
+    #[error("Fail to send the Tx on the channel: {0}")]
+    PropagateTxError(#[from] Box<tokio::sync::mpsc::error::SendError<Transaction<Validated>>>),
+    #[error("validation fail: {0}")]
+    ValidateError(String),
+    #[error("Tx asset fail to download because {0}")]
+    DownloadAssetError(String),
+    #[error("Save Tx error: {0}")]
+    SaveTxError(String),
+    #[error("Storage access error: {0}")]
+    StorageError(String),
+    #[error("AclWhite list authenticate error: {0}")]
+    AclWhiteListAuthError(#[from] acl::AclWhiteListError),
+}
 
 //event type.
 #[derive(Debug, Clone)]
@@ -102,9 +119,9 @@ impl From<TxEvent<WaitTx>> for TxEvent<NewTx> {
 
 //Processing of event that arrive: SourceTxType.
 impl TxEvent<ReceivedTx> {
-    pub async fn process_event(
+    pub async fn verify_tx(
         self,
-        acl_whitelist: &impl AclWhitelist,
+        acl_whitelist: &impl acl::AclWhitelist,
     ) -> Result<TxEvent<DownloadTx>, EventProcessError> {
         match self.validate_tx(acl_whitelist).await {
             Ok(()) => Ok(self.into()),
@@ -117,7 +134,7 @@ impl TxEvent<ReceivedTx> {
     //Tx validation process.
     async fn validate_tx(
         &self,
-        acl_whitelist: &impl AclWhitelist,
+        acl_whitelist: &impl acl::AclWhitelist,
     ) -> Result<(), EventProcessError> {
         self.tx.validate().map_err(|err| {
             EventProcessError::ValidateError(format!("Error during transaction validation:{err}",))
@@ -136,7 +153,7 @@ impl TxEvent<ReceivedTx> {
 
 //Download Tx processing
 impl TxEvent<DownloadTx> {
-    pub async fn process_event(
+    pub async fn downlod_tx_assets(
         self,
         local_directory_path: &Path,
         http_peer_list: Vec<(SocketAddr, Option<u16>)>,
@@ -174,7 +191,7 @@ impl TxEvent<DownloadTx> {
 
 // Propagate Tx processing.
 impl TxEvent<PropagateTx> {
-    pub async fn process_event(
+    pub async fn propagate_tx(
         self,
         p2p_sender: &UnboundedSender<Transaction<Validated>>,
     ) -> Result<(), EventProcessError> {
@@ -204,7 +221,7 @@ impl TxEvent<PropagateTx> {
 // Manage Run Tx and put to wait depending on progam.
 // Manage Proof and Verify Tx to wait depending on Run Tx.
 impl TxEvent<WaitTx> {
-    pub async fn process_event(
+    pub async fn validate_tx_dep(
         self,
         programid_cache: &mut TxCache<Program>,
         parent_cache: &mut TxCache<Transaction<Validated>>,
@@ -366,7 +383,7 @@ impl TxEvent<WaitTx> {
 }
 
 impl TxEvent<NewTx> {
-    pub async fn process_event(
+    pub async fn save_tx(
         self,
         newtx_receiver: &mut dyn ValidatedTxReceiver,
     ) -> Result<(), EventProcessError> {
@@ -485,7 +502,7 @@ impl<Kind> Default for TxCache<Kind> {
 mod tests {
 
     use super::*;
-    use crate::txvalidation::Created;
+    use crate::mempool::Created;
     use crate::types::transaction::Payload;
     use crate::types::transaction::ProgramMetadata;
     use crate::types::transaction::{Workflow, WorkflowStep};
@@ -623,7 +640,7 @@ mod tests {
 
         // Valide Run Tx. Put in Wait cache
         let res = run1_tx_event
-            .process_event(&mut wait_progam_cache, &mut wait_tx_cache, &db)
+            .validate_tx_dep(&mut wait_progam_cache, &mut wait_tx_cache, &db)
             .await;
         assert!(res.is_ok());
         // Run Tx is waiting
@@ -634,7 +651,7 @@ mod tests {
 
         // Deploy1 Tx, only return the deploy Tx. Wait for deploy2 program.
         let res = deploy1_tx_event
-            .process_event(&mut wait_progam_cache, &mut wait_tx_cache, &db)
+            .validate_tx_dep(&mut wait_progam_cache, &mut wait_tx_cache, &db)
             .await;
         assert!(res.is_ok());
         assert_eq!(wait_progam_cache.waiting_tx.len(), 1);
@@ -644,7 +661,7 @@ mod tests {
 
         // Deploy2 Tx, return 2 tx, deploy2 + Run.
         let res = deploy2_tx_event
-            .process_event(&mut wait_progam_cache, &mut wait_tx_cache, &db)
+            .validate_tx_dep(&mut wait_progam_cache, &mut wait_tx_cache, &db)
             .await;
         assert!(res.is_ok());
         //remove from cache
@@ -762,7 +779,7 @@ mod tests {
         // New Tx that will wait.
         let tx_event = new_proof_tx_event(parent1_hash);
         let res = tx_event
-            .process_event(&mut wait_progam_cache, &mut wait_tx_cache, &db)
+            .validate_tx_dep(&mut wait_progam_cache, &mut wait_tx_cache, &db)
             .await;
         assert!(res.is_ok());
         assert_eq!(wait_tx_cache.waiting_tx.len(), 1);
@@ -770,7 +787,7 @@ mod tests {
         // New Tx that will wait.
         let tx_event = new_proof_tx_event(parent2_hash);
         let res = tx_event
-            .process_event(&mut wait_progam_cache, &mut wait_tx_cache, &db)
+            .validate_tx_dep(&mut wait_progam_cache, &mut wait_tx_cache, &db)
             .await;
         assert!(res.is_ok());
         assert_eq!(wait_tx_cache.waiting_tx.len(), 2);
@@ -781,7 +798,7 @@ mod tests {
         let tx_event = new_proof_tx_event(parent1_hash);
         let tx_hash = tx_event.tx.hash;
         let res = tx_event
-            .process_event(&mut wait_progam_cache, &mut wait_tx_cache, &db)
+            .validate_tx_dep(&mut wait_progam_cache, &mut wait_tx_cache, &db)
             .await;
         assert!(res.is_ok());
         // Evicted but new tx added => len=1.
@@ -789,7 +806,7 @@ mod tests {
 
         //Process the parent Tx. Do child Tx return because they have been evicted.
         let res = parent1_tx_event
-            .process_event(&mut wait_progam_cache, &mut wait_tx_cache, &db)
+            .validate_tx_dep(&mut wait_progam_cache, &mut wait_tx_cache, &db)
             .await;
         assert!(res.is_ok());
         let ret_txs = res.unwrap();
@@ -814,7 +831,7 @@ mod tests {
         let tx1_hash = tx_event1.tx.hash;
         let tx1 = tx_event1.tx.clone();
         let res = tx_event1
-            .process_event(&mut wait_progam_cache, &mut wait_tx_cache, &db)
+            .validate_tx_dep(&mut wait_progam_cache, &mut wait_tx_cache, &db)
             .await;
         assert!(res.is_ok());
         // Save the Tx in db to test cache miss.
@@ -828,7 +845,7 @@ mod tests {
         let tx2_hash = tx2_event.tx.hash;
         let tx2 = tx2_event.tx.clone();
         let res = tx2_event
-            .process_event(&mut wait_progam_cache, &mut wait_tx_cache, &db)
+            .validate_tx_dep(&mut wait_progam_cache, &mut wait_tx_cache, &db)
             .await;
         assert!(res.is_ok());
         // Save the Tx in db to test cache miss.
@@ -844,7 +861,7 @@ mod tests {
         let tx_event3 = new_proof_tx_event(parent_tx_event.tx.hash);
         let tx3_hash = tx_event3.tx.hash;
         let res = tx_event3
-            .process_event(&mut wait_progam_cache, &mut wait_tx_cache, &db)
+            .validate_tx_dep(&mut wait_progam_cache, &mut wait_tx_cache, &db)
             .await;
         assert!(res.is_ok());
         assert_eq!(wait_tx_cache.waiting_tx.len(), 1);
@@ -852,7 +869,7 @@ mod tests {
 
         // Test process parent Tx: Tx3 removed from waiting, Tx3 and parent added to cached. Return Tx3 and parent.
         let res = parent_tx_event
-            .process_event(&mut wait_progam_cache, &mut wait_tx_cache, &db)
+            .validate_tx_dep(&mut wait_progam_cache, &mut wait_tx_cache, &db)
             .await;
         assert!(res.is_ok());
         assert_eq!(wait_tx_cache.waiting_tx.len(), 0);
@@ -868,7 +885,7 @@ mod tests {
         let tx4_event = new_proof_tx_event(tx1_hash); // tx1_hash not in the cache but in the DB
         let tx4_hash = tx4_event.tx.hash;
         let res = tx4_event
-            .process_event(&mut wait_progam_cache, &mut wait_tx_cache, &db)
+            .validate_tx_dep(&mut wait_progam_cache, &mut wait_tx_cache, &db)
             .await;
         assert!(res.is_ok());
         // Not cached because parent in db

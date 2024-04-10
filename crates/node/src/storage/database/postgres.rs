@@ -1,6 +1,4 @@
 use super::entity::{self};
-use crate::txvalidation::acl::AclWhiteListError;
-use crate::txvalidation::acl::AclWhitelist;
 use crate::types::file::DbFile;
 use crate::types::{
     self,
@@ -8,6 +6,8 @@ use crate::types::{
     Hash, Program,
 };
 use eyre::Result;
+use gevulot_node::acl::AclWhiteListError;
+use gevulot_node::acl::AclWhitelist;
 use gevulot_node::types::program::ResourceRequest;
 use libsecp256k1::PublicKey;
 use sqlx::{postgres::PgPoolOptions, FromRow, Row};
