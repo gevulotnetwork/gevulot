@@ -388,7 +388,6 @@ async fn p2p_beacon(config: P2PBeaconConfig) -> Result<()> {
                     tracing::error!("failed to resolve {}: {}", addr, err);
                 }
             }
-
         }
 
         tokio::time::sleep(Duration::from_secs(1)).await;
