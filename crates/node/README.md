@@ -91,3 +91,5 @@ to prevent it from binding GPU's USB controller, so it must be fixed after boot.
 echo "0000:01:00.2" | sudo tee /sys/bus/pci/drivers/xhci_hcd/unbind
 echo "0000:01:00.2" | sudo tee /sys/bus/pci/drivers/vfio-pci/bind
 ```
+
+#TEST
