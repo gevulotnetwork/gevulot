@@ -241,6 +241,9 @@ impl P2P {
             // Clear new peer list before connect
             self.current_connecting_peer_list.write().await.clear();
             let addr = peer_to_connect_list.pop().unwrap(); //unwrap tested in the while.
+            if connected_peers.contains(&addr) || failed_peers.contains(&addr) {
+                continue;
+            }
             match self.node.connect(addr).await {
                 Ok(_) => {
                     connected_peers.insert(addr);
