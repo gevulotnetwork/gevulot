@@ -1,5 +1,5 @@
 use crate::mempool::P2pSender;
-use crate::mempool::TxEventSender;
+use crate::mempool::TxValidateEventSender;
 use crate::metrics;
 use futures_util::Stream;
 use libsecp256k1::PublicKey;
@@ -49,7 +49,7 @@ pub struct P2P {
     public_node_key: PublicKey,
 
     // Send Tx to the process loop.
-    tx_sender: TxEventSender<P2pSender>,
+    tx_sender: TxValidateEventSender<P2pSender>,
 
     protocol_version: u64,
     node_resources: (u64, u64, u64),
@@ -71,7 +71,7 @@ impl P2P {
         http_port: Option<u16>,
         nat_listen_addr: Option<SocketAddr>,
         peer_http_port_list: Arc<tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>>,
-        tx_sender: TxEventSender<P2pSender>,
+        tx_sender: TxValidateEventSender<P2pSender>,
         propagate_tx_stream: impl Stream<Item = Transaction<Validated>> + std::marker::Send + 'static,
         node_resources: (u64, u64, u64),
     ) -> Self {
@@ -549,7 +549,7 @@ mod tests {
         let p2p_stream1 = UnboundedReceiverStream::new(p2p_recv1);
         let (sendtx1, txreceiver1) =
             mpsc::unbounded_channel::<(Transaction<Received>, Option<CallbackSender>)>();
-        let txsender1 = mempool::TxEventSender::<mempool::P2pSender>::build(sendtx1);
+        let txsender1 = mempool::TxValidateEventSender::<mempool::P2pSender>::build(sendtx1);
         let peer = P2P::new(
             name,
             "127.0.0.1:0".parse().unwrap(),
@@ -579,7 +579,7 @@ mod tests {
         let p2p_stream1 = UnboundedReceiverStream::new(p2p_recv1);
         let (sendtx1, txreceiver1) =
             mpsc::unbounded_channel::<(Transaction<Received>, Option<CallbackSender>)>();
-        let txsender1 = mempool::TxEventSender::<mempool::P2pSender>::build(sendtx1);
+        let txsender1 = mempool::TxValidateEventSender::<mempool::P2pSender>::build(sendtx1);
         let peer = P2P::new(
             name,
             "127.0.0.1:0".parse().unwrap(),

@@ -1,217 +1,88 @@
-use super::ValidatedTxReceiver;
-use crate::mempool::txvalidation::download_manager;
 use crate::mempool::ValidateStorage;
 use crate::types::Hash;
 use crate::types::{
-    transaction::{Received, Validated},
+    transaction::{Execute, Received, Validated},
     Program, Transaction,
 };
-use futures::future::join_all;
 use futures_util::TryFutureExt;
-use gevulot_node::acl;
 use lru::LruCache;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::future::Future;
 use std::marker::PhantomData;
-use std::net::SocketAddr;
-use std::path::Path;
 use std::time::Duration;
 use std::time::Instant;
 use thiserror::Error;
-use tokio::sync::mpsc::UnboundedSender;
 
 const MAX_CACHED_TX_FOR_VERIFICATION: usize = 50;
 const MAX_WAITING_TX_FOR_VERIFICATION: usize = 100;
 const MAX_WAITING_TIME_IN_MS: u64 = 3600 * 1000; // One hour.
 
 #[allow(clippy::enum_variant_names)]
-#[derive(Error, Debug)]
-pub enum EventProcessError {
-    #[error("Fail to send the Tx on the channel: {0}")]
-    PropagateTxError(#[from] Box<tokio::sync::mpsc::error::SendError<Transaction<Validated>>>),
-    #[error("validation fail: {0}")]
-    ValidateError(String),
-    #[error("Tx asset fail to download because {0}")]
-    DownloadAssetError(String),
-    #[error("Save Tx error: {0}")]
-    SaveTxError(String),
-    #[error("Storage access error: {0}")]
+#[derive(Error, Clone, Debug)]
+pub enum PreexecError {
+    #[error("Error during Tx processing: {0}")]
+    PreProcessError(String),
+    #[error("Error during Tx saving: {0}")]
     StorageError(String),
-    #[error("AclWhite list authenticate error: {0}")]
-    AclWhiteListAuthError(#[from] acl::AclWhiteListError),
 }
 
-//event type.
 #[derive(Debug, Clone)]
-pub struct ReceivedTx;
+pub struct PreExecTx;
 
 #[derive(Debug, Clone)]
-pub struct DownloadTx;
-
-#[derive(Debug, Clone)]
-pub struct WaitTx;
-
-#[derive(Debug, Clone)]
-pub struct NewTx;
-
-#[derive(Debug, Clone)]
-pub struct PropagateTx;
+pub struct ExecTx;
 
 //Event processing depends on the marker type.
 #[derive(Debug, Clone)]
-pub struct TxEvent<T: Debug> {
-    pub tx: Transaction<Received>,
+pub struct TxPreExecEvent<T: Debug> {
+    pub tx: Transaction<Validated>,
     pub tx_type: T,
 }
 
-impl From<Transaction<Received>> for TxEvent<ReceivedTx> {
+impl From<Transaction<Received>> for TxPreExecEvent<PreExecTx> {
     fn from(tx: Transaction<Received>) -> Self {
-        TxEvent {
-            tx,
-            tx_type: ReceivedTx,
-        }
-    }
-}
-
-impl From<TxEvent<ReceivedTx>> for TxEvent<DownloadTx> {
-    fn from(event: TxEvent<ReceivedTx>) -> Self {
-        TxEvent {
-            tx: event.tx,
-            tx_type: DownloadTx,
-        }
-    }
-}
-
-impl From<TxEvent<DownloadTx>> for TxEvent<WaitTx> {
-    fn from(event: TxEvent<DownloadTx>) -> Self {
-        TxEvent {
-            tx: event.tx,
-            tx_type: WaitTx,
-        }
-    }
-}
-
-impl From<TxEvent<DownloadTx>> for Option<TxEvent<PropagateTx>> {
-    fn from(event: TxEvent<DownloadTx>) -> Self {
-        match event.tx.state {
-            Received::P2P => None,
-            Received::RPC => Some(TxEvent {
-                tx: event.tx,
-                tx_type: PropagateTx,
-            }),
-            Received::TXRESULT => Some(TxEvent {
-                tx: event.tx,
-                tx_type: PropagateTx,
-            }),
-        }
-    }
-}
-
-impl From<TxEvent<WaitTx>> for TxEvent<NewTx> {
-    fn from(event: TxEvent<WaitTx>) -> Self {
-        TxEvent {
-            tx: event.tx,
-            tx_type: NewTx,
-        }
-    }
-}
-
-//Processing of event that arrive: SourceTxType.
-impl TxEvent<ReceivedTx> {
-    pub async fn verify_tx(
-        self,
-        acl_whitelist: &impl acl::AclWhitelist,
-    ) -> Result<TxEvent<DownloadTx>, EventProcessError> {
-        match self.validate_tx(acl_whitelist).await {
-            Ok(()) => Ok(self.into()),
-            Err(err) => Err(EventProcessError::ValidateError(format!(
-                "Tx validation fail:{err}"
-            ))),
-        }
-    }
-
-    //Tx validation process.
-    async fn validate_tx(
-        &self,
-        acl_whitelist: &impl acl::AclWhitelist,
-    ) -> Result<(), EventProcessError> {
-        self.tx.validate().map_err(|err| {
-            EventProcessError::ValidateError(format!("Error during transaction validation:{err}",))
-        })?;
-
-        // Secondly verify that author is whitelisted.
-        if !acl_whitelist.contains(&self.tx.author).await? {
-            return Err(EventProcessError::ValidateError(
-                "Tx permission denied signer not authorized".to_string(),
-            ));
-        }
-
-        Ok(())
-    }
-}
-
-//Download Tx processing
-impl TxEvent<DownloadTx> {
-    pub async fn downlod_tx_assets(
-        self,
-        local_directory_path: &Path,
-        http_peer_list: Vec<(SocketAddr, Option<u16>)>,
-    ) -> Result<(TxEvent<WaitTx>, Option<TxEvent<PropagateTx>>), EventProcessError> {
-        let http_client = reqwest::Client::new();
-        let asset_file_list = self.tx.get_asset_list().map_err(|err| {
-            EventProcessError::DownloadAssetError(format!(
-                "Asset file param conversion error:{err}"
-            ))
-        })?;
-
-        let futures: Vec<_> = asset_file_list
-            .into_iter()
-            .map(|asset_file| {
-                download_manager::download_asset_file(
-                    local_directory_path,
-                    &http_peer_list,
-                    &http_client,
-                    asset_file,
-                )
-            })
-            .collect();
-        join_all(futures)
-            .await
-            .into_iter()
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|err| {
-                EventProcessError::DownloadAssetError(format!("Execution error:{err}"))
-            })?;
-        let newtx: TxEvent<WaitTx> = self.clone().into();
-        let propagate: Option<TxEvent<PropagateTx>> = self.into();
-        Ok((newtx, propagate))
-    }
-}
-
-// Propagate Tx processing.
-impl TxEvent<PropagateTx> {
-    pub async fn propagate_tx(
-        self,
-        p2p_sender: &UnboundedSender<Transaction<Validated>>,
-    ) -> Result<(), EventProcessError> {
         let tx = Transaction {
-            author: self.tx.author,
-            hash: self.tx.hash,
-            payload: self.tx.payload,
-            nonce: self.tx.nonce,
-            signature: self.tx.signature,
+            author: tx.author,
+            hash: tx.hash,
+            payload: tx.payload,
+            nonce: tx.nonce,
+            signature: tx.signature,
             //TODO should be updated after the p2p send with a notification
             propagated: true,
-            executed: self.tx.executed,
+            executed: tx.executed,
             state: Validated,
         };
-        tracing::info!(
-            "Tx validation propagate tx:{} payload:{}",
-            tx.hash.to_string(),
-            tx.payload
-        );
-        p2p_sender.send(tx).map_err(|err| Box::new(err).into())
+
+        TxPreExecEvent {
+            tx,
+            tx_type: PreExecTx,
+        }
+    }
+}
+
+impl From<TxPreExecEvent<PreExecTx>> for TxPreExecEvent<ExecTx> {
+    fn from(event: TxPreExecEvent<PreExecTx>) -> Self {
+        TxPreExecEvent {
+            tx: event.tx,
+            tx_type: ExecTx,
+        }
+    }
+}
+
+impl From<TxPreExecEvent<ExecTx>> for Transaction<Execute> {
+    fn from(event: TxPreExecEvent<ExecTx>) -> Self {
+        Transaction {
+            author: event.tx.author,
+            hash: event.tx.hash,
+            payload: event.tx.payload,
+            nonce: event.tx.nonce,
+            signature: event.tx.signature,
+            //TODO should be updated after the p2p send with a notification
+            propagated: event.tx.propagated,
+            executed: event.tx.executed,
+            state: Execute,
+        }
     }
 }
 
@@ -220,13 +91,13 @@ impl TxEvent<PropagateTx> {
 // Do it in 2 step.
 // Manage Run Tx and put to wait depending on progam.
 // Manage Proof and Verify Tx to wait depending on Run Tx.
-impl TxEvent<WaitTx> {
+impl TxPreExecEvent<PreExecTx> {
     pub async fn validate_tx_dep(
         self,
         programid_cache: &mut TxCache<Program>,
         parent_cache: &mut TxCache<Transaction<Validated>>,
         storage: &impl ValidateStorage,
-    ) -> Result<Vec<TxEvent<NewTx>>, EventProcessError> {
+    ) -> Result<Vec<TxPreExecEvent<ExecTx>>, PreexecError> {
         // First validate program dep
         let prg_ok_txs = self.manage_program_dep(programid_cache, storage).await?;
         //validate parent dep
@@ -238,7 +109,7 @@ impl TxEvent<WaitTx> {
             new_txs.append(&mut ret);
         }
 
-        // Transfort tx in NewTx
+        // Transfort tx in PreExecTx
         let ret = new_txs.into_iter().map(|tx| tx.into()).collect();
 
         Ok(ret)
@@ -250,7 +121,7 @@ impl TxEvent<WaitTx> {
         cache_key: std::option::Option<&'a gevulot_node::types::Hash>,
         storage: &'a impl ValidateStorage,
         storage_contains: impl FnOnce(&'a Hash, &'a dyn ValidateStorage) -> Fut,
-    ) -> Result<Option<Self>, EventProcessError>
+    ) -> Result<Option<Self>, PreexecError>
     where
         Fut: Future<Output = eyre::Result<bool>>,
     {
@@ -258,7 +129,7 @@ impl TxEvent<WaitTx> {
             if cache.is_tx_cached(cache_key)
                 || storage_contains(cache_key, storage)
                     .await
-                    .map_err(|err| EventProcessError::StorageError(format!("{err}")))?
+                    .map_err(|err| PreexecError::StorageError(format!("{err}")))?
             {
                 // Present return the Tx
                 Ok(Some(self))
@@ -278,7 +149,7 @@ impl TxEvent<WaitTx> {
         self,
         programid_cache: &mut TxCache<Program>,
         storage: &impl ValidateStorage,
-    ) -> Result<Vec<TxEvent<WaitTx>>, EventProcessError> {
+    ) -> Result<Vec<TxPreExecEvent<PreExecTx>>, PreexecError> {
         // Verify that Tx associated program are present.
         let run_tx_programs = self.tx.payload.get_run_programs_dep();
         fn query_db_for_program<'a>(
@@ -338,7 +209,7 @@ impl TxEvent<WaitTx> {
         programid_cache: &mut TxCache<Program>,
         parent_cache: &mut TxCache<Transaction<Validated>>,
         storage: &impl ValidateStorage,
-    ) -> Result<Vec<TxEvent<WaitTx>>, EventProcessError> {
+    ) -> Result<Vec<TxPreExecEvent<PreExecTx>>, PreexecError> {
         // Verify Tx'x parent is present or not.
         fn query_db_for_tx<'a>(
             cache_key: &'a Hash,
@@ -382,41 +253,12 @@ impl TxEvent<WaitTx> {
     }
 }
 
-impl TxEvent<NewTx> {
-    pub async fn save_tx(
-        self,
-        newtx_receiver: &mut dyn ValidatedTxReceiver,
-    ) -> Result<(), EventProcessError> {
-        let tx = Transaction {
-            author: self.tx.author,
-            hash: self.tx.hash,
-            payload: self.tx.payload,
-            nonce: self.tx.nonce,
-            signature: self.tx.signature,
-            //TODO should be updated after the p2p send with a notification
-            propagated: true,
-            executed: self.tx.executed,
-            state: Validated,
-        };
-        tracing::info!(
-            "Tx validation save tx:{}  payload:{}",
-            tx.hash.to_string(),
-            tx.payload
-        );
-        let tx_hash = tx.hash;
-        newtx_receiver
-            .send_new_tx(tx)
-            .map_err(|err| EventProcessError::SaveTxError(format!("Tx:{} {err}", tx_hash)))
-            .await
-    }
-}
-
 // Use to cache New tx and store waiting Tx that have missing parent.
 pub struct TxCache<Kind> {
     // List of Tx waiting for parent.let waiting_txs =
-    waiting_tx: HashMap<Hash, (Vec<TxEvent<WaitTx>>, Instant)>,
+    waiting_tx: HashMap<Hash, (Vec<TxPreExecEvent<PreExecTx>>, Instant)>,
     // Cache of the last saved Tx in the DB. To avoid to query the db for Tx.
-    cached_tx_for_verification: LruCache<Hash, WaitTx>,
+    cached_tx_for_verification: LruCache<Hash, PreExecTx>,
     // Number of Waiting Tx that trigger the Tx eviction process.
     max_waiting_tx: usize,
     // Max time a Tx can wait in millisecond.
@@ -450,10 +292,10 @@ impl<Kind> TxCache<Kind> {
     }
 
     pub fn add_cached_tx(&mut self, hash: Hash) {
-        self.cached_tx_for_verification.put(hash, WaitTx);
+        self.cached_tx_for_verification.put(hash, PreExecTx);
     }
 
-    pub fn add_new_waiting_tx(&mut self, parent: Hash, tx: TxEvent<WaitTx>) {
+    pub fn add_new_waiting_tx(&mut self, parent: Hash, tx: TxPreExecEvent<PreExecTx>) {
         // Try to evict when the max waiting Tx is reach.
         if self.waiting_tx.len() >= self.max_waiting_tx {
             self.evict_old_waiting_tx();
@@ -465,7 +307,7 @@ impl<Kind> TxCache<Kind> {
         waiting_txs.push(tx);
     }
 
-    pub fn remove_waiting_children_txs(&mut self, parent: &Hash) -> Vec<TxEvent<WaitTx>> {
+    pub fn remove_waiting_children_txs(&mut self, parent: &Hash) -> Vec<TxPreExecEvent<PreExecTx>> {
         self.waiting_tx
             .remove(parent)
             .map(|(txs, _)| txs)
@@ -533,11 +375,11 @@ mod tests {
         }
     }
 
-    fn new_empty_tx_event() -> TxEvent<WaitTx> {
+    fn new_empty_tx_event() -> TxPreExecEvent<PreExecTx> {
         new_tx_event(Payload::Empty)
     }
 
-    fn new_proof_tx_event(parent: Hash) -> TxEvent<WaitTx> {
+    fn new_proof_tx_event(parent: Hash) -> TxPreExecEvent<PreExecTx> {
         let payload = Payload::Proof {
             parent,
             prover: Hash::default(),
@@ -548,7 +390,7 @@ mod tests {
         new_tx_event(payload)
     }
 
-    fn new_deploy_tx_event(seed: u8) -> TxEvent<WaitTx> {
+    fn new_deploy_tx_event(seed: u8) -> TxPreExecEvent<PreExecTx> {
         let prover_program = ProgramMetadata {
             hash: Hash::new([seed; 32]),
             ..Default::default()
@@ -566,10 +408,13 @@ mod tests {
         new_tx_event(payload)
     }
 
-    fn new_run_tx_event(seed: u8) -> TxEvent<WaitTx> {
+    fn new_run_tx_event(seed: u8) -> TxPreExecEvent<PreExecTx> {
         new_run_tx_event_for_programs(seed, seed + 1)
     }
-    fn new_run_tx_event_for_programs(proover_seed: u8, verifier_seed: u8) -> TxEvent<WaitTx> {
+    fn new_run_tx_event_for_programs(
+        proover_seed: u8,
+        verifier_seed: u8,
+    ) -> TxPreExecEvent<PreExecTx> {
         let prover_program = WorkflowStep {
             program: Hash::new([proover_seed; 32]),
             args: vec![],
@@ -588,7 +433,7 @@ mod tests {
         new_tx_event(payload)
     }
 
-    fn new_tx_event(payload: Payload) -> TxEvent<WaitTx> {
+    fn new_tx_event(payload: Payload) -> TxPreExecEvent<PreExecTx> {
         let rng = &mut StdRng::from_entropy();
 
         let tx = Transaction::<Created>::new(payload, &SecretKey::random(rng));
@@ -601,24 +446,11 @@ mod tests {
             signature: tx.signature,
             propagated: tx.executed,
             executed: tx.executed,
-            state: Received::P2P,
-        };
-        TxEvent {
-            tx,
-            tx_type: WaitTx,
-        }
-    }
-
-    fn into_receive(tx: Transaction<Received>) -> Transaction<Validated> {
-        Transaction {
-            author: tx.author,
-            hash: tx.hash,
-            payload: tx.payload,
-            nonce: tx.nonce,
-            signature: tx.signature,
-            propagated: tx.executed,
-            executed: tx.executed,
             state: Validated,
+        };
+        TxPreExecEvent {
+            tx,
+            tx_type: PreExecTx,
         }
     }
 
@@ -835,7 +667,7 @@ mod tests {
             .await;
         assert!(res.is_ok());
         // Save the Tx in db to test cache miss.
-        let _ = db.set_tx(into_receive(tx1)).await;
+        let _ = db.set_tx(tx1).await;
         // Not in wait cache because no parent.
         assert_eq!(wait_tx_cache.waiting_tx.len(), 0);
         assert!(wait_tx_cache.is_tx_cached(&tx1_hash));
@@ -849,7 +681,7 @@ mod tests {
             .await;
         assert!(res.is_ok());
         // Save the Tx in db to test cache miss.
-        let _ = db.set_tx(into_receive(tx2)).await;
+        let _ = db.set_tx(tx2).await;
         // Not cached because no parent.
         assert_eq!(wait_tx_cache.waiting_tx.len(), 0);
         assert!(wait_tx_cache.is_tx_cached(&tx2_hash));

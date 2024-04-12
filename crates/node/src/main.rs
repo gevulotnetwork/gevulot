@@ -8,7 +8,7 @@ use cli::{
 };
 use eyre::Result;
 use gevulot_node::types;
-use gevulot_node::types::transaction::Received;
+use gevulot_node::types::transaction::{Execute, Received};
 use libsecp256k1::{PublicKey, SecretKey};
 use pea2pea::Pea2Pea;
 use rand::{rngs::StdRng, SeedableRng};
@@ -193,8 +193,20 @@ impl crate::mempool::MempoolStorage for storage::Database {}
 
 #[async_trait]
 impl workflow::TransactionStore for storage::Database {
-    async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction<Validated>>> {
-        self.find_transaction(tx_hash).await
+    async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction<Execute>>> {
+        self.find_transaction(tx_hash).await.map(|opt_tx| {
+            opt_tx.map(|tx| Transaction {
+                author: tx.author,
+                hash: tx.hash,
+                payload: tx.payload,
+                nonce: tx.nonce,
+                signature: tx.signature,
+                //TODO should be updated after the p2p send with a notification
+                propagated: true,
+                executed: tx.executed,
+                state: Execute,
+            })
+        })
     }
     async fn mark_tx_executed(&self, tx_hash: &Hash) -> Result<()> {
         self.mark_tx_executed(tx_hash).await
@@ -240,17 +252,18 @@ async fn run(config: Arc<Config>) -> Result<()> {
 
     //Start Mempool
     let mempool = Arc::new(RwLock::new(Mempool::new(database.clone()).await?));
-    let (txevent_loop_jh, p2p_stream) = mempool::Mempool::start_tx_validation_event_loop(
-        config.data_directory.clone(),
-        config.p2p_listen_addr,
-        config.http_download_port,
-        http_peer_list.clone(),
-        rcv_tx_event_rx,
-        mempool.clone(),
-        database.clone(),
-        database.clone(),
-    )
-    .await?;
+    let (p2p_stream, execute_tx_receiver, mempool_loop_jh) =
+        mempool::Mempool::start_tx_validation_event_loop(
+            config.data_directory.clone(),
+            config.p2p_listen_addr,
+            config.http_download_port,
+            http_peer_list.clone(),
+            rcv_tx_event_rx,
+            mempool.clone(),
+            database.clone(),
+            database.clone(),
+        )
+        .await?;
 
     if !config.no_execution {
         //start execution scheduler.
@@ -266,7 +279,11 @@ async fn run(config: Arc<Config>) -> Result<()> {
         .await;
 
         // Run Scheduler in its own task.
-        tokio::spawn(async move { scheduler.run(scheduler_watchdog_sender).await });
+        tokio::spawn(async move {
+            scheduler
+                .run(execute_tx_receiver, scheduler_watchdog_sender)
+                .await
+        });
     }
 
     let public_node_key = PublicKey::from_secret_key(&node_key);
@@ -280,7 +297,7 @@ async fn run(config: Arc<Config>) -> Result<()> {
             Some(config.http_download_port),
             config.p2p_advertised_listen_addr,
             http_peer_list,
-            mempool::TxEventSender::<mempool::P2pSender>::build(tx_sender.clone()),
+            mempool::TxValidateEventSender::<mempool::P2pSender>::build(tx_sender.clone()),
             p2p_stream,
             node_resources,
         )
@@ -320,11 +337,11 @@ async fn run(config: Arc<Config>) -> Result<()> {
     let rpc_server = rpc_server::RpcServer::run(
         config.clone(),
         database.clone(),
-        mempool::TxEventSender::<mempool::RpcSender>::build(tx_sender),
+        mempool::TxValidateEventSender::<mempool::RpcSender>::build(tx_sender),
     )
     .await?;
 
-    if let Err(err) = txevent_loop_jh.await {
+    if let Err(err) = mempool_loop_jh.await {
         tracing::info!("Tx event loop error:{err}");
     }
     Ok(())
@@ -356,7 +373,7 @@ async fn p2p_beacon(config: P2PBeaconConfig) -> Result<()> {
             None,
             config.p2p_advertised_listen_addr,
             http_peer_list,
-            mempool::TxEventSender::<mempool::P2pSender>::build(tx),
+            mempool::TxValidateEventSender::<mempool::P2pSender>::build(tx),
             p2p_stream,
             (0, 0, 0), // P2P beacon node's resources aren't really important.
         )

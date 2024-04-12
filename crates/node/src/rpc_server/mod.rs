@@ -1,5 +1,5 @@
 use crate::mempool::RpcSender;
-use crate::mempool::TxEventSender;
+use crate::mempool::TxValidateEventSender;
 use crate::metrics;
 use crate::types::rpc::RpcTransaction;
 use crate::{
@@ -23,7 +23,7 @@ use tower::ServiceBuilder;
 
 struct Context {
     database: Arc<Database>,
-    tx_sender: TxEventSender<RpcSender>,
+    tx_sender: TxValidateEventSender<RpcSender>,
     local_http_host: SocketAddr,
 }
 
@@ -42,7 +42,7 @@ impl RpcServer {
     pub async fn run(
         cfg: Arc<Config>,
         database: Arc<Database>,
-        tx_sender: TxEventSender<RpcSender>,
+        tx_sender: TxValidateEventSender<RpcSender>,
     ) -> Result<Self> {
         let mut local_http_host = cfg
             .p2p_advertised_listen_addr
@@ -501,7 +501,7 @@ mod tests {
 
         let (sendtx, txreceiver) =
             mpsc::unbounded_channel::<(Transaction<Received>, Option<CallbackSender>)>();
-        let txsender = mempool::TxEventSender::<mempool::RpcSender>::build(sendtx);
+        let txsender = mempool::TxValidateEventSender::<mempool::RpcSender>::build(sendtx);
 
         (
             RpcServer::run(cfg, db, txsender)

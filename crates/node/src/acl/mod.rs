@@ -4,7 +4,7 @@ use libsecp256k1::PublicKey;
 use thiserror::Error;
 
 #[allow(clippy::enum_variant_names)]
-#[derive(Error, Debug)]
+#[derive(Error, Clone, Debug)]
 pub enum AclWhiteListError {
     #[error("An error occurs during ACLlist validation: {0}")]
     InternalError(String),

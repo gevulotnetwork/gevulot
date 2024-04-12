@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use eyre::Result;
 use gevulot_node::types::file::TaskVmFile;
 use gevulot_node::types::{
-    transaction::{Payload, Validated, Workflow, WorkflowStep},
+    transaction::{Execute, Payload, Workflow, WorkflowStep},
     Hash, Task, TaskKind, Transaction,
 };
 use std::sync::Arc;
@@ -31,7 +31,7 @@ pub enum WorkflowError {
 
 #[async_trait]
 pub trait TransactionStore: Sync + Send {
-    async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction<Validated>>>;
+    async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction<Execute>>>;
     async fn mark_tx_executed(&self, tx_hash: &Hash) -> Result<()>;
 }
 
@@ -44,7 +44,7 @@ impl WorkflowEngine {
         WorkflowEngine { tx_store }
     }
 
-    pub async fn next_task(&self, cur_tx: &Transaction<Validated>) -> Result<Option<Task>> {
+    pub async fn next_task(&self, cur_tx: &Transaction<Execute>) -> Result<Option<Task>> {
         let opt_workflow = self.workflow_for_transaction(&cur_tx.hash).await?;
 
         match &cur_tx.payload {
@@ -344,11 +344,11 @@ mod tests {
     use super::*;
 
     pub struct TxStore {
-        pub txs: HashMap<Hash, Transaction<Validated>>,
+        pub txs: HashMap<Hash, Transaction<Execute>>,
     }
 
     impl TxStore {
-        pub fn new(txs: &[Transaction<Validated>]) -> Self {
+        pub fn new(txs: &[Transaction<Execute>]) -> Self {
             let mut store = TxStore {
                 txs: HashMap::with_capacity(txs.len()),
             };
@@ -361,7 +361,7 @@ mod tests {
 
     #[async_trait]
     impl TransactionStore for TxStore {
-        async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction<Validated>>> {
+        async fn find_transaction(&self, tx_hash: &Hash) -> Result<Option<Transaction<Execute>>> {
             Ok(self.txs.get(tx_hash).cloned())
         }
         async fn mark_tx_executed(&self, tx_hash: &Hash) -> Result<()> {
@@ -445,7 +445,7 @@ mod tests {
         assert!(task.is_ok());
     }
 
-    fn into_validated(tx: Transaction<Created>) -> Transaction<Validated> {
+    fn into_execute(tx: Transaction<Created>) -> Transaction<Execute> {
         Transaction {
             author: tx.author,
             hash: tx.hash,
@@ -454,13 +454,13 @@ mod tests {
             signature: tx.signature,
             propagated: tx.executed,
             executed: tx.executed,
-            state: Validated,
+            state: Execute,
         }
     }
 
-    fn transaction_for_workflow_steps(steps: Vec<WorkflowStep>) -> Transaction<Validated> {
+    fn transaction_for_workflow_steps(steps: Vec<WorkflowStep>) -> Transaction<Execute> {
         let key = SecretKey::random(&mut StdRng::from_entropy());
-        into_validated(Transaction::new(
+        into_execute(Transaction::new(
             Payload::Run {
                 workflow: Workflow { steps },
             },
@@ -468,9 +468,9 @@ mod tests {
         ))
     }
 
-    fn transaction_for_proof(parent: &Hash, program: &Hash) -> Transaction<Validated> {
+    fn transaction_for_proof(parent: &Hash, program: &Hash) -> Transaction<Execute> {
         let key = SecretKey::random(&mut StdRng::from_entropy());
-        into_validated(Transaction::new(
+        into_execute(Transaction::new(
             Payload::Proof {
                 parent: *parent,
                 prover: *program,
@@ -481,9 +481,9 @@ mod tests {
         ))
     }
 
-    fn transaction_for_proofkey(parent: &Hash) -> Transaction<Validated> {
+    fn transaction_for_proofkey(parent: &Hash) -> Transaction<Execute> {
         let key = SecretKey::random(&mut StdRng::from_entropy());
-        into_validated(Transaction::new(
+        into_execute(Transaction::new(
             Payload::ProofKey {
                 parent: *parent,
                 key: "key.".into(),
@@ -492,9 +492,9 @@ mod tests {
         ))
     }
 
-    fn transaction_for_verification(parent: &Hash, program: &Hash) -> Transaction<Validated> {
+    fn transaction_for_verification(parent: &Hash, program: &Hash) -> Transaction<Execute> {
         let key = SecretKey::random(&mut StdRng::from_entropy());
-        into_validated(Transaction::new(
+        into_execute(Transaction::new(
             Payload::Verification {
                 parent: *parent,
                 verifier: *program,

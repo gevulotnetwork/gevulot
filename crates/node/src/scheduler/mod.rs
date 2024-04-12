@@ -1,11 +1,10 @@
-mod program_manager;
-mod resource_manager;
-
+use self::program_manager::{ProgramError, ProgramHandle};
+use self::resource_manager::ResourceError;
 use crate::cli::Config;
 use crate::mempool;
 use crate::mempool::CallbackSender;
-use crate::mempool::TxEventSender;
 use crate::mempool::TxResultSender;
+use crate::mempool::TxValidateEventSender;
 use crate::metrics;
 use crate::storage::Database;
 use crate::types::file::{move_vmfile, Output, TaskVmFile, TxFile, VmOutput};
@@ -23,7 +22,7 @@ use crate::{
 use async_trait::async_trait;
 use eyre::Result;
 use gevulot_node::types::transaction::Payload;
-use gevulot_node::types::transaction::Received;
+use gevulot_node::types::transaction::{Execute, Received};
 use gevulot_node::types::{TaskKind, Transaction};
 use libsecp256k1::SecretKey;
 pub use program_manager::ProgramManager;
@@ -38,6 +37,7 @@ use std::{
 };
 use systemstat::ByteSize;
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::{
     sync::{Mutex, RwLock},
@@ -45,8 +45,8 @@ use tokio::{
 };
 use tonic::transport::Server;
 
-use self::program_manager::{ProgramError, ProgramHandle};
-use self::resource_manager::ResourceError;
+mod program_manager;
+mod resource_manager;
 
 pub use self::resource_manager::get_configured_resources;
 
@@ -99,7 +99,7 @@ pub struct Scheduler {
     state: Arc<Mutex<SchedulerState>>,
     data_directory: PathBuf,
     http_download_host: String,
-    tx_sender: TxEventSender<TxResultSender>,
+    tx_sender: TxValidateEventSender<TxResultSender>,
 }
 
 pub async fn start_scheduler(
@@ -147,7 +147,7 @@ pub async fn start_scheduler(
         node_key,
         config.data_directory.clone(),
         download_url_prefix,
-        mempool::TxEventSender::<mempool::TxResultSender>::build(tx_sender.clone()),
+        mempool::TxValidateEventSender::<mempool::TxResultSender>::build(tx_sender.clone()),
     ));
 
     let vm_server = VMServer::new(scheduler.clone(), provider, config.data_directory.clone());
@@ -172,7 +172,7 @@ impl Scheduler {
         node_key: SecretKey,
         data_directory: PathBuf,
         http_download_host: String,
-        tx_sender: TxEventSender<TxResultSender>,
+        tx_sender: TxValidateEventSender<TxResultSender>,
     ) -> Self {
         Self {
             database,
@@ -186,7 +186,11 @@ impl Scheduler {
         }
     }
 
-    pub async fn run(&self, watchdog_sender: mpsc::Sender<HealthCheckSignal>) -> Result<()> {
+    pub async fn run(
+        &self,
+        mut tx_exec_stream: mpsc::UnboundedReceiver<Transaction<Execute>>,
+        watchdog_sender: mpsc::Sender<HealthCheckSignal>,
+    ) -> Result<()> {
         'SCHEDULING_LOOP: loop {
             // Reap terminated tasks & VMs.
             self.reap_zombies().await;
@@ -243,7 +247,7 @@ impl Scheduler {
                 tracing::error!("Watchdog channel send return an error:{err}");
             }
 
-            let (mut task, mempool_size) = match self.pick_task().await {
+            let (mut task, mempool_size) = match self.pick_task(&mut tx_exec_stream).await {
                 (Some(t), size) => {
                     tracing::debug!("task {}/{} scheduled for running", t.id, t.tx);
                     (t, size)
@@ -331,16 +335,14 @@ impl Scheduler {
         }
     }
 
-    async fn pick_task(&self) -> (Option<Task>, usize) {
-        let state = self.state.lock().await;
-
-        // Acquire write lock.
-        let mut mempool = state.mempool.write().await;
-
+    async fn pick_task(
+        &self,
+        tx_exec_stream: &mut mpsc::UnboundedReceiver<Transaction<Execute>>,
+    ) -> (Option<Task>, usize) {
         // Check if next tx is ready for processing?
-
-        let res = match mempool.next() {
-            Some(tx) => match self.workflow_engine.next_task(&tx).await {
+        // If there's no Tx the receive timeout and no Tx is received.
+        let res = match tx_exec_stream.try_recv() {
+            Ok(tx) => match self.workflow_engine.next_task(&tx).await {
                 Ok(res) => res,
                 Err(e) if e.is::<WorkflowError>() => {
                     let err = e.downcast_ref::<WorkflowError>();
@@ -364,9 +366,15 @@ impl Scheduler {
                     None
                 }
             },
-            None => None,
+            Err(TryRecvError::Empty) => None,
+            Err(e) => {
+                tracing::error!("Eror during receiving tx from mempool: {}", e);
+                None
+            }
         };
-        (res, mempool.size())
+
+        tracing::warn!("mempool size:{}", tx_exec_stream.len());
+        (res, tx_exec_stream.len())
     }
 
     async fn reap_zombies(&self) {

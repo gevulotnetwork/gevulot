@@ -322,6 +322,9 @@ impl Received {
 pub struct Validated;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
+pub struct Execute;
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct Transaction<T> {
     pub author: PublicKey,
     pub hash: Hash,

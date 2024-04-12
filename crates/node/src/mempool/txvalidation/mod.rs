@@ -1,7 +1,7 @@
 use crate::mempool::acl;
 use crate::mempool::event::EventProcessError;
 use crate::mempool::event::TxCache;
-use crate::mempool::event::{ReceivedTx, TxEvent};
+use crate::mempool::event::{ReceivedTx, TxValidateEvent};
 use crate::mempool::CallbackSender;
 use crate::mempool::ValidateStorage;
 use crate::mempool::ValidatedTxReceiver;
@@ -63,7 +63,7 @@ pub async fn spawn_event_loop(
                     // Execute Tx verification in a separate task.
                     Some((tx, callback)) = rcv_tx_event_rx.recv() => {
                         //create new event with the Tx
-                        let event: TxEvent<ReceivedTx> = tx.into();
+                        let event: TxValidateEvent<ReceivedTx> = tx.into();
 
                         // Process RcvTx(EventTx<SourceTxType>) event
                         let http_peer_list = convert_peer_list_to_vec(&http_peer_list).await;
@@ -95,7 +95,7 @@ pub async fn spawn_event_loop(
                             .and_then(|res| async move {Ok((res,callback))});
                         validated_txs_futures.push(fut);
                     }
-                    // Verify Tx parent dependency and send to mempool all ready Tx.
+                    // Verify Tx parent dependency, save and send to execution scheduler all ready Tx.
                     Some(Ok((wait_tx_res, callback))) = validated_txs_futures.next() =>  {
                         match wait_tx_res {
                             Ok(wait_tx) => {
@@ -142,15 +142,4 @@ pub async fn spawn_event_loop(
         }
     });
     Ok((jh, p2p_stream))
-}
-
-async fn convert_peer_list_to_vec(
-    http_peer_list: &tokio::sync::RwLock<HashMap<SocketAddr, Option<u16>>>,
-) -> Vec<(SocketAddr, Option<u16>)> {
-    http_peer_list
-        .read()
-        .await
-        .iter()
-        .map(|(a, p)| (*a, *p))
-        .collect()
 }
