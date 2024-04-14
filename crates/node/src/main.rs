@@ -176,20 +176,14 @@ impl mempool::Storage for storage::Database {
         let tx_hash = tx.hash;
         self.add_transaction(tx).await
     }
-
-    async fn fill_deque(
-        &self,
-        deque: &mut std::collections::VecDeque<Transaction<Validated>>,
-    ) -> Result<()> {
-        for t in self.get_unexecuted_transactions().await? {
-            deque.push_back(t);
-        }
-
-        Ok(())
-    }
 }
 
-impl crate::mempool::MempoolStorage for storage::Database {}
+#[async_trait]
+impl crate::mempool::MempoolStorage for storage::Database {
+    async fn get_unexecuted_transactions(&self) -> Result<Vec<types::Transaction<Validated>>> {
+        self.get_unexecuted_transactions().await
+    }
+}
 
 #[async_trait]
 impl workflow::TransactionStore for storage::Database {

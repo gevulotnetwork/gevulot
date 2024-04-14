@@ -373,10 +373,30 @@ impl Default for Transaction<Validated> {
             payload: Payload::default(),
             nonce: 0,
             signature: Signature::default(),
-            propagated: false,
+            propagated: true,
             executed: false,
             state: Validated,
         }
+    }
+}
+
+// Currenlty all DB Tx are executed but it can change.
+// Use try_from to anticipate that not all db Tx will be executed.
+// For example Verification Tx are not executed
+impl TryFrom<Transaction<Validated>> for Transaction<Execute> {
+    type Error = &'static str;
+
+    fn try_from(tx: Transaction<Validated>) -> Result<Self, Self::Error> {
+        Ok(Self {
+            author: tx.author,
+            hash: tx.hash,
+            payload: tx.payload,
+            nonce: tx.nonce,
+            signature: tx.signature,
+            propagated: tx.propagated,
+            executed: tx.executed,
+            state: Execute,
+        })
     }
 }
 

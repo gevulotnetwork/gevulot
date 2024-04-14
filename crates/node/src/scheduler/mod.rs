@@ -373,7 +373,6 @@ impl Scheduler {
             }
         };
 
-        tracing::warn!("mempool size:{}", tx_exec_stream.len());
         (res, tx_exec_stream.len())
     }
 

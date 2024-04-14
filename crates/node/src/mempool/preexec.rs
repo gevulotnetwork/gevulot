@@ -61,28 +61,23 @@ impl From<Transaction<Received>> for TxPreExecEvent<PreExecTx> {
     }
 }
 
-impl From<TxPreExecEvent<PreExecTx>> for TxPreExecEvent<ExecTx> {
-    fn from(event: TxPreExecEvent<PreExecTx>) -> Self {
-        TxPreExecEvent {
-            tx: event.tx,
-            tx_type: ExecTx,
-        }
-    }
-}
+// Currenlty all DB Tx are executed but this can change.
+// Use try_from to anticipate that not all db Tx will be executed.
+// For example Verification Tx are not executed
+impl TryFrom<TxPreExecEvent<PreExecTx>> for Transaction<Execute> {
+    type Error = &'static str;
 
-impl From<TxPreExecEvent<ExecTx>> for Transaction<Execute> {
-    fn from(event: TxPreExecEvent<ExecTx>) -> Self {
-        Transaction {
+    fn try_from(event: TxPreExecEvent<PreExecTx>) -> Result<Self, Self::Error> {
+        Ok(Self {
             author: event.tx.author,
             hash: event.tx.hash,
             payload: event.tx.payload,
             nonce: event.tx.nonce,
             signature: event.tx.signature,
-            //TODO should be updated after the p2p send with a notification
             propagated: event.tx.propagated,
             executed: event.tx.executed,
             state: Execute,
-        }
+        })
     }
 }
 
@@ -97,7 +92,7 @@ impl TxPreExecEvent<PreExecTx> {
         programid_cache: &mut TxCache<Program>,
         parent_cache: &mut TxCache<Transaction<Validated>>,
         storage: &impl ValidateStorage,
-    ) -> Result<Vec<TxPreExecEvent<ExecTx>>, PreexecError> {
+    ) -> Result<Vec<TxPreExecEvent<PreExecTx>>, PreexecError> {
         // First validate program dep
         let prg_ok_txs = self.manage_program_dep(programid_cache, storage).await?;
         //validate parent dep

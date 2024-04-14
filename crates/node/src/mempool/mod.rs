@@ -17,7 +17,6 @@ use futures_util::StreamExt;
 use futures_util::TryFutureExt;
 use gevulot_node::acl;
 use std::collections::HashMap;
-use std::collections::VecDeque;
 use std::fmt::Debug;
 use std::marker::PhantomData;
 use std::net::SocketAddr;
@@ -138,23 +137,21 @@ pub trait ValidateStorage: Send + Sync {
 pub trait Storage: Send + Sync {
     async fn get(&self, hash: &Hash) -> Result<Option<Transaction<Validated>>>;
     async fn set(&self, tx: &Transaction<Validated>) -> Result<()>;
-    async fn fill_deque(&self, deque: &mut VecDeque<Transaction<Validated>>) -> Result<()>;
 }
 
 #[async_trait]
-pub trait MempoolStorage: Storage + acl::AclWhitelist + ValidateStorage {}
+pub trait MempoolStorage: Storage + acl::AclWhitelist + ValidateStorage {
+    async fn get_unexecuted_transactions(&self) -> Result<Vec<Transaction<Validated>>>;
+}
 
 #[derive(Clone)]
 pub struct Mempool {
     storage: Arc<dyn MempoolStorage>,
-    deque: VecDeque<Transaction<Validated>>,
 }
 
 impl Mempool {
     pub async fn new(storage: Arc<dyn MempoolStorage>) -> Result<Self> {
-        let mut deque = VecDeque::new();
-        storage.fill_deque(&mut deque).await?;
-        Ok(Self { storage, deque })
+        Ok(Self { storage })
     }
 
     // Tx process:
@@ -188,6 +185,19 @@ impl Mempool {
         // If the channel is full buffer the pending Tx.
         let (execute_tx_sender, execute_tx_recv) =
             mpsc::unbounded_channel::<Transaction<Execute>>();
+
+        // Get unprocessed Tx from the DB and send them to execution.
+        {
+            let mempool = mempool.write().await;
+            for tx in mempool.storage.get_unexecuted_transactions().await? {
+                if let Ok(exec_tx) = tx.try_into() {
+                    if let Err(err) = execute_tx_sender.send(exec_tx) {
+                        tracing::error!("Mempool error during sending Tx to execution:{err}");
+                    }
+                }
+            }
+        }
+
         let jh = tokio::spawn({
             let mut program_wait_tx_cache = TxCache::<Program>::new();
             let mut parent_wait_tx_cache = TxCache::<Transaction<Validated>>::new();
@@ -216,7 +226,8 @@ impl Mempool {
                                             if let Some(propagate_tx) = propagate_tx {
                                                 propagate_tx.propagate_tx(&p2p_sender).await?;
                                             }
-                                            Ok(new_tx)
+                                            let pre_exec_tx_event: TxPreExecEvent<PreExecTx> = new_tx.tx.into();
+                                            Ok(pre_exec_tx_event)
                                         })
                                         .await
                                 }
@@ -235,8 +246,7 @@ impl Mempool {
                                     tracing::error!("{}", &msg);
                                     Err(PreexecError::PreProcessError(msg))
                                 }
-                                Ok(new_tx) => {
-                                    let pre_exec_tx_event: TxPreExecEvent<PreExecTx> = new_tx.tx.into();
+                                Ok(pre_exec_tx_event) => {
                                     let mempool = mempool.write().await;
                                     let execute_tx_sender = execute_tx_sender.clone();
 
@@ -249,11 +259,11 @@ impl Mempool {
                                         )
                                         .and_then(|mut new_txs| async move {
                                             // Save Tx
-                                            // Process new Tx in the main loop
-                                            // to avoid when there's a lot of waiting Txs freed by one Tx,
-                                            // an arriving Tx that depend on a just freed one is saved before and generate a db constrain error.
+                                            // Save new Tx in the main loop.
+                                            // To avoid when there's a lot of waiting Txs freed by one Tx
+                                            // and an arriving Tx that depend on is saved before and generate a db constrain error.
                                             // Can lock the loop during the save.
-                                            // The unbounded channel will buffer the Tx waiting.
+                                            // The unbounded channel rcv_tx_event_rx will buffer the Tx waiting.
                                             let mut res = Ok(());
                                             for new_tx in new_txs.drain(..) {
                                                 tracing::info!(
@@ -267,15 +277,16 @@ impl Mempool {
                                                 }
 
                                                 //send Tx to execute
-                                                let exec_tx = new_tx.into();
-                                                if let Err(err) = execute_tx_sender.send(exec_tx) {
-                                                    tracing::error!("Mempool error during sending Tx to execution:{err}");
+                                                if let Ok(exec_tx) = new_tx.try_into() {
+                                                    if let Err(err) = execute_tx_sender.send(exec_tx) {
+                                                        tracing::error!("Mempool error during sending Tx to execution:{err}");
+                                                    }
                                                 }
+
                                             }
                                             res
                                         }).await
                                 }
-
                             };
 
                             if let Err(ref err) = preexec_res {
@@ -299,33 +310,11 @@ impl Mempool {
         // let execute_tx_stream = UnboundedReceiverStream::new(execute_tx_recv);
         Ok((p2p_stream, execute_tx_recv, jh))
     }
-
-    pub fn next(&mut self) -> Option<Transaction<Validated>> {
-        // TODO(tuommaki): Should storage reflect the POP in state?
-        self.deque.pop_front()
-    }
-
-    pub fn peek(&self) -> Option<&Transaction<Validated>> {
-        self.deque.front()
-    }
-
-    pub async fn add(&mut self, tx: Transaction<Validated>) -> Result<()> {
-        self.storage.set(&tx).await?;
-        self.deque.push_back(tx);
-
-        tracing::trace!("mempool add Tx done");
-
-        Ok(())
-    }
-
-    pub fn size(&self) -> usize {
-        self.deque.len()
-    }
 }
 
 #[async_trait::async_trait]
 impl ValidatedTxReceiver for Mempool {
     async fn send_new_tx(&mut self, tx: Transaction<Validated>) -> eyre::Result<()> {
-        self.add(tx).await
+        self.storage.set(&tx).await
     }
 }
