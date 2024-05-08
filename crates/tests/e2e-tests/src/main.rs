@@ -1,6 +1,6 @@
 use clap::Parser;
 use gevulot_node::{
-    rpc_client::RpcClient,
+    rpc_client::{RpcClient, RpcClientBuilder},
     types::{
         program::ResourceRequest,
         transaction::{Payload, ProgramData, ProgramMetadata, Workflow, WorkflowStep},
@@ -39,7 +39,7 @@ pub struct ArgConfiguration {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cfg = ArgConfiguration::parse();
-    let client = RpcClient::new(cfg.json_rpc_url);
+    let client = RpcClientBuilder::default().build(cfg.json_rpc_url)?;
     let file_server = Arc::new(FileServer::new(cfg.listen_addr).await);
 
     let bs = std::fs::read(cfg.key_file)?;
