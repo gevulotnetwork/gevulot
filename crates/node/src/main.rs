@@ -20,7 +20,6 @@ use std::{
     net::ToSocketAddrs,
     path::PathBuf,
     sync::Arc,
-    thread::sleep,
     time::Duration,
 };
 use tokio::sync::mpsc;
@@ -225,7 +224,7 @@ async fn run(config: Arc<Config>) -> Result<()> {
                 }
 
                 // Sync the whitelist every 10min.
-                sleep(Duration::from_secs(600));
+                tokio::time::sleep(Duration::from_secs(600)).await;
             }
         });
     }
