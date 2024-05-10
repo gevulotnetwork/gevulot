@@ -9,17 +9,46 @@ use jsonrpsee::{
     http_client::{HttpClient, HttpClientBuilder},
 };
 use std::error::Error;
+use std::time::Duration;
+
+/// A RPC client builder for connecting to the Gevulot network
+#[derive(Debug)]
+pub struct RpcClientBuilder {
+    request_timeout: Duration,
+}
+
+impl Default for RpcClientBuilder {
+    fn default() -> Self {
+        Self {
+            request_timeout: Duration::from_secs(60),
+        }
+    }
+}
+
+impl RpcClientBuilder {
+    /// Set request timeout (default is 60 seconds).
+    pub fn request_timeout(mut self, request_timeout: Duration) -> Self {
+        self.request_timeout = request_timeout;
+        self
+    }
+
+    /// Returns a [RpcClient] connected to the Gevulot network running at the URI provided.
+    pub fn build(self, url: impl AsRef<str>) -> Result<RpcClient, Box<dyn Error>> {
+        let client = HttpClientBuilder::default()
+            .request_timeout(self.request_timeout)
+            .build(url)?;
+        Ok(RpcClient { client })
+    }
+}
 
 pub struct RpcClient {
     client: HttpClient,
 }
 
 impl RpcClient {
+    #[deprecated(note = "Please use `RpcClientBuilder` instead.")]
     pub fn new(url: impl AsRef<str>) -> Self {
-        let client = HttpClientBuilder::default()
-            .build(url)
-            .expect("http client");
-        RpcClient { client }
+        RpcClientBuilder::default().build(url).expect("http client")
     }
 
     pub async fn send_transaction(&self, tx: &Transaction<Created>) -> Result<(), Box<dyn Error>> {
