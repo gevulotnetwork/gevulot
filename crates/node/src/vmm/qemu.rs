@@ -239,7 +239,7 @@ impl Provider for Qemu {
             .args([
                 "-virtfs",
                 &format!(
-                    "local,path={},mount_tag=1,security_model=none,multidevs=remap,id=hd1",
+                    "local,path={},mount_tag=0,security_model=none,multidevs=remap,id=hd0",
                     &workspace_path.to_str().unwrap().to_string()
                 ),
             ])
