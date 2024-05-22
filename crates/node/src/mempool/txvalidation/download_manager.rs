@@ -95,13 +95,7 @@ pub async fn download_asset_file(
         // Create a tmp file during download.
         // This way the file won't be available for download from the other nodes
         // until it is completely written.
-        let mut tmp_file_path = file_path.clone();
-        match tmp_file_path.extension() {
-            Some(ext) => {
-                tmp_file_path.set_extension(format!("{}.{}", ext.to_string_lossy(), "tmp"))
-            }
-            None => tmp_file_path.set_extension("tmp"),
-        };
+        let tmp_file_path = tmp_file_name(&file_path);
 
         let fd = tokio::fs::File::create(&tmp_file_path).await?;
         let mut fd = tokio::io::BufWriter::new(fd);
@@ -208,13 +202,13 @@ async fn server_process_file(
 ) -> std::result::Result<Response<BoxBody<Bytes, std::io::Error>>, hyper::Error> {
     let file_digest = &req.uri().path()[1..];
 
-    let mut file_path = data_directory.join(file_digest);
+    let file_path = data_directory.join(file_digest);
 
     let file = match tokio::fs::File::open(&file_path).await {
         Ok(file) => file,
         Err(_) => {
             // Try to see if the file is currently being updated.
-            file_path.set_extension("tmp");
+            let file_path = tmp_file_name(&file_path);
             let (status_code, message) = if file_path.as_path().exists() {
                 (
                     StatusCode::PARTIAL_CONTENT,
@@ -237,4 +231,13 @@ async fn server_process_file(
         .status(StatusCode::OK)
         .body(BodyExt::boxed(stream_body))
         .unwrap())
+}
+
+fn tmp_file_name(file_path: &Path) -> PathBuf {
+    let mut tmp_file_path = file_path.to_path_buf();
+    match tmp_file_path.extension() {
+        Some(ext) => tmp_file_path.set_extension(format!("{}.{}", ext.to_string_lossy(), "tmp")),
+        None => tmp_file_path.set_extension("tmp"),
+    };
+    tmp_file_path
 }
