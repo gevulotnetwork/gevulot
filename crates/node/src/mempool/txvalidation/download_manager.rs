@@ -96,7 +96,13 @@ pub async fn download_asset_file(
         // This way the file won't be available for download from the other nodes
         // until it is completely written.
         let mut tmp_file_path = file_path.clone();
-        tmp_file_path.set_extension("tmp");
+        match tmp_file_path.extension() {
+            Some(ext) => {
+                tmp_file_path.set_extension(format!("{}.{}", ext.to_string_lossy(), "tmp"))
+            }
+            None => tmp_file_path.set_extension("tmp"),
+        };
+
         let fd = tokio::fs::File::create(&tmp_file_path).await?;
         let mut fd = tokio::io::BufWriter::new(fd);
 
