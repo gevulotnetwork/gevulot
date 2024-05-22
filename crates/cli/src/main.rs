@@ -1,13 +1,14 @@
 use clap::Parser;
 use clap::Subcommand;
 use clap_num::number_range;
-use gevulot_node::rpc_client::RpcClient;
+use gevulot_node::rpc_client::RpcClientBuilder;
 use gevulot_node::types::program::ResourceRequest;
 use gevulot_node::types::Hash;
 use gevulot_node::types::TransactionTree;
 use libsecp256k1::PublicKey;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::time::Duration;
 
 #[derive(Parser, Debug)]
 #[clap(author = "Gevulot Team", version, about, long_about = None)]
@@ -20,6 +21,9 @@ pub struct ArgConfiguration {
         value_name = "URL"
     )]
     json_url: String,
+    /// Timeout duration for rpc request (in seconds).
+    #[clap(long = "rpctimeout", value_name = "RPC TIMEOUT")]
+    rpc_timeout: Option<u64>,
     /// Private key file path to sign Tx.
     #[clap(
         short,
@@ -185,7 +189,13 @@ async fn main() {
 
     let args = ArgConfiguration::parse();
 
-    let client = RpcClient::new(args.json_url);
+    let mut client_builder = RpcClientBuilder::default();
+    if let Some(rpc_timeout) = args.rpc_timeout {
+        client_builder = client_builder.request_timeout(Duration::from_secs(rpc_timeout));
+    }
+    let client = client_builder
+        .build(args.json_url)
+        .expect("build rpc client");
 
     match args.command {
         ConfCommands::GenerateKey => match gevulot_cli::keyfile::create_key_file(&args.keyfile) {

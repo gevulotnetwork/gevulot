@@ -28,9 +28,9 @@ pub async fn calculate_hash_command(file_path: &PathBuf) -> BoxResult<String> {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct JsonCmdArgs {
-    name: String,
-    value: String,
+pub struct JsonCmdArgs {
+    pub name: String,
+    pub value: String,
 }
 
 impl From<JsonCmdArgs> for [String; 2] {
@@ -40,10 +40,10 @@ impl From<JsonCmdArgs> for [String; 2] {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct JsonExecArgs {
-    program: String,
-    cmd_args: Vec<JsonCmdArgs>,
-    inputs: Vec<JsonProgramData>,
+pub struct JsonExecArgs {
+    pub program: String,
+    pub cmd_args: Vec<JsonCmdArgs>,
+    pub inputs: Vec<JsonProgramData>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
