@@ -49,7 +49,7 @@ impl Task {
         self.files
             .iter()
             .map(|name| {
-                let path = Path::new(workspace).join(&self.id).join(name);
+                let path = Path::new(workspace).join(name);
                 (name.as_str(), path)
             })
             .collect()
