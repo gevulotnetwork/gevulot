@@ -140,8 +140,7 @@ pub struct Mempool {
 
 impl Mempool {
     pub async fn new(storage: Arc<dyn MempoolStorage>) -> Result<Self> {
-        let mut deque = VecDeque::new();
-        storage.fill_deque(&mut deque).await?;
+        let deque = VecDeque::new();
         Ok(Self { storage, deque })
     }
 
