@@ -189,7 +189,10 @@ impl Provider for Qemu {
 
         // Update the child process field.
         let qemu_vm_handle = &mut self.vm_registry.get_mut(&cid).unwrap();
-        let mut cmd = Command::new("/usr/bin/qemu-system-x86_64");
+
+        // Resolve the QEMU system command
+        let qemu_path = which::which("qemu-system-x86_64")?;
+        let mut cmd = Command::new(qemu_path);
 
         //define the VirtFs local path and create all necessary folder
         let workspace_path = TaskVmFile::get_workspace_path(&self.config.data_directory, tx_hash);

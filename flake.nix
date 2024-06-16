@@ -20,6 +20,7 @@
               buildInputs =
               [
                 p.openssl
+                p.ops
                 p.pkg-config
                 p.protobuf
               ];
