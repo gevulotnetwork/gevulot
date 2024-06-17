@@ -13,7 +13,7 @@ use std::{
     any::Any,
     collections::{BTreeSet, HashMap},
     fs::File,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     sync::{
         atomic::{AtomicU32, Ordering},
@@ -71,15 +71,19 @@ pub struct Qemu {
     next_cid: AtomicU32,
     cid_allocations: BTreeSet<u32>,
     vm_registry: HashMap<u32, QEMUVMHandle>,
+    qemu_path: PathBuf,
 }
 
 impl Qemu {
     pub fn new(config: Arc<Config>) -> Self {
+        let qemu_path = config.resolve_qemu_path();
+
         Qemu {
             config,
             next_cid: AtomicU32::new(4),
             cid_allocations: Default::default(),
             vm_registry: HashMap::new(),
+            qemu_path,
         }
     }
 
@@ -189,7 +193,9 @@ impl Provider for Qemu {
 
         // Update the child process field.
         let qemu_vm_handle = &mut self.vm_registry.get_mut(&cid).unwrap();
-        let mut cmd = Command::new("/usr/bin/qemu-system-x86_64");
+
+        // Resolve the QEMU system command
+        let mut cmd = Command::new(&self.qemu_path);
 
         //define the VirtFs local path and create all necessary folder
         let workspace_path = TaskVmFile::get_workspace_path(&self.config.data_directory, tx_hash);
