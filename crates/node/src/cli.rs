@@ -141,6 +141,34 @@ pub struct Config {
         env = "GEVULOT_METRICS_LISTEN_ADDR"
     )]
     pub http_metrics_listen_addr: Option<SocketAddr>,
+
+    #[arg(
+        long,
+        long_help = "QEMU path to system-x86_64 runner",
+        env = "GEVULOT_QEMU_PATH",
+        default_value = "qemu-system-x86_64"
+    )]
+    pub qemu_path: Option<PathBuf>,
+}
+
+impl Config {
+    /// Resolves the provided QEMU path.
+    ///
+    /// # Panics
+    ///
+    /// The absence of a valid QEMU runnner is an unrecoverable error.
+    pub fn resolve_qemu_path(&self) -> PathBuf {
+        self.qemu_path
+            .as_ref()
+            .map(which::which)
+            .transpose()
+            .ok()
+            .flatten()
+            .filter(|p| p.is_file())
+            .expect(
+                "a valid QEMU binary must be provided. Check `--qemu_path` or `GEVULOT_QEMU_PATH`.",
+            )
+    }
 }
 
 #[derive(Debug, Args)]
