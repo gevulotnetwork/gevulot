@@ -495,6 +495,7 @@ mod tests {
             http_download_port: 0,
             http_healthcheck_listen_addr: "127.0.0.1:8888".parse().unwrap(),
             http_metrics_listen_addr: None,
+            qemu_path: None,
         });
 
         let db = Arc::new(Database::new(&cfg.db_url).await.unwrap());
