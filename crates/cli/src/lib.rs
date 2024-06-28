@@ -135,6 +135,7 @@ pub async fn run_exec_command(
                 .cmd_args
                 .into_iter()
                 .flat_map(<[String; 2]>::from)
+                .filter(|x| !x.is_empty())
                 .collect(),
             inputs: input_data,
         };
