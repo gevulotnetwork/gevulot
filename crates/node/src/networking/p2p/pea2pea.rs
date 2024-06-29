@@ -225,7 +225,7 @@ impl P2P {
     }
 
     // Connect to peer at `addr`. Subsequent connections to newly discovered nodes are done in sequence, one at a time.
-    // Peer can be fail because they was 2 simultaneous connection. One is fail and the orher is ok.
+    // Peer can be fail because there was 2 simultaneous connection. One is fail and the other is ok.
     pub async fn connect(&self, addr: SocketAddr) -> (BTreeSet<SocketAddr>, BTreeSet<SocketAddr>) {
         self.do_connect(addr, false).await
     }
