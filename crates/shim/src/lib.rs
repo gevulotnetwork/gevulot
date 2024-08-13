@@ -285,8 +285,11 @@ pub fn run(callback: impl Fn(Task) -> Result<TaskResult>) -> Result<()> {
     let task: Task = serde_json::from_reader(file)?;
 
     let result = callback(task).map_err(|e| e.to_string());
-    let mut result_file =
-        File::create_new(PathBuf::from(WORKSPACE_PATH).join(TASK_RESULT_FILE_NAME))?;
+    let mut result_file = File::options()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(PathBuf::from(WORKSPACE_PATH).join(TASK_RESULT_FILE_NAME))?;
     serde_json::to_writer(&mut result_file, &result)?;
     result_file.flush()?;
 
