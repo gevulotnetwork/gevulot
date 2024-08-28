@@ -28,21 +28,9 @@ pub async fn calculate_hash_command(file_path: &PathBuf) -> BoxResult<String> {
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct JsonCmdArgs {
-    pub name: String,
-    pub value: String,
-}
-
-impl From<JsonCmdArgs> for [String; 2] {
-    fn from(args: JsonCmdArgs) -> Self {
-        [args.name, args.value]
-    }
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct JsonExecArgs {
     pub program: String,
-    pub cmd_args: Vec<JsonCmdArgs>,
+    pub cmd_args: Vec<String>,
     pub inputs: Vec<JsonProgramData>,
 }
 
@@ -131,12 +119,7 @@ pub async fn run_exec_command(
             program: (&(hex::decode(args.program)
                 .map_err(|err| format!("program decoding hash error:{err}"))?)[..])
                 .into(),
-            args: args
-                .cmd_args
-                .into_iter()
-                .flat_map(<[String; 2]>::from)
-                .filter(|x| !x.is_empty())
-                .collect(),
+            args: args.cmd_args,
             inputs: input_data,
         };
 
