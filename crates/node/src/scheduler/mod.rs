@@ -51,7 +51,7 @@ use self::resource_manager::ResourceError;
 pub use self::resource_manager::get_configured_resources;
 
 // If VM doesn't have running task within `MAX_VM_IDLE_RUN_TIME`, it will be terminated.
-const MAX_VM_IDLE_RUN_TIME: Duration = Duration::from_secs(10);
+const MAX_VM_IDLE_RUN_TIME: Duration = Duration::from_secs(60);
 // MAX_VM_RUN_TIME is the maximum time a VM can run no matter what.
 // The proof must be generated within this time limit.
 const MAX_VM_RUN_TIME: Duration = Duration::from_secs(1800);
