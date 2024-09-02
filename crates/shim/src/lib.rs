@@ -1,16 +1,30 @@
-use grpc::vm_service_client::VmServiceClient;
+#[cfg(not(feature = "vsock"))]
+use gevulot_common::WORKSPACE_PATH;
+use serde::{Deserialize, Serialize};
 use std::fs::File;
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::time::Instant;
 use std::{path::Path, thread::sleep, time::Duration};
+
+#[cfg(feature = "vsock")]
+use grpc::vm_service_client::VmServiceClient;
+#[cfg(not(feature = "vsock"))]
+use std::io::Write;
+#[cfg(feature = "vsock")]
 use tokio::runtime::Runtime;
+#[cfg(feature = "vsock")]
 use tokio::sync::Mutex;
+#[cfg(feature = "vsock")]
 use tokio_vsock::VsockStream;
+#[cfg(feature = "vsock")]
 use tonic::transport::{Channel, Endpoint, Uri};
+#[cfg(feature = "vsock")]
 use tower::service_fn;
+#[cfg(feature = "vsock")]
 use vsock::VMADDR_CID_HOST;
 
+#[cfg(feature = "vsock")]
 mod grpc {
     tonic::include_proto!("vm_service");
 }
@@ -19,17 +33,22 @@ mod grpc {
 /// present in /proc/mounts.
 const MOUNT_TIMEOUT: Duration = Duration::from_secs(30);
 
+#[cfg(not(feature = "vsock"))]
+const TASK_FILE_NAME: &str = "task.json";
+#[cfg(not(feature = "vsock"))]
+const TASK_RESULT_FILE_NAME: &str = "task_result.json";
+
 type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;
 pub type TaskId = String;
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Task {
     pub id: TaskId,
     pub args: Vec<String>,
     pub files: Vec<String>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct TaskResult {
     id: TaskId,
     data: Vec<u8>,
@@ -56,6 +75,7 @@ impl Task {
     }
 }
 
+#[cfg(feature = "vsock")]
 struct GRPCClient {
     // `workspace` is the file directory used for task specific file downloads.
     // workspace: String,
@@ -63,6 +83,7 @@ struct GRPCClient {
     rt: Runtime,
 }
 
+#[cfg(feature = "vsock")]
 impl GRPCClient {
     fn new(port: u32, workspace: &str) -> Result<Self> {
         let rt = tokio::runtime::Builder::new_current_thread()
@@ -206,6 +227,7 @@ fn mount_present(mount_point: &str) -> Result<bool> {
 
 /// run function takes `callback` that is invoked with executable `Task` and
 /// which is expected to return `TaskResult`.
+#[cfg(feature = "vsock")]
 pub fn run(callback: impl Fn(Task) -> Result<TaskResult>) -> Result<()> {
     let mut client = GRPCClient::new(8080, gevulot_common::WORKSPACE_PATH)?;
 
@@ -236,6 +258,40 @@ pub fn run(callback: impl Fn(Task) -> Result<TaskResult>) -> Result<()> {
             break;
         }
     }
+
+    Ok(())
+}
+
+#[cfg(not(feature = "vsock"))]
+pub fn run(callback: impl Fn(Task) -> Result<TaskResult>) -> Result<()> {
+    let workspace = gevulot_common::WORKSPACE_PATH;
+
+    println!("waiting for {workspace} mount to be present");
+    let beginning = Instant::now();
+    loop {
+        if beginning.elapsed() > MOUNT_TIMEOUT {
+            panic!("{} mount timeout", workspace);
+        }
+
+        if mount_present(workspace)? {
+            println!("{workspace} mount is now present");
+            break;
+        }
+
+        sleep(Duration::from_secs(1));
+    }
+
+    let file = File::open(PathBuf::from(WORKSPACE_PATH).join(TASK_FILE_NAME))?;
+    let task: Task = serde_json::from_reader(file)?;
+
+    let result = callback(task).map_err(|e| e.to_string());
+    let mut result_file = File::options()
+        .read(true)
+        .write(true)
+        .create_new(true)
+        .open(PathBuf::from(WORKSPACE_PATH).join(TASK_RESULT_FILE_NAME))?;
+    serde_json::to_writer(&mut result_file, &result)?;
+    result_file.flush()?;
 
     Ok(())
 }
