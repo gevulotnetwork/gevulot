@@ -113,7 +113,13 @@ async fn send_proving_task(
     let proving_step = WorkflowStep {
         program: *prover_hash,
         args: vec!["--nonce".to_string(), nonce.to_string()],
-        inputs: vec![],
+        inputs: vec![
+            ProgramData::Input {
+                file_name: String::from("/workspace/lorem.ipsum"),
+                file_url: String::from("https://storage.googleapis.com/gevulot-devnet-deployments/static-files/lorem.ipsum"),
+                checksum: String::from("6aac6f1bab62ceab64eb96755739bc9bcb676530023b84423f8e81b9b270dfc1"),
+            }
+        ],
     };
 
     let verifying_step = WorkflowStep {
