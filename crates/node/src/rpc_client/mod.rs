@@ -1,4 +1,4 @@
-use crate::types::rpc::RpcTransaction;
+use crate::types::rpc::{RpcError, RpcTransaction};
 use crate::types::{
     rpc::RpcResponse,
     transaction::{Created, TransactionTree},
@@ -59,7 +59,7 @@ impl RpcClient {
             .client
             .request::<RpcResponse<()>, ArrayParams>("sendTransaction", params)
             .await
-            .expect("rpc request");
+            .or_else(|e| Err(Box::new(RpcError::RequestError(e.to_string()))))?;
 
         if let RpcResponse::Err(e) = resp {
             return Err(Box::new(e));
@@ -76,7 +76,7 @@ impl RpcClient {
             .client
             .request::<RpcResponse<TransactionTree>, ArrayParams>("getTransactionTree", params)
             .await
-            .expect("rpc request");
+            .or_else(|e| Err(Box::new(RpcError::RequestError(e.to_string()))))?;
 
         resp.into()
     }
@@ -89,7 +89,7 @@ impl RpcClient {
             .client
             .request::<RpcResponse<RpcTransaction>, ArrayParams>("getTransaction", params)
             .await
-            .expect("rpc request");
+            .or_else(|e| Err(Box::new(RpcError::RequestError(e.to_string()))))?;
 
         resp.into()
     }

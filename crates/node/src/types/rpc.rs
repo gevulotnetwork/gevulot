@@ -28,6 +28,9 @@ pub enum RpcError {
 
     #[error("InternalError: {0}")]
     InternalError(String),
+
+    #[error("RequestError: {0}")]
+    RequestError(String),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
