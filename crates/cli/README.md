@@ -21,7 +21,7 @@ The commands provided by gevulot-cli are:
 
 This command allows to deploy a compiled prover / verified image to the node specified with the --jsonurl parameter.
 
-The deployment can be done using file installed on the same host as the gevulot-cli tool. In this case the --prover and / or --verifier contains the path to the image to deploy. The Gevulot node try to open an http connection to the gevulot-cli host. Use `--listen-addr` to specify the http bind address used by gevulot-cli (default 127.0.0.1:8080). 
+The deployment can be done using a file installed on the same host as the gevulot-cli tool. In this case the --prover and / or --verifier contains the path to the image to deploy. The Gevulot node tries to open an http connection to the gevulot-cli host. Use `--listen-addr` to specify the http bind address used by gevulot-cli (default 127.0.0.1:8080). 
 If the host that executes gevulot-cli cannot be reached by the node using http, the image can be installed on an http host that is visible to the node and the url can be specified. In this case the --prover and / or --verifier parameters contains the hash of the image. Use the **calculate-hash** command to get the Hash of an image file. To specify the distant image http url use the --proverimgurl and / or --verifierimgurl 
 
 For more information use: `gevulot-cli deploy --help`
