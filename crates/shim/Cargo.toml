@@ -6,17 +6,33 @@ license = "MIT OR Apache-2.0"
 
 [dependencies]
 anyhow = "1"
-async-stream = "0.3.5"
+async-stream = { version = "0.3.5", optional = true }
 blake3 = "1.5"
 gevulot-common = { path = "../common" }
-prost = "0.11"
-tokio = { version = "1.0", features = ["fs", "macros", "rt-multi-thread"] }
-tokio-stream = "0.1"
-tokio-vsock = { version = "0.4.0", features = ["tonic-conn"] }
-tonic = "0.8.3"
-tower = "0.4.0"
-vsock = "0.3.0"
+prost = { version = "0.11", optional = true }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["fs", "macros", "rt-multi-thread"], optional = true }
+tokio-stream = { version = "0.1", optional = true }
+tokio-vsock = { version = "0.4.0", features = ["tonic-conn"], optional = true }
+tonic = { version = "0.8.3", optional = true }
+tower = { version = "0.4.0", optional = true }
+vsock = { version = "0.3.0", optional = true }
 uuid = { version = "1.4.1", features = [ "v4", "fast-rng", "macro-diagnostics" ] }
+
+
+[features]
+default =  []
+vsock = [
+  "async-stream",
+  "prost",
+  "tokio",
+  "tokio-stream",
+  "tokio-vsock",
+  "tonic",
+  "tower",
+  "dep:vsock",
+]
 
 [build-dependencies]
 tonic-build = "0.8"
